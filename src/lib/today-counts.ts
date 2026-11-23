@@ -6,7 +6,7 @@ import type { Tier, TodayItem, TopicKey } from "@/lib/today";
 // gather as one "Team" row. A client's row is as urgent as its most urgent item. Pure: no database, no server-only.
 
 export const TIER_ORDER: Tier[] = ["critical", "high", "normal"];
-export const TOPIC_KEYS: TopicKey[] = ["fire", "mine", "radar", "promises", "onboarding", "accounts", "email", "social", "work", "briefs", "ads", "allotments", "elsewhere", "needs", "escalated", "pulse", "system"];
+export const TOPIC_KEYS: TopicKey[] = ["fire", "mine", "radar", "promises", "onboarding", "accounts", "email", "social", "work", "briefs", "ads", "allotments", "elsewhere", "needs", "escalated", "pulse", "system", "team"];
 /** An exec's day plays in its tabs' order, whatever is most critical: Needs me, Escalated, Accounts, Pulse, System */
 export const EXEC_TOPICS: TopicKey[] = ["needs", "escalated", "accounts", "pulse", "system"];
 const execRank = (t: TopicKey) => (EXEC_TOPICS.includes(t) ? EXEC_TOPICS.indexOf(t) : 99);
@@ -66,8 +66,8 @@ export function countLooks(items: Countable[]): Looks {
   let total = 0;
   for (const g of topicGroups(items)) {
     for (const b of g.buckets) {
-      // Everything else has its own count, never in the totals
-      if (g.topic === QUIET_TOPIC) {
+      // Everything else has its own count, never in the totals; so does an exec's Pulse (read only, never a to-do)
+      if (g.topic === QUIET_TOPIC || g.topic === "pulse") {
         byTopic[g.topic].n++;
         continue;
       }
@@ -137,6 +137,8 @@ export function lookHeadline(topic: TopicKey, n: number): string {
       return "The agency at a glance";
     case "system":
       return `${n} ${s(n, "thing", "things")} in Kaizen OS itself`;
+    case "team":
+      return `${n} ${s(n, "teammate's item has", "teammates' items have")} sat 48 hours with nothing moving`;
   }
 }
 
@@ -177,6 +179,8 @@ export function lookChip(topic: TopicKey, n: number): string {
       return "pulse";
     case "system":
       return `${n} system`;
+    case "team":
+      return `${n} stuck on your team`;
   }
 }
 

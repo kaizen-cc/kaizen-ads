@@ -23,7 +23,7 @@ import { csItem, forMaker, isCustomerSuccess, isMaker } from "@/lib/maker-day-co
 // item they saw that someone else has since acted on comes back once as "taken care of", with who and what.
 
 export type Tier = "critical" | "high" | "normal";
-export type TopicKey = "fire" | "mine" | "radar" | "promises" | "onboarding" | "accounts" | "email" | "social" | "work" | "briefs" | "ads" | "allotments" | "elsewhere" | "needs" | "escalated" | "pulse" | "system";
+export type TopicKey = "fire" | "mine" | "radar" | "promises" | "onboarding" | "accounts" | "email" | "social" | "work" | "briefs" | "ads" | "allotments" | "elsewhere" | "needs" | "escalated" | "pulse" | "system" | "team";
 export const TOPICS: Record<TopicKey, { label: string; blurb: string }> = {
   fire: { label: "On fire", blurb: "Clients we could lose, across every team" },
   mine: { label: "Your work", blurb: "Tickets and tasks on you" },
@@ -45,6 +45,8 @@ export const TOPICS: Record<TopicKey, { label: string; blurb: string }> = {
   escalated: { label: "Escalated", blurb: "Stuck past a lead for 48 hours, and fires" },
   pulse: { label: "Pulse", blurb: "The agency at a glance, nothing to do" },
   system: { label: "System", blurb: "Kaizen OS itself: checks, fixes, feedback" },
+  // A lead's own items, each linked to a teammate's that sat 48 hours with nothing moving (the ladder's second rung)
+  team: { label: "Your team", blurb: "A teammate's work stuck for 48 hours" },
 };
 
 export type TodayItem = {
@@ -740,10 +742,50 @@ async function forExec(db: SupabaseClient, me: Staff, drafts: Draft[]): Promise<
   return execDrafts(db, me, drafts);
 }
 
+/**
+ * One item, one person (owner, Nov 23 2026): everyone else's day keeps only what they own (src/lib/item-owners.ts),
+ * plus what was transferred to them, plus (a lead) their own items linked to a teammate's that stalled for 48 hours.
+ */
+async function ownedDay(db: SupabaseClient, me: Staff, drafts: Draft[]): Promise<Draft[]> {
+  const { adminConfigured, createAdminClient } = await import("@/lib/supabase/admin");
+  const admin = adminConfigured() ? createAdminClient() : db;
+  const { ownDay, transferredTo } = await import("@/lib/item-owners");
+  const mine = await ownDay(admin, me.id, drafts).catch(() => drafts);
+  const { stableKeyOf } = await import("@/lib/today-counts");
+  const have = new Set(mine.map((d) => stableKeyOf(d.key)));
+  const [moved, team] = await Promise.all([transferredTo(admin, me.id, have).catch(() => []), leadItems(admin, me.id).catch(() => [])]);
+  return [...mine, ...moved, ...team];
+}
+
+/** A lead's rung-2 items: their own, linked to the teammate's item that sat 48 hours, never that item itself */
+async function leadItems(admin: SupabaseClient, me: string): Promise<Draft[]> {
+  const { data } = await admin.from("ladder_nudges").select("id, item_key, kind, client_id, client_name, what, href, since, created_at, owner:profiles!ladder_nudges_owner_id_fkey(full_name), client:clients(slug)").eq("lead_id", me).in("status", ["open", "sent"]).order("since").limit(60);
+  const { leadItemTitle } = await import("@/lib/item-owners-core");
+  return ((data ?? []) as unknown as { id: string; item_key: string; kind: string; client_id: string | null; client_name: string | null; what: string; href: string | null; since: string; created_at: string; owner: { full_name: string } | null; client: { slug: string | null } | null }[]).map((n) => {
+    const hours = (Date.now() - Date.parse(n.since)) / 3_600_000;
+    const owner = n.owner?.full_name ?? "A teammate";
+    return {
+      key: `lead:${n.item_key}`,
+      topic: "team" as const,
+      score: hours >= 96 ? 84 : 76,
+      client: n.client_name ?? "Team",
+      clientSlug: n.client?.slug ?? "",
+      clientId: n.client_id,
+      stat: { value: `${Math.floor(hours / 24)}d`, label: `with ${owner.split(" ")[0]}` },
+      title: leadItemTitle({ client: n.client_name, what: n.what, owner, hours, kind: n.kind }),
+      story: `${owner} has had it since ${day(n.since)} with nothing moving. Nudge them, or take it over.`,
+      why: "Stuck with your teammate for 48 hours",
+      evidence: [],
+      action: { label: "Nudge them", href: `/pipeline?nudge=${n.id}` },
+      due: n.since,
+    };
+  });
+}
+
 /** Today's recap for this person: open items most critical first (with what they've done with each), and what got resolved. */
 export async function loadToday(db: SupabaseClient, me: Staff): Promise<Today> {
   const [all, { data: mine }, { data: hiddenRows }] = await Promise.all([
-    gather(db, me).then((d) => (me.isExec ? forExec(db, me, d) : d)),
+    gather(db, me).then((d) => (me.isExec ? forExec(db, me, d) : ownedDay(db, me, d))),
     db.from("daily_items").select("key, status, snapshot, first_seen_at, snoozed_until").eq("profile_id", me.id),
     db.from("hidden_items").select("key").eq("profile_id", me.id),
   ]);

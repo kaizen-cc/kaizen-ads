@@ -34,11 +34,15 @@ export async function nudgeLeadAsExec(admin: SupabaseClient, me: { id: string; n
   return { ok: true };
 }
 
-/** The exec takes the work over: off Escalated, onto their own "Needs me", and the ladder stops climbing it */
-export async function takeEscalated(admin: SupabaseClient, meId: string, nudgeIds: string[]): Promise<{ ok: true; n: number } | { ok: false; error: string }> {
+/** The exec takes the work over: each stuck item is transferred to them (their Needs me), its escalations close */
+export async function takeEscalated(admin: SupabaseClient, meId: string, nudgeIds: string[], meName = "An exec"): Promise<{ ok: true; n: number } | { ok: false; error: string }> {
   if (!nudgeIds.length) return { ok: false, error: "Nothing to take." };
-  const now = new Date().toISOString();
-  const { data, error } = await admin.from("ladder_nudges").update({ taken_by: meId, taken_at: now, exec_at: null }).in("id", nudgeIds.slice(0, 200)).in("status", ["open", "sent"]).select("id");
-  if (error) return { ok: false, error: "Couldn't take it. Try again." };
-  return { ok: true, n: (data ?? []).length };
+  const { data: rows } = await admin.from("ladder_nudges").select("id, item_key, client_id, client_name, what, href, client:clients(slug)").in("id", nudgeIds.slice(0, 200)).in("status", ["open", "sent"]);
+  const { transferItem } = await import("@/lib/item-owners");
+  let n = 0;
+  for (const r of (rows ?? []) as unknown as { item_key: string; client_id: string | null; client_name: string | null; what: string; href: string | null; client: { slug: string | null } | null }[]) {
+    const t = await transferItem(admin, { id: meId, name: meName }, { key: r.item_key, to: meId, snapshot: { topic: "needs", client: r.client_name, clientId: r.client_id, clientSlug: r.client?.slug ?? null, title: r.what.replace(/^./, (c) => c.toUpperCase()), story: "You took it over from Escalated", href: r.href } });
+    if (t.ok) n++;
+  }
+  return n ? { ok: true, n } : { ok: false, error: "That isn't stuck any more." };
 }

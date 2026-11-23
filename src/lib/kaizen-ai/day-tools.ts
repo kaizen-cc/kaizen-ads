@@ -25,7 +25,7 @@ export function dayTools(ctx: ToolCtx): ChatTool[] {
         return {
           new: snap.today.items.filter((i) => i.state === "new").length,
           total: snap.today.items.length,
-          items: items.slice(0, 40).map((i) => ({ key: i.key, topic: i.topic, client: i.client, clientId: i.clientId, title: i.title, due: i.due ?? null, tier: i.tier, status: i.state, why: i.why, ...(i.exec ? { detail: i.exec.detail, open: `/pipeline?tab=${i.exec.tab}` } : {}) })),
+          items: items.slice(0, 40).map((i) => ({ key: i.key, topic: i.topic, client: i.client, clientId: i.clientId, title: i.title, due: i.due ?? null, tier: i.tier, status: i.state, why: i.why, ...(i.exec ? { detail: i.exec.detail, open: `/pipeline?block=${i.exec.tab}` } : {}) })),
           // An exec's day is their Overview's tabs (exec_overview has the whole picture)
           ...(ctx.me.isExec ? { tabs: "needs, escalated, accounts, pulse" + (ctx.me.canViewAs ? ", system" : "") } : {}),
           open: "/pipeline",
@@ -34,15 +34,15 @@ export function dayTools(ctx: ToolCtx): ChatTool[] {
     },
     {
       name: "day_item_action",
-      description: "Acts on one item of the person's own day, by its key from my_day: done (closes it for them; their own message or promise closes for everyone), snooze (hides it until tomorrow, then it comes back on its own), or delegate (hands it to a teammate as a task, with an optional note and due date; it leaves their day and stays with the new owner only). Do it when they ask; say what happened in a few words.",
+      description: "Acts on one item of the person's own day, by its key from my_day: done (closes it for them; their own message or promise closes for everyone), snooze (hides it until tomorrow, then it comes back on its own), or delegate (hands it to a teammate as a task, with an optional note and due date; it leaves their day and stays with the new owner only). Every item is a task with one owner: transfer moves the item itself to a teammate (it leaves their day, shows on the teammate's, logged, and the escalation clock restarts from the new owner); due sets its due date (escalation counts from it); take_over (a lead's \"Your team\" item, key lead:...) makes the teammate's stuck item theirs. Do it when they ask; say what happened in a few words.",
       input_schema: {
         type: "object",
         properties: {
           key: { type: "string", description: "The item's key (from my_day)" },
-          action: { type: "string", enum: ["done", "snooze", "delegate"] },
-          to: { type: "string", description: "delegate: the teammate's name" },
-          note: { type: "string", description: "delegate: a short note for them" },
-          due: { type: "string", description: "delegate: due date, YYYY-MM-DD" },
+          action: { type: "string", enum: ["done", "snooze", "delegate", "transfer", "due", "take_over"] },
+          to: { type: "string", description: "delegate or transfer: the teammate's name" },
+          note: { type: "string", description: "delegate or transfer: a short note for them" },
+          due: { type: "string", description: "delegate or due: the due date, YYYY-MM-DD" },
         },
         required: ["key", "action"],
         additionalProperties: false,
@@ -63,6 +63,28 @@ export function dayTools(ctx: ToolCtx): ChatTool[] {
         if (input.action === "snooze") {
           const { snoozeItem } = await import("@/lib/item-state");
           return { ok: true, snoozedUntil: await snoozeItem(ctx.db, ctx.me.id, key, s) };
+        }
+        if (ctx.me.viewAs && ["transfer", "due", "take_over"].includes(String(input.action))) return { ok: false, note: "Not while viewing as someone." };
+        const task = { topic: item.topic, client: item.client === "Team" ? null : item.client, clientId: item.clientId, clientSlug: item.clientSlug || null, title: item.title, story: item.story, href: item.action.href ?? null };
+        if (input.action === "due") {
+          const due = clip(input.due, 10);
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(due)) return { ok: false, note: "Which date? (YYYY-MM-DD)" };
+          const { setItemDue } = await import("@/lib/item-owners");
+          return { ...(await setItemDue(ctx.admin, { id: ctx.me.id }, { key, due, snapshot: task })), due };
+        }
+        if (input.action === "take_over") {
+          if (!key.startsWith("lead:")) return { ok: false, note: "Only a \"Your team\" item can be taken over; use transfer for anything else." };
+          const { takeOverQuickItem } = await import("@/app/(team)/item-actions");
+          return takeOverQuickItem(key);
+        }
+        if (input.action === "transfer") {
+          const who = clip(input.to, 80);
+          if (!who) return { ok: false, note: "Who should own it?" };
+          const { personNamed } = await import("@/lib/seat-transfer");
+          const found = await personNamed(ctx.admin, who);
+          if (!("one" in found)) return { ok: false, note: "many" in found ? `Several people match: ${found.many.map((p) => p.full_name).join(", ")}. Ask which.` : `Nobody on the team matches "${who}".` };
+          const { transferItem } = await import("@/lib/item-owners");
+          return transferItem(ctx.admin, { id: ctx.me.id, name: ctx.me.fullName }, { key, to: found.one.id, snapshot: task, note: clip(input.note, 300) || null });
         }
         const name = clip(input.to, 80);
         if (!name) return { ok: false, note: "Who should it go to?" };
@@ -249,7 +271,7 @@ export function dayTools(ctx: ToolCtx): ChatTool[] {
     },
     {
       name: "exec_overview",
-      description: "An exec's Overview (execs only), tab by tab: Needs me (what's on them: replies, promises, Asana tasks, approvals, work they took over), Escalated (only what sat 48h with its owner then 48h with the line's lead with nothing moving, one card per client, plus fires: client leaving, ad account disabled/payment failed/spend stopped, angry message unanswered a business day, an account far off target 2+ weeks with nothing in motion), Accounts (their focus lines off target with nothing in motion), Pulse (read only) and, for the owner, System. Each card has its key, what it is, and for Escalated the lead and a drafted nudge. Use it for 'what needs me', 'what's escalated', 'what's on fire'. open_screen 'needs me', 'escalated', 'accounts to step into', 'pulse' or 'system' opens each tab.",
+      description: "An exec's Overview (execs only), tab by tab: Needs me (what's on them: replies, promises, Asana tasks, approvals, work they took over), Escalated (only what sat 48h with its owner then 48h with the line's lead with nothing moving, one card per client, plus fires: client leaving, ad account disabled/payment failed/spend stopped, angry message unanswered a business day, an account far off target 2+ weeks with nothing in motion), Accounts (their focus lines off target with nothing in motion), Pulse (read only) and, for the owner, System. Each card has its key, what it is, and for Escalated the lead and a drafted nudge. Use it for 'what needs me', 'what's escalated', 'what's on fire'. open_screen 'needs me', 'escalated', 'accounts to step into', 'pulse' or 'system' opens that block on their Overview.",
       input_schema: { type: "object", properties: { tab: { type: "string", enum: ["needs", "escalated", "accounts", "pulse", "system"] } }, additionalProperties: false },
       status: () => "Reading your Overview…",
       run: async (input) => {
@@ -270,7 +292,7 @@ export function dayTools(ctx: ToolCtx): ChatTool[] {
           tabs: Object.fromEntries(
             Object.entries(pick).map(([t, list]) => [
               TAB_LABEL[t as keyof typeof TAB_LABEL] ?? t,
-              { count: list.length, open: `/pipeline?tab=${t}`, cards: list.slice(0, 15).map((c) => ({ key: c.key, client: c.client, title: c.title, detail: c.detail, severity: c.severity, due: c.due ?? null, lead: c.lead?.name ?? null, nudgeDraft: c.draft ?? null, link: c.action.href })) },
+              { count: list.length, open: `/pipeline?block=${t}`, cards: list.slice(0, 15).map((c) => ({ key: c.key, client: c.client, title: c.title, detail: c.detail, severity: c.severity, due: c.due ?? null, lead: c.lead?.name ?? null, nudgeDraft: c.draft ?? null, link: c.action.href })) },
             ]),
           ),
         };
@@ -289,7 +311,7 @@ export function dayTools(ctx: ToolCtx): ChatTool[] {
         const card = snap.today.items.find((i) => i.exec && i.key === clip(input.key, 200))?.exec;
         if (!card || card.tab !== "escalated" || !card.nudgeIds?.length) return { ok: false, note: "That isn't an Escalated card with stuck work (a fire has no lead to nudge): read exec_overview again." };
         const { nudgeLeadAsExec, takeEscalated } = await import("@/lib/exec-overview-actions");
-        if (input.action === "take_it") return { ...(await takeEscalated(ctx.admin, ctx.me.id, card.nudgeIds)), open: "/pipeline?tab=needs" };
+        if (input.action === "take_it") return { ...(await takeEscalated(ctx.admin, ctx.me.id, card.nudgeIds, ctx.me.fullName)), open: "/pipeline?block=needs" };
         if (!card.lead) return { ok: false, note: "No lead on that card." };
         return { ...(await nudgeLeadAsExec(ctx.admin, { id: ctx.me.id, name: ctx.me.fullName }, { nudgeIds: card.nudgeIds, leadId: card.lead.id, text: clip(input.message, 2000) || card.draft || "", client: card.client })), lead: card.lead.name };
       },

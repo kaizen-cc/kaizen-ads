@@ -23,7 +23,7 @@ export async function takeItOver(nudgeIds: string[]) {
   if (!me.isExec) return { ok: false as const, error: "Only an exec can do that." };
   if (me.viewAs) return { ok: false as const, error: "Not while viewing as someone." };
   if (!adminConfigured()) return { ok: false as const, error: "Not available right now." };
-  const r = await takeEscalated(createAdminClient(), me.id, nudgeIds);
+  const r = await takeEscalated(createAdminClient(), me.id, nudgeIds, me.fullName);
   if (r.ok) revalidatePath("/pipeline");
   return r;
 }

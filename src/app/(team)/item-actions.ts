@@ -51,3 +51,47 @@ export async function setOverviewLayout(layout: "cards" | "list") {
   await createAdminClient().from("profiles").update({ overview_layout: layout }).eq("id", me.id);
   revalidateDay();
 }
+
+// ─── Items are living tasks (owner, Nov 23 2026): one owner, a due date, transfers (src/lib/item-owners.ts) ───
+
+type TaskSnap = QuickSnap & { href?: string | null; story?: string | null; clientSlug?: string | null };
+
+const snapOf = (s: TaskSnap) => ({ topic: s.topic as import("@/lib/today").TopicKey, client: s.client || null, clientId: s.clientId, clientSlug: s.clientSlug ?? null, title: s.title, story: s.story ?? "", href: s.href ?? null });
+
+/** Transfer owner: the item moves to the teammate, leaves this person's day, shows on theirs, and it's logged */
+export async function transferQuickItem(input: { key: string; snap: TaskSnap; to: string; note?: string }): Promise<{ ok: true; to: string } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  if (me.viewAs) return { ok: false, error: "Not while viewing as someone." };
+  if (input.to === me.id) return { ok: false, error: "It's already yours." };
+  const { transferItem } = await import("@/lib/item-owners");
+  const r = await transferItem(createAdminClient(), { id: me.id, name: me.fullName }, { key: input.key, to: input.to, snapshot: snapOf(input.snap), note: input.note ?? null });
+  if (r.ok) revalidateDay();
+  return r;
+}
+
+/** Change due date: kept on the item, and the ladder's clock counts from it */
+export async function dueQuickItem(input: { key: string; snap: TaskSnap; due: string | null }): Promise<{ ok: true } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  if (me.viewAs) return { ok: false, error: "Not while viewing as someone." };
+  if (input.due && !/^\d{4}-\d{2}-\d{2}$/.test(input.due)) return { ok: false, error: "Pick a date." };
+  const { setItemDue } = await import("@/lib/item-owners");
+  const r = await setItemDue(createAdminClient(), { id: me.id }, { key: input.key, due: input.due, snapshot: snapOf(input.snap) });
+  if (r.ok) revalidateDay();
+  return r;
+}
+
+/** A lead takes over a teammate's stuck item (from their linked "lead:<item>"): the original is transferred to them */
+export async function takeOverQuickItem(leadKey: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  if (me.viewAs) return { ok: false, error: "Not while viewing as someone." };
+  const itemKey = leadKey.replace(/^lead:/, "");
+  const admin = createAdminClient();
+  const { data: n } = await admin.from("ladder_nudges").select("item_key, client_id, client_name, what, href, lead_id, client:clients(slug)").eq("item_key", itemKey).eq("lead_id", me.id).in("status", ["open", "sent"]).maybeSingle();
+  if (!n) return { ok: false, error: "That isn't stuck with your team any more." };
+  const c = n.client as unknown as { slug: string | null } | null;
+  const { transferItem } = await import("@/lib/item-owners");
+  const r = await transferItem(admin, { id: me.id, name: me.fullName }, { key: itemKey, to: me.id, snapshot: { topic: "mine", client: (n.client_name as string | null) ?? null, clientId: (n.client_id as string | null) ?? null, clientSlug: c?.slug ?? null, title: String(n.what).replace(/^./, (x) => x.toUpperCase()), story: "You took it over from your team", href: (n.href as string | null) ?? null } });
+  if (!r.ok) return r;
+  revalidateDay();
+  return { ok: true };
+}

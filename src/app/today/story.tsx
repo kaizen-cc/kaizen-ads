@@ -323,7 +323,7 @@ export function Story({
             />
           )}
           {card.kind === "topic" && (card.more ?? 0) > 0 && (
-            <Link href={`/pipeline?tab=${card.topic}&all=${card.topic}`} className="relative mt-3 inline-flex min-h-11 items-center rounded-full border border-white/20 px-4 text-sm text-white/75 hover:bg-white/10">
+            <Link href={`/pipeline?block=${card.topic}&all=${card.topic}`} className="relative mt-3 inline-flex min-h-11 items-center rounded-full border border-white/20 px-4 text-sm text-white/75 hover:bg-white/10">
               {card.more} more on your Overview →
             </Link>
           )}

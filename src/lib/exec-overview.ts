@@ -25,13 +25,12 @@ async function adminOr(db: SupabaseClient): Promise<SupabaseClient> {
 async function needsMe(db: SupabaseClient, admin: SupabaseClient, me: Staff, drafts: readonly TodayDraft[]): Promise<ExecCard[]> {
   const today = nyDay();
   const [{ loadOwedReplies }, { loadSaidPromises }, { myAsanaTasks }] = await Promise.all([import("@/lib/owed-replies"), import("@/lib/message-promises"), import("@/lib/asana-live")]);
-  const [owed, said, tasks, { data: safety }, { data: conflicts }, { data: taken }] = await Promise.all([
+  const [owed, said, tasks, { data: safety }, { data: conflicts }] = await Promise.all([
     loadOwedReplies(db, me, false).catch(() => []),
     loadSaidPromises(db, me).catch(() => []),
     myAsanaTasks(me.email, db).catch(() => []),
     admin.from("call_safety_reviews").select("call_id, severity, distress, summary, reviewed_at").eq("flagged", true).is("resolved_at", null).order("reviewed_at", { ascending: false }).limit(20),
     admin.from("agent_learnings").select("id, agent_key, lesson, updated_at").eq("status", "conflict").limit(20),
-    admin.from("ladder_nudges").select("id, item_key, client_id, client_name, what, href, since, owner:profiles!ladder_nudges_owner_id_fkey(full_name)").eq("taken_by", me.id).in("status", ["open", "sent"]).limit(30),
   ]);
   const cards: ExecCard[] = [];
   // Replies they owe
@@ -77,7 +76,7 @@ async function needsMe(db: SupabaseClient, admin: SupabaseClient, me: Staff, dra
       detail: `${[t.client ?? t.project, t.section].filter(Boolean).join(" · ")}${t.due && t.due < today ? ` · overdue since ${short(`${t.due}T12:00:00Z`)}` : " · due today"}`,
       severity: t.due && t.due < today ? "high" : "normal",
       due: t.due ? `${t.due}T21:00:00Z` : null,
-      action: { label: "Open the task", href: `/pipeline?tab=needs&task=${t.gid}` },
+      action: { label: "Open the task", href: `/pipeline?block=needs&task=${t.gid}` },
     });
   // Approvals only an exec gives: call safety reviews, agent learnings in conflict
   const flagged = (safety ?? []) as { call_id: string; severity: string | null; distress: boolean | null; summary: string | null; reviewed_at: string | null }[];
@@ -108,24 +107,14 @@ async function needsMe(db: SupabaseClient, admin: SupabaseClient, me: Staff, dra
       due: null,
       action: { label: "Decide", href: "/settings?tab=agents" },
     });
-  // What they took from Escalated
-  for (const r of (taken ?? []) as unknown as { id: string; item_key: string; client_id: string | null; client_name: string | null; what: string; href: string | null; since: string; owner: { full_name: string } | null }[])
-    cards.push({
-      key: `took:${r.item_key}`,
-      tab: "needs",
-      kind: "taken",
-      client: r.client_name,
-      clientId: r.client_id,
-      title: `${r.client_name ? `${r.client_name}: ` : ""}${r.what}`,
-      detail: `You took it over${r.owner ? ` from ${first(r.owner.full_name)}` : ""} · waiting since ${short(r.since)}`,
-      severity: "high",
-      due: r.since,
-      action: { label: "Open it", href: r.href },
-      nudgeIds: [r.id],
-    });
-  // Their own tickets and tasks from the recap
-  for (const d of drafts.filter((x) => x.topic === "mine"))
-    cards.push({ key: d.key, tab: "needs", kind: "mine", client: d.client, clientId: d.clientId, clientSlug: d.clientSlug, title: d.title, detail: d.story.slice(0, 140), severity: d.score >= 80 ? "critical" : d.score >= 60 ? "high" : "normal", due: d.due ?? null, action: { label: d.action.label, href: d.action.href ?? null } });
+  // Their own tickets and tasks from the recap (what they transferred away leaves), and what was transferred to them,
+  // including stuck work they took over from Escalated (src/lib/item-owners.ts)
+  const { ownDay, transferredTo } = await import("@/lib/item-owners");
+  const own = await ownDay(admin, me.id, drafts.filter((x) => x.topic === "mine")).catch(() => drafts.filter((x) => x.topic === "mine"));
+  const { stableKeyOf } = await import("@/lib/today-counts");
+  const moved = await transferredTo(admin, me.id, new Set([...cards.map((c) => stableKeyOf(c.key)), ...own.map((d) => stableKeyOf(d.key))]), "needs").catch(() => []);
+  for (const d of [...own, ...moved])
+    cards.push({ key: d.key, tab: "needs", kind: d.topic === "mine" ? "mine" : "taken", client: d.client === "Team" ? null : d.client, clientId: d.clientId, clientSlug: d.clientSlug || null, title: d.title, detail: d.story.slice(0, 160), severity: d.score >= 80 ? "critical" : d.score >= 60 ? "high" : "normal", due: d.due ?? null, action: { label: d.action.label, href: d.action.href ?? null } });
   return sortNeeds(cards);
 }
 
@@ -213,7 +202,8 @@ async function accounts(admin: SupabaseClient, focus: readonly string[], drafts:
     if (seen.has(k)) continue;
     seen.add(k);
     cards.push({
-      key: d.key,
+      // The exec's own item, linked to the buyer's ("kpi:<target>"), never the buyer's item itself
+      key: `step:${d.key}`,
       tab: "accounts",
       kind: "account",
       client: d.client,
@@ -371,7 +361,7 @@ export function cardToDraft(c: ExecCard): TodayDraft {
     why: c.tab === "escalated" ? (c.severity === "fire" ? "A fire: every exec sees it at once" : "48 hours with the lead and nothing moving") : c.tab === "accounts" ? "Off target with nothing in motion" : c.tab === "needs" ? "On you" : c.tab === "system" ? "Kaizen OS itself" : "For the picture",
     evidence: [],
     // A card with no link of its own (Nudge the lead) opens on the Overview, where its composer is
-    action: { label: c.action.label, href: c.action.href ?? `/pipeline?tab=${c.tab}` },
+    action: { label: c.action.label, href: c.action.href ?? `/pipeline?block=${c.tab}` },
     due: c.due ?? null,
     exec: c,
   };

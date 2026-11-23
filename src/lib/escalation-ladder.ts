@@ -18,7 +18,7 @@ export type LadderItem = {
   /** Since when nothing has been done (the first notice, the due date, the turnaround) */
   since: string;
   href?: string | null;
-  kind: "owed" | "said" | "ticket" | "brief" | "launch" | "fatigue" | "other";
+  kind: "owed" | "said" | "ticket" | "brief" | "launch" | "fatigue" | "kpi" | "other";
   /** How long it waits before it climbs (48 hours unless the signal says otherwise) */
   wait?: Wait;
   /** Who it climbs to instead of the owner's lead (a client waiting on a reply: the Client Success Coordinator) */
@@ -175,9 +175,26 @@ export async function runLadder(admin: SupabaseClient): Promise<{ nudged: number
   if (!reports.error)
     for (const r of reports.data ?? [])
       items.push({ key: `report:${r.id}`, kind: "other", ownerId: r.owner_id as string, clientId: r.client_id as string, client: name(r), what: `the ${r.platform} ${r.kind} report (period ended ${r.period_end})`, since: `${r.period_end}T22:00:00Z`, href: `/reports/${r.id}`, wait: { hours: 0 }, toRole: "customer_success" });
-  const { nudged } = await climbLadder(admin, items);
+  // An account in the red is its buyer's: it climbs like everything else (from when they first had it on their day)
+  items.push(...(await kpiItems(admin).catch(() => [])));
+  // One item, one person (src/lib/item-owners.ts): a transfer or a new due date decides whose it is and restarts the
+  // clock (from the due date, else from the transfer)
+  const { closedLadderKeys, ladderOverrides } = await import("@/lib/item-owners");
+  const overrides = await ladderOverrides(admin).catch(() => new Map<string, { owner: string; due: string | null; at: string }>());
+  for (const i of items) {
+    const o = overrides.get(i.key);
+    if (!o) continue;
+    i.ownerId = o.owner;
+    i.since = o.due ?? o.at;
+    i.wait = undefined;
+    i.toRole = undefined;
+  }
+  // Done by its owner, or closed by what Slack, email or call notes said: off the ladder, linked items close with it
+  const closed = await closedLadderKeys(admin, items).catch(() => new Set<string>());
+  const live = items.filter((i) => !closed.has(i.key));
+  const { nudged } = await climbLadder(admin, live);
   // Taken care of: the item isn't open any more, so its nudge leaves the lead's Overview
-  const open = new Set(items.map((i) => i.key));
+  const open = new Set(live.map((i) => i.key));
   const { data: nudges } = await admin.from("ladder_nudges").select("item_key").in("status", ["open", "sent"]).limit(2000);
   const done = (nudges ?? []).map((n) => n.item_key as string).filter((k) => !open.has(k));
   await resolveNudges(admin, done);
@@ -262,4 +279,25 @@ export async function runRung3(admin: SupabaseClient, now = new Date()): Promise
     await admin.from("ladder_nudges").update(patch).eq("id", r.id);
   }
   return { up, down };
+}
+
+/** Accounts off target: the buyer's item ("kpi:<target>"), on the ladder from the day it first reached their day */
+async function kpiItems(admin: SupabaseClient): Promise<LadderItem[]> {
+  const { data: snaps } = await admin.from("kpi_snapshots").select("target_id").eq("status", "off").limit(500);
+  const ids = (snaps ?? []).map((s) => s.target_id as string);
+  if (!ids.length) return [];
+  const [{ data: targets }, { data: seen }] = await Promise.all([
+    admin.from("kpi_targets").select("id, client_id, owner_id, platform, active, clients!inner(name, archived_at)").in("id", ids).eq("active", true).not("owner_id", "is", null).is("clients.archived_at", null),
+    admin.from("daily_items").select("key, first_seen_at").in("key", ids.map((i) => `kpi:${i}`)).order("first_seen_at").limit(2000),
+  ]);
+  const firstSeen = new Map<string, string>();
+  for (const d of seen ?? []) if (!firstSeen.has(d.key as string)) firstSeen.set(d.key as string, d.first_seen_at as string);
+  const out: LadderItem[] = [];
+  for (const t of targets ?? []) {
+    const since = firstSeen.get(`kpi:${t.id}`);
+    if (!since) continue;
+    const c = t.clients as unknown as { name: string };
+    out.push({ key: `kpi:${t.id}`, kind: "kpi", ownerId: t.owner_id as string, clientId: t.client_id as string, client: c.name, what: `getting ${t.platform === "google" ? "Google" : t.platform === "tiktok" ? "TikTok" : "Meta"} back on target`, since, href: `/kpis?target=${t.id}` });
+  }
+  return out;
 }

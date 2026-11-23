@@ -52,7 +52,7 @@ export async function notifyFire(admin: SupabaseClient, i: { clientId: string; c
   ]);
   if (!execs?.length) return false;
   const name = (c?.name as string | undefined) ?? "A client";
-  const href = i.href ?? (c?.slug ? `/clients/${c.slug}` : "/pipeline?tab=escalated");
+  const href = i.href ?? (c?.slug ? `/clients/${c.slug}` : "/pipeline?block=escalated");
   const key = fireKey(i.clientId);
   const base = execs.map((e) => ({ profile_id: e.id as string, kind: "fire", title: fireTitle(name, i.why), body: (i.body ?? "").slice(0, 1000) || null, href, client_id: i.clientId, key, priority: "critical" }));
   const { error } = await admin.from("notifications").upsert(base.map((r) => ({ ...r, fire: true, line: i.line ?? null })), { onConflict: "profile_id,key", ignoreDuplicates: true });

@@ -99,7 +99,7 @@ function Recap({ db, me, hidden }: { db: SupabaseClient; me: Staff; hidden: Hidd
 
 /** An exec's Overview: the recap's cards in their tabs, opening on the most critical */
 async function ExecOverview({ db, me, base }: { db: SupabaseClient; me: Staff; base: { greeting: string; firstName: string; today: string } }) {
-  const [{ ExecHome }, core, snap] = await Promise.all([import("./views/exec-home"), import("@/lib/exec-overview-core"), todaySnapshot(db, me)]);
+  const [{ ExecBlocks }, core, snap] = await Promise.all([import("./views/exec-home"), import("@/lib/exec-overview-core"), todaySnapshot(db, me)]);
   const tabs = Object.fromEntries(core.EXEC_TABS.map((t) => [t, [] as import("@/lib/exec-overview-core").ExecCard[]])) as Record<import("@/lib/exec-overview-core").ExecTab, import("@/lib/exec-overview-core").ExecCard[]>;
   for (const i of snap.today.items) if (i.exec && i.exec.tab in tabs) tabs[i.exec.tab].push(i.exec);
   tabs.needs = core.sortNeeds(tabs.needs);
@@ -108,7 +108,17 @@ async function ExecOverview({ db, me, base }: { db: SupabaseClient; me: Staff; b
   if (!owner) tabs.system = [];
   const fires = tabs.escalated.filter((c) => c.severity === "fire").length;
   const header = core.headerParts({ needs: tabs.needs.length, fires, stuck: tabs.escalated.length - fires, accounts: tabs.accounts.length });
-  return <ExecHome {...base} tabs={tabs} opening={core.openingTab(tabs)} owner={owner} header={header} />;
+  const line = header.map((h) => h.text).join(" · ") || "All clear: nothing needs you, nothing is stuck, every account is handled";
+  // The Wrapped hero (its counts are only the exec's own items), then the designed blocks, each opening in place
+  return (
+    <div className="mx-auto grid max-w-6xl gap-6 md:gap-8">
+      <PageHeader today={base.today} title={`${base.greeting}, ${base.firstName}`} subtitle={line} />
+      <Suspense fallback={<TodayHeroSkeleton />}>
+        <TodayHero db={db} me={me} />
+      </Suspense>
+      <ExecBlocks tabs={tabs} owner={owner} />
+    </div>
+  );
 }
 
 /** The Google team: ideas taken to their clients from Ideas › Google, waiting on a decision or to be applied */

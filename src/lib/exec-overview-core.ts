@@ -156,7 +156,7 @@ export function groupEscalated(rows: readonly Rung3Row[], fires: readonly FireRo
       clientId: oldest.clientId,
       clientSlug: oldest.clientSlug ?? null,
       title: fire ? `${name} is on fire: ${fire.why}` : `${name}: ${list.length} stuck`,
-      detail: fire ? `${list.length} stuck too · ${chainLabel(oldest, now)}` : `${list.length === 1 ? oldest.what : `${oldest.what} and ${list.length - 1} more`} · ${chainLabel(oldest, now)}`,
+      detail: fire ? `${list.length} stuck too · ${chainLabel(oldest, now)}` : `${list.length === 1 ? oldest.what : `${oldest.what} and ${list.length - 1} more`} · ${chainLabel(oldest, now)}; the lead hasn't moved it`,
       severity: fire ? "fire" : "critical",
       action: { label: fire ? "Open it" : "Nudge the lead", href: fire ? (fire.href ?? oldest.href) : oldest.href },
       nudgeIds: list.map((r) => r.id),
