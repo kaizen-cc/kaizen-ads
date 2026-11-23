@@ -356,7 +356,12 @@ export type DayTotal = { date: string; campaignRevenue: number; flowRevenue: num
  * zone), flows on the day Klaviyo's daily series puts them. Days outside [from, to] are left out; days in between with
  * nothing are kept at zero so a quiet day reads as quiet, not missing.
  */
-export function rollupDays(input: { campaigns: { sendTime: string | null; stats: Stats; channel?: string | null }[]; flows: SeriesRow[]; tz: string | null; from: string; to: string }): DayTotal[] {
+/**
+ * `campaignSeries`: the campaigns' daily series (campaign-series-report). With it, campaign revenue and conversions land
+ * on the day the order came in, as Klaviyo counts them for a date range; without it (an older read, or the series
+ * refused), on the send day as before. Recipients and campaigns sent always count on the send day.
+ */
+export function rollupDays(input: { campaigns: { sendTime: string | null; stats: Stats; channel?: string | null }[]; flows: SeriesRow[]; campaignSeries?: SeriesRow[] | null; tz: string | null; from: string; to: string }): DayTotal[] {
   const days = new Map<string, DayTotal>();
   const blank = (date: string): DayTotal => ({ date, campaignRevenue: 0, flowRevenue: 0, revenue: 0, campaignRecipients: 0, flowRecipients: 0, sends: 0, campaignsSent: 0, conversions: 0, smsRevenue: 0 });
   for (let d = input.from; d <= input.to; d = new Date(Date.parse(`${d}T12:00:00Z`) + 86_400_000).toISOString().slice(0, 10)) days.set(d, blank(d));
@@ -364,12 +369,21 @@ export function rollupDays(input: { campaigns: { sendTime: string | null; stats:
     if (!c.sendTime) continue;
     const t = days.get(dayIn(c.sendTime, input.tz));
     if (!t) continue;
-    t.campaignRevenue += c.stats.revenue;
     t.campaignRecipients += c.stats.recipients;
     t.campaignsSent += 1;
+    if (input.campaignSeries) continue;
+    t.campaignRevenue += c.stats.revenue;
     t.conversions += c.stats.conversions;
     if (c.channel === "sms") t.smsRevenue += c.stats.revenue;
   }
+  for (const c of input.campaignSeries ?? [])
+    for (const d of c.days) {
+      const t = days.get(d.date);
+      if (!t) continue;
+      t.campaignRevenue += d.stats.revenue;
+      t.conversions += d.stats.conversions;
+      t.smsRevenue += d.sms ?? 0;
+    }
   for (const f of input.flows)
     for (const d of f.days) {
       const t = days.get(d.date);
@@ -507,6 +521,6 @@ export function pickKlaviyoWindow(input: { lastFullAt: string | null; now?: numb
 
 /**
  * About how long a client's read takes (the Reporting API allows 2 queries a minute per account), for the run's budget.
- * Each ranked metric under the primary adds its own spaced queries: about three on a full read, two on a recent one.
+ * Each ranked metric under the primary adds its own spaced queries: about five on a full read, three on a recent one (the campaigns' daily series included).
  */
-export const klaviyoCostMs = (w: KlaviyoWindow, extraMetrics = 0) => (w === "full" ? 210_000 + extraMetrics * 95_000 : 110_000 + extraMetrics * 65_000);
+export const klaviyoCostMs = (w: KlaviyoWindow, extraMetrics = 0) => (w === "full" ? 275_000 + extraMetrics * 160_000 : 145_000 + extraMetrics * 100_000);

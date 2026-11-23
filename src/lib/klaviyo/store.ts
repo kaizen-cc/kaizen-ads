@@ -4,7 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { encryptionKey, seal, unseal } from "@/lib/meta-token-core";
 import { LIVE } from "@/lib/live";
 import { servicesOf } from "@/lib/services";
-import { attributedPages, audienceSize, campaignContent, campaignValues, flowSeries, flowValues, getAccount, KlaviyoError, listAudiences, listCampaigns, listFlows, metricDaily, placedOrderMetric, pulseMetrics, listMetrics } from "./api";
+import { attributedPages, audienceSize, campaignContent, campaignSeries, campaignValues, flowSeries, flowValues, getAccount, KlaviyoError, listAudiences, listCampaigns, listFlows, metricDaily, placedOrderMetric, pulseMetrics, listMetrics } from "./api";
 import { BACKFILL_DAYS, cleanKey, dayIn, emailContextLine, emptyStats, keyLast4, keyProblem, klaviyoClientState, klaviyoCostMs, partialSyncWarning, pickKlaviyoWindow, rates, redactKey, rollupDays, sumSince, type CampaignInfo, type KlaviyoClientState, type KlaviyoPlainError, type KlaviyoWindow, type SeriesRow, type Stats } from "./core";
 import { audienceGrowth, emailHealth, keyFlowCoverage, pulseWindow, sanitizeEmailHtml, seriesChunks, sortCampaigns, type CampaignLite, type DailyRow, type DayValue, type FlowLite, type HealthFinding, type KeyFlow, type PulseWindow } from "./insights";
 import { audienceSets, type AudienceLookup } from "./audiences";
@@ -320,6 +320,25 @@ async function checkUnrankedSources(admin: SupabaseClient, conn: ConnRow, key: s
   await admin.from("sync_state").upsert({ source, last_run_at: new Date().toISOString(), last_result: { at: new Date().toISOString(), found, error } });
 }
 
+/**
+ * Applies autoRank from the last weekly check: the connection's ranked list (and primary) updated in place, so this read
+ * reads every order system with revenue. Only for a ranking nobody set by hand.
+ */
+async function rankBySources(admin: SupabaseClient, conn: ConnRow) {
+  const { autoRank } = await import("./sources");
+  const { data } = await admin.from("sync_state").select("last_result").eq("source", `klaviyo-sources:${conn.client_id}`).maybeSingle();
+  const found = ((data?.last_result as { found?: unknown } | null)?.found ?? []) as import("./sources").SourcesMemo["found"];
+  if (!Array.isArray(found) || !found.length) return;
+  const since = shift(dayIn(new Date().toISOString(), conn.timezone), -29);
+  const { data: days } = await admin.from("klaviyo_daily").select("revenue").eq("client_id", conn.client_id).gte("date", since);
+  const primary30 = (days ?? []).reduce((t, d) => t + (Number(d.revenue) || 0), 0);
+  const current = conversionMetricsOf(conn.conversion_metrics, { id: conn.conversion_metric_id, name: conn.conversion_metric_name ?? null });
+  const next = autoRank(current, found, primary30);
+  if (!next) return;
+  const { error } = await admin.from("klaviyo_connections").update({ conversion_metrics: next, conversion_metric_id: next[0].id, conversion_metric_name: next[0].name.slice(0, 120) }).eq("client_id", conn.client_id).eq("conversion_metric_manual", false);
+  if (!error) Object.assign(conn, { conversion_metrics: next, conversion_metric_id: next[0].id, conversion_metric_name: next[0].name });
+}
+
 // ─── The lower ranked conversion metrics ───────────────────────────────────
 
 /** The metrics ranked under the primary that this read also reads (none unless a lead or an exec picked more than one) */
@@ -331,7 +350,7 @@ function extraMetrics(conn: ConnRow, primary: string | null): ConversionMetric[]
 }
 
 /** One metric's numbers from a read: per campaign, per flow (30 days, and 90 on a full read), per day, and the store's own */
-type MetricRead = { id: string; values: Map<string, Stats>; series: SeriesRow[] | null; flows: Map<string, { d30: Stats; d90?: Stats }>; store: Map<string, DayValue> | null; error: string | null };
+type MetricRead = { id: string; values: Map<string, Stats>; series: SeriesRow[] | null; campaignSeries?: SeriesRow[] | null; flows: Map<string, { d30: Stats; d90?: Stats }>; store: Map<string, DayValue> | null; error: string | null };
 
 /**
  * A lower ranked metric, read with the same calls the primary is (the Reporting API's spacing and backoff hold per
@@ -361,6 +380,11 @@ async function readMetric(key: string, id: string, w: { full: boolean; from: str
   } catch (e) {
     note(e);
   }
+  // The campaigns' money on the day it came in, under this metric (on the send day if Klaviyo won't give the series)
+  out.campaignSeries = await (w.full ? campaignSeries(key, id, seriesChunks(w.from, w.today, { maxDays: 45, endIso: w.nowIso })) : campaignSeries(key, id, { start: utc(shift(w.today, -8)), end: w.nowIso })).catch((e) => {
+    note(e);
+    return null;
+  });
   out.store = await metricDaily(key, id, w.full ? w.from : shift(w.today, -1), w.today, w.tz)
     .then(byDate)
     .catch((e) => {
@@ -381,7 +405,7 @@ function metricTableRows(clientId: string, m: MetricRead, ctx: { campaigns: { id
   const storeOf = (date: string) => (m.store ? { store_revenue: r2(m.store.get(date)?.value ?? 0), store_orders: m.store.get(date)?.count ?? 0 } : {});
   const days: Record<string, unknown>[] = [];
   if (m.series) {
-    for (const d of rollupDays({ campaigns: ctx.campaigns.map((c) => ({ sendTime: c.sendTime, channel: c.channel, stats: m.values.get(c.id) ?? emptyStats() })), flows: m.series, tz: ctx.tz, from: ctx.from, to: ctx.to }))
+    for (const d of rollupDays({ campaigns: ctx.campaigns.map((c) => ({ sendTime: c.sendTime, channel: c.channel, stats: m.values.get(c.id) ?? emptyStats() })), flows: m.series, campaignSeries: m.campaignSeries ?? null, tz: ctx.tz, from: ctx.from, to: ctx.to }))
       days.push({ client_id: clientId, metric_id: m.id, date: d.date, campaign_revenue: d.campaignRevenue, flow_revenue: d.flowRevenue, revenue: d.revenue, conversions: d.conversions, ...storeOf(d.date), updated_at: ctx.now });
   } else if (m.store) {
     for (let d = ctx.from; d <= ctx.to; d = shift(d, 1)) days.push({ client_id: clientId, metric_id: m.id, date: d, ...storeOf(d), updated_at: ctx.now });
@@ -437,8 +461,12 @@ async function readFull(admin: SupabaseClient, conn: ConnRow, key: string): Prom
     if (isAuth(e)) throw e;
     return null;
   });
-  // The metric that counts as the sale: one picked on the Klaviyo card holds; otherwise Placed Order, found by itself
-  const picked = conn.conversion_metric_manual && conn.conversion_metric_id ? conn.conversion_metric_id : null;
+  // Nobody ranked the metrics by hand: an order system email earns through joins the ranking by itself, the one with the
+  // most attributed revenue first (E11EVEN: Shopify's Placed Order and the Speakeasy integration's), see autoRank
+  if (!conn.conversion_metric_manual && conn.conversion_metric_id) await rankBySources(admin, conn).catch(() => null);
+  // The metric that counts as the sale: one picked on the Klaviyo card (or ranked) holds; otherwise Placed Order, found by itself
+  const ranked = Array.isArray(conn.conversion_metrics) && conn.conversion_metrics.length > 0;
+  const picked = (conn.conversion_metric_manual || ranked) && conn.conversion_metric_id ? conn.conversion_metric_id : null;
   if (!picked && metrics?.placedOrder && metrics.placedOrder !== conn.conversion_metric_id) await admin.from("klaviyo_connections").update({ conversion_metric_id: metrics.placedOrder, conversion_metric_name: "Placed Order" }).eq("client_id", clientId);
   const metricId = picked ?? metrics?.placedOrder ?? (await metricOf(admin, conn, key));
   await step(12, "Reading the campaigns");
@@ -471,12 +499,19 @@ async function readFull(admin: SupabaseClient, conn: ConnRow, key: string): Prom
   let series: SeriesRow[] = [];
   let seriesOk = false;
   let seriesError: string | null = null;
+  let campSeries: SeriesRow[] | null = null;
   let flowStats: Map<string, { d30: Stats; d90: Stats }> = new Map();
   if (metricId && reportable) {
     try {
       series = await flowSeries(key, metricId, seriesChunks(from, today, { maxDays: 45, endIso: nowIso }));
       seriesOk = true;
       flowStats = new Map(series.map((s) => [s.id, { d30: sumSince(s, from30), d90: sumSince(s, from) }]));
+      // The campaigns' money on the day it came in, as Klaviyo totals a date range (on the send day if it's refused)
+      await step(62, "Reading the campaigns' results, day by day");
+      campSeries = await campaignSeries(key, metricId, seriesChunks(from, today, { maxDays: 45, endIso: nowIso })).catch((e) => {
+        if (isAuth(e)) throw e;
+        return null;
+      });
     } catch (e) {
       if (isAuth(e)) throw e;
       seriesError = redactKey(errText(e), key).slice(0, 240);
@@ -532,7 +567,7 @@ async function readFull(admin: SupabaseClient, conn: ConnRow, key: string): Prom
     return { client_id: clientId, flow_id: f.id, name: f.name, status: f.status, trigger_type: f.triggerType, revenue_30: Math.round(st.d30.revenue * 100) / 100, recipients_30: st.d30.recipients, open_rate_30: r4(a.openRate), click_rate_30: r4(a.clickRate), conversions_30: st.d30.conversions, revenue_90: Math.round(st.d90.revenue * 100) / 100, recipients_90: st.d90.recipients, open_rate_90: r4(b.openRate), click_rate_90: r4(b.clickRate), conversions_90: st.d90.conversions, updated_at: now };
   });
   const audienceRows = [...lists, ...segments].map((a) => ({ client_id: clientId, audience_id: a.id, kind: a.kind, name: a.name, profile_count: sizes.has(a.id) ? sizes.get(a.id) : (a.profileCount ?? null), updated_at: now }));
-  const days = metricId ? rollupDays({ campaigns: [...email, ...sms].map((c) => ({ sendTime: c.sendTime, channel: c.channel, stats: byCampaign.get(c.id) ?? emptyStats() })), flows: series, tz, from, to: today }) : [];
+  const days = metricId ? rollupDays({ campaigns: [...email, ...sms].map((c) => ({ sendTime: c.sendTime, channel: c.channel, stats: byCampaign.get(c.id) ?? emptyStats() })), flows: series, campaignSeries: campSeries, tz, from, to: today }) : [];
 
   await save(admin, "klaviyo_campaigns", campaignRows, "client_id,campaign_id");
   await save(admin, "klaviyo_flows", flowRows, "client_id,flow_id");
@@ -547,7 +582,7 @@ async function readFull(admin: SupabaseClient, conn: ConnRow, key: string): Prom
   }
   // Every ranked metric's own numbers side by side (the primary's too), only when more than one is picked
   if (extraReads.length && metricId)
-    await saveMetrics(admin, clientId, [{ id: metricId, values: byCampaign, series: seriesOk ? series : null, flows: flowStats, store, error: null }, ...extraReads], { campaigns: [...email, ...sms], tz, from, to: today, now });
+    await saveMetrics(admin, clientId, [{ id: metricId, values: byCampaign, series: seriesOk ? series : null, campaignSeries: campSeries, flows: flowStats, store, error: null }, ...extraReads], { campaigns: [...email, ...sms], tz, from, to: today, now });
   // Each read's list and segment sizes, for growth over time (kept quietly until the pulse migration is applied)
   const snap = audienceRows.filter((a) => a.profile_count != null).map((a) => ({ client_id: clientId, audience_id: a.audience_id, date: today, profile_count: a.profile_count }));
   if (snap.length) await admin.from("klaviyo_audience_sizes").upsert(snap, { onConflict: "client_id,audience_id,date" });
@@ -589,6 +624,7 @@ async function readRecent(admin: SupabaseClient, conn: ConnRow, key: string): Pr
   let seriesOk = false;
   let seriesError: string | null = null;
   let flow30 = new Map<string, Stats>();
+  let campSeries: SeriesRow[] | null = null;
   let metricNote: string | null = null;
   if (metricId) {
     try {
@@ -598,6 +634,11 @@ async function readRecent(admin: SupabaseClient, conn: ConnRow, key: string): Pr
         series = await orNamed(() => flowSeries(key, metricId, { start: utc(shift(today, -31)), end: nowIso }), () => flowSeries(key, metricId, { key: "last_30_days" }));
         seriesOk = true;
         flow30 = new Map(series.map((s) => [s.id, sumSince(s, from30)]));
+        // The campaigns' money on the day it came in (older campaigns still earning too), as Klaviyo totals a day
+        campSeries = await campaignSeries(key, metricId, { start: utc(shift(today, -8)), end: nowIso }).catch((e) => {
+          if (isAuth(e)) throw e;
+          return null;
+        });
       } catch (e) {
         if (isAuth(e)) throw e;
         seriesError = redactKey(errText(e), key).slice(0, 240);
@@ -638,7 +679,7 @@ async function readRecent(admin: SupabaseClient, conn: ConnRow, key: string): Pr
         return { client_id: clientId, flow_id: f.id, name: f.name, status: f.status, trigger_type: f.triggerType, revenue_30: Math.round(s.revenue * 100) / 100, recipients_30: s.recipients, open_rate_30: r4(r.openRate), click_rate_30: r4(r.clickRate), conversions_30: s.conversions, updated_at: now };
       })
     : flows.map((f) => ({ client_id: clientId, flow_id: f.id, name: f.name, status: f.status, trigger_type: f.triggerType, updated_at: now }));
-  const days = metricId && seriesOk ? rollupDays({ campaigns: recent.map((c) => ({ sendTime: c.sendTime, channel: c.channel, stats: byCampaign.get(c.id) ?? emptyStats() })), flows: series, tz, from: yesterday, to: today }) : [];
+  const days = metricId && seriesOk ? rollupDays({ campaigns: recent.map((c) => ({ sendTime: c.sendTime, channel: c.channel, stats: byCampaign.get(c.id) ?? emptyStats() })), flows: series, campaignSeries: campSeries, tz, from: yesterday, to: today }) : [];
 
   await save(admin, "klaviyo_campaigns", campaignRows, "client_id,campaign_id");
   await save(admin, "klaviyo_flows", flowRows, "client_id,flow_id");
@@ -647,7 +688,7 @@ async function readRecent(admin: SupabaseClient, conn: ConnRow, key: string): Pr
   if (days.length) await save(admin, "klaviyo_daily", days.map((d) => withStore(dayRow(clientId, d, now), store, null, null)), "client_id,date");
   else if (store) await save(admin, "klaviyo_daily", [yesterday, today].map((date) => withStore({ client_id: clientId, date, updated_at: now }, store, null, null)), "client_id,date");
   if (extraReads.length && metricId)
-    await saveMetrics(admin, clientId, [{ id: metricId, values: byCampaign, series: seriesOk ? series : null, flows: new Map([...flow30.entries()].map(([k, v]) => [k, { d30: v }])), store, error: null }, ...extraReads], { campaigns: recent, tz, from: yesterday, to: today, now });
+    await saveMetrics(admin, clientId, [{ id: metricId, values: byCampaign, series: seriesOk ? series : null, campaignSeries: campSeries, flows: new Map([...flow30.entries()].map(([k, v]) => [k, { d30: v }])), store, error: null }, ...extraReads], { campaigns: recent, tz, from: yesterday, to: today, now });
   return { metricId, campaigns: campaignRows.length, flows: flowRows.length, audiences: 0, days: days.length, seriesError: seriesError ?? metricNote ?? extraNote(extras, extraReads), storeError };
 }
 

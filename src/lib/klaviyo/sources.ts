@@ -4,6 +4,7 @@
 // only attributed orders carry). Pure, so it is tested; the calls are in api.ts, the weekly check in store.ts.
 
 import type { KlaviyoMetric } from "./core";
+import { MAX_CONVERSION_METRICS, type ConversionMetric } from "@/lib/email-metrics";
 
 /** Names an order (placed, completed, a closed check, a purchase, a sale) */
 const ORDER = /\b(placed order|order placed|completed order|order completed|new order|orders?|purchase[ds]?|checkout completed|closed check|check closed|transaction|sale)\b/i;
@@ -49,3 +50,23 @@ export type SourcesMemo = { at: string; found: { id: string; name: string; integ
 
 /** The check runs once a week per client */
 export const SOURCES_EVERY_MS = 7 * 86_400_000;
+
+/**
+ * The ranking nobody picked by hand, kept up to date by itself: every order system email earns through is read, the one
+ * Klaviyo credits the most revenue to (last 30 days) first. `current` is the ranked list (primary first), `found` the
+ * weekly check's unranked order metrics with their attributed revenue, `primaryRevenue` the primary's own (the synced
+ * days). Null when nothing changes. A ranking a lead or an exec set by hand is never touched (the caller checks).
+ */
+export function autoRank(current: ConversionMetric[], found: SourcesMemo["found"], primaryRevenue: number | null): ConversionMetric[] | null {
+  const have = new Set(current.map((m) => m.id));
+  const fresh = (found ?? []).filter((f) => f && f.id && !have.has(f.id) && Number(f.revenue) > 0);
+  if (!fresh.length || !current.length) return null;
+  const [primary, ...rest] = current;
+  const top = [{ m: primary, revenue: primaryRevenue ?? 0 }, ...fresh.map((f) => ({ m: { id: f.id, name: f.name, integration: f.integration ?? null, revenueSource: true } as ConversionMetric, revenue: Number(f.revenue) }))]
+    // The most revenue first; a tie keeps the primary where it is
+    .sort((a, b) => b.revenue - a.revenue || (a.m.id === primary.id ? -1 : b.m.id === primary.id ? 1 : 0))
+    .map((x) => x.m);
+  const list = [...top, ...rest].filter((m, i, all) => all.findIndex((x) => x.id === m.id) === i).slice(0, MAX_CONVERSION_METRICS);
+  // Every metric on the list counts as revenue: the old primary stays one when a bigger source moves above it
+  return list.map((m) => (m.id === primary.id && list[0].id !== primary.id ? { ...m, revenueSource: true } : m));
+}

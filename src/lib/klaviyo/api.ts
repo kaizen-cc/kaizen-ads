@@ -127,14 +127,26 @@ export async function flowValues(key: string, metricId: string, timeframe: { key
  * (a 400), so a longer stretch must come as several timeframes (seriesChunks); their days are merged here.
  */
 export async function flowSeries(key: string, metricId: string, timeframe: { key: string } | { start: string; end: string } | { start: string; end: string }[]): Promise<SeriesRow[]> {
+  return seriesOf(key, "flow", metricId, timeframe);
+}
+
+/**
+ * campaign-series-report, daily: each campaign's conversions and revenue on the day the order came in (as Klaviyo's own
+ * totals for a date range count them), not all of it on the day the campaign went out.
+ */
+export async function campaignSeries(key: string, metricId: string, timeframe: { key: string } | { start: string; end: string } | { start: string; end: string }[]): Promise<SeriesRow[]> {
+  return seriesOf(key, "campaign", metricId, timeframe);
+}
+
+async function seriesOf(key: string, what: "flow" | "campaign", metricId: string, timeframe: { key: string } | { start: string; end: string } | { start: string; end: string }[]): Promise<SeriesRow[]> {
   const frames = Array.isArray(timeframe) ? timeframe : [timeframe];
   const out = new Map<string, SeriesRow>();
   for (const tf of frames) {
-    const body = { data: { type: "flow-series-report", attributes: { statistics: [...SERIES_STATS], timeframe: tf, interval: "daily", conversion_metric_id: metricId } } };
-    let next: string | null = "/api/flow-series-reports/";
+    const body = { data: { type: `${what}-series-report`, attributes: { statistics: [...SERIES_STATS], timeframe: tf, interval: "daily", conversion_metric_id: metricId } } };
+    let next: string | null = `/api/${what}-series-reports/`;
     for (let i = 0; next && i < 5; i++) {
       const json = await call(key, next, { method: "POST", body, report: true });
-      for (const r of parseSeriesReport(json)) {
+      for (const r of parseSeriesReport(json, `${what}_id`)) {
         const had = out.get(r.id);
         out.set(r.id, had ? mergeSeries(had, r) : r);
       }
