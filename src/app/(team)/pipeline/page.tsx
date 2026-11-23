@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { AutoClosed } from "@/components/auto-closed";
 import { TodayHero, TodayHeroSkeleton } from "./views/today-hero";
 import { requireStaff, type Staff } from "@/lib/auth";
 import { greetingFor, todayLabel } from "@/lib/dates";
@@ -93,52 +94,78 @@ export default async function Home({ searchParams }: PageProps<"/pipeline">) {
   const { data: hiddenRows } = await db.from("hidden_items").select("key, how, label, href, hidden_at").eq("profile_id", me.id).order("hidden_at", { ascending: false }).limit(200);
   // What every Overview keeps under the hero: a nudge being opened (a lead, from a notice: ?nudge=), a brief they
   // started and didn't send, emails drafted for them to send, work handed to them
-  const extras = (
+  // Nothing sits outside the blocks (owner, Nov 23 2026): every part of the old Overview folds into the block it
+  // belongs to. Emails drafted for them and their account-review to-dos are items in Needs me (src/lib/today.ts
+  // withDesk); a nudge being opened (?nudge=) sits in My team; work handed to them and a brief they started in My work
+  // (or Needs me); briefs drafted for their approval in Ideas (a lead's in My accounts); the account review's watch
+  // strip in My accounts; what closed itself in Needs me.
+  const { SETS } = await import("./views/role-overview");
+  const has = (t: TopicKey) => SETS[kind].includes(t);
+  const into: Partial<Record<TopicKey, React.ReactNode[]>> = {};
+  const put = (t: TopicKey, node: React.ReactNode) => (into[t] ??= []).push(node);
+  const work: TopicKey = has("work") ? "work" : "needs";
+  const ideas: TopicKey = has("briefs") ? "briefs" : has("accounts") ? "accounts" : work;
+  const accountsBlock: TopicKey = has("accounts") ? "accounts" : "needs";
+  if (lead && sp?.nudge)
+    put(
+      "team",
+      <Suspense key="nudge" fallback={null}>
+        <NudgeCallout me={me.id} />
+      </Suspense>,
+    );
+  put(
+    work,
+    <Suspense key="handoff" fallback={null}>
+      <HandoffCallout db={db} me={me.id} />
+    </Suspense>,
+  );
+  put(
+    ideas,
+    <Suspense key="unfinished" fallback={null}>
+      <UnfinishedCallout db={db} me={me} />
+    </Suspense>,
+  );
+  put(
+    accountsBlock,
+    <Suspense key="reviews" fallback={null}>
+      <ReviewsCallout db={db} me={me} />
+    </Suspense>,
+  );
+  put(
+    "needs",
+    <Suspense key="closed" fallback={null}>
+      <AutoClosed db={db} me={me} />
+    </Suspense>,
+  );
+  // Clients, audits and setup in My accounts; ideas in Ideas (a lead's in My accounts)
+  let ownList = false;
+  const fold = (tabs: { id: string }[], panels: Record<string, React.ReactNode>) => {
+    for (const t of tabs) {
+      const node = panels[t.id];
+      const block: TopicKey | null = ["clients", "accounts", "audits", "setup"].includes(t.id) ? accountsBlock : t.id === "ideas" ? ideas : null;
+      if (node == null || !block) continue;
+      if (block === "accounts" && (t.id === "clients" || t.id === "accounts")) ownList = true;
+      put(block, <div key={t.id}>{node}</div>);
+    }
+  };
+  const view = (o: { own?: { id: string; label: string; blurb: string; node: React.ReactNode; count?: number }[] } = {}) => (
     <>
-      {lead && sp?.nudge && (
-        <Suspense fallback={null}>
-          <NudgeCallout me={me.id} />
-        </Suspense>
-      )}
-      <Suspense fallback={null}>
-        <UnfinishedCallout db={db} me={me} />
-      </Suspense>
+      {/* Once a day the person's clients are read again for emails to draft (shown as items in Needs me) */}
       <Suspense fallback={null}>
         <MyDesk db={db} me={me} />
       </Suspense>
-      <HandoffCallout db={db} me={me.id} />
-      <ReviewsCallout db={db} me={me} />
+      <RoleOverview
+        db={db}
+        me={me}
+        kind={kind}
+        base={base}
+        subtitle={roleLabel(me.role)}
+        folded={Object.fromEntries(Object.entries(into).map(([k, v]) => [k, <div key={k} className="grid gap-6">{v}</div>])) as Partial<Record<TopicKey, React.ReactNode>>}
+        ownList={ownList}
+        own={o.own}
+        hidden={(hiddenRows ?? []) as HiddenRow[]}
+      />
     </>
-  );
-  // At most six blocks for anyone, nothing below them but the hidden log: what the role already had folds into the
-  // block it belongs to (their clients, audits and setup in My accounts; ideas in Ideas, or My accounts for a lead)
-  const fold = (tabs: { id: string }[], panels: Record<string, React.ReactNode>) => {
-    const into: Partial<Record<TopicKey, React.ReactNode[]>> = {};
-    for (const t of tabs) {
-      const node = panels[t.id];
-      const block: TopicKey | null = ["clients", "accounts", "audits", "setup"].includes(t.id) ? "accounts" : t.id === "ideas" ? (kind === "lead" ? "accounts" : "briefs") : null;
-      if (node == null || !block) continue;
-      (into[block] ??= []).push(<div key={t.id}>{node}</div>);
-    }
-    return Object.fromEntries(Object.entries(into).map(([k, v]) => [k, <div key={k} className="grid gap-6">{v}</div>])) as Partial<Record<TopicKey, React.ReactNode>>;
-  };
-  const view = (o: { folded?: Partial<Record<TopicKey, React.ReactNode>>; own?: { id: string; label: string; blurb: string; node: React.ReactNode; count?: number }[]; more?: React.ReactNode }) => (
-    <RoleOverview
-      db={db}
-      me={me}
-      kind={kind}
-      base={base}
-      subtitle={roleLabel(me.role)}
-      extras={
-        <>
-          {extras}
-          {o.more}
-        </>
-      }
-      folded={o.folded}
-      own={o.own}
-      hidden={(hiddenRows ?? []) as HiddenRow[]}
-    />
   );
 
   // The support positions: their board as a block of its own (the Tracking Specialist's: Tracking)
@@ -156,27 +183,26 @@ export default async function Home({ searchParams }: PageProps<"/pipeline">) {
   const channel = lineOfTeam(me.role);
   if (channel) {
     const { tabs, panels } = await channelTabs({ me, line: channel, today: base.today, greeting: base.greeting, firstName: base.firstName });
-    return view({ folded: fold(tabs, panels) });
+    fold(tabs, panels);
+    return view();
   }
 
   // The makers: their blocks, nothing else
-  if (kind === "maker") return view({});
+  if (kind === "maker") return view();
 
   // Buyers, the copywriter, the leads and the heads: their line's desk folded into their blocks. A creative lead's
   // Overview has no account watch and no production roster: what's stuck is one item each in My team
   const creativeLead = isCreativeLead(me.role) || String(me.role) === "head_of_creative";
   const desk = me.isLead && (me.role === "head_of_creative" || me.role === "head_of_meta" || me.role === "head_of_google") ? await leadDesk(db, me) : await memberDesk(db, me);
-  return view({
-    more: (
-      <>
-        <Suspense fallback={null}>
-          <ReadyCallout db={db} me={me} />
-        </Suspense>
-        {!creativeLead && desk?.today}
-      </>
-    ),
-    folded: fold(desk?.tabs ?? [], desk?.panels ?? {}),
-  });
+  fold(desk?.tabs ?? [], desk?.panels ?? {});
+  put(
+    ideas,
+    <Suspense key="ready" fallback={null}>
+      <ReadyCallout db={db} me={me} />
+    </Suspense>,
+  );
+  if (!creativeLead && desk?.today) put(accountsBlock, <div key="watch">{desk.today}</div>);
+  return view();
 }
 
 /** The heads of Meta, Google and Creative: their line's desk (ad accounts, or the creative clients' allotments) */

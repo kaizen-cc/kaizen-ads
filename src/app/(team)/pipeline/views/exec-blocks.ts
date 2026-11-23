@@ -32,6 +32,7 @@ export function chips(tab: ExecTab, cards: ExecCard[]): string[] {
       count((c) => c.kind === "said") && n(count((c) => c.kind === "said"), "promise", "promises"),
       count((c) => c.kind === "asana" || c.kind === "mine" || c.kind === "taken") && n(count((c) => c.kind === "asana" || c.kind === "mine" || c.kind === "taken"), "task", "tasks"),
       count((c) => c.kind === "approval") && n(count((c) => c.kind === "approval"), "approval", "approvals"),
+      count((c) => Boolean(c.emailDraft)) && n(count((c) => Boolean(c.emailDraft)), "email drafted", "emails drafted"),
     ].filter((x): x is string => Boolean(x));
   if (tab === "escalated")
     return [

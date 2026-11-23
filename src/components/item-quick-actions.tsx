@@ -152,7 +152,7 @@ function DelegatePicker({ item, open, setOpen, onDone, tone = "auto" }: { item: 
 }
 
 /** Linked escalation items and read-only cards aren't tasks of their own: no owner to transfer or date to change */
-const LINKED = /^(lead|esc|step|pulse|system|approve|asana|mine:asana):/;
+const LINKED = /^(lead|esc|step|pulse|system|approve|asana|mine:asana|draft|todo):/;
 
 /**
  * Items are living tasks (owner, Nov 23 2026): Transfer owner (it moves to the teammate, leaves this day, shows on
@@ -170,7 +170,7 @@ function TaskControls({ item, tone = "auto", onGone }: { item: QuickItem; tone?:
   const quiet = `${pill} border ${tone === "dark" ? "border-white/25 text-white/85 hover:bg-white/10" : "border-ink/15 text-ink/75 hover:border-ink/35 hover:text-fg"}`;
   const field = "h-11 rounded-brand border border-ink/15 bg-transparent px-2 text-[16px] text-fg sm:h-9 sm:text-[13px]";
   const snap = { ...item.snap, href: item.href ?? null };
-  if (item.key.startsWith("lead:"))
+  if (item.key.startsWith("lead:") && !item.key.startsWith("lead:person:"))
     return (
       <>
         <button

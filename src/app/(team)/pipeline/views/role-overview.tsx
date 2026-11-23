@@ -5,7 +5,6 @@ import { TOPICS, type TodayItem, type TopicKey } from "@/lib/today";
 import { BLOCK_ORDER } from "@/lib/today-counts";
 import { todaySnapshot } from "@/lib/today-snapshot";
 import type { ExecCard, ExecTab } from "@/lib/exec-overview-core";
-import { AutoClosed } from "@/components/auto-closed";
 import { Blocks, type BlockDef } from "./exec-home";
 import { BLOCK_TONE, itemChips } from "./exec-blocks";
 import { HiddenLog } from "./hidden-log";
@@ -19,7 +18,7 @@ import { TodayHero, TodayHeroSkeleton } from "./today-hero";
 export type RoleKind = "maker" | "support" | "member" | "lead";
 
 /** The item blocks each kind of role always shows (empty ones say so); any other block with items shows too */
-const SETS: Record<RoleKind, TopicKey[]> = {
+export const SETS: Record<RoleKind, TopicKey[]> = {
   maker: ["needs", "work", "asana"],
   support: ["needs", "work", "asana"],
   member: ["needs", "accounts", "briefs", "asana"],
@@ -62,7 +61,7 @@ function cardOf(i: TodayItem): ExecCard {
 /** At most this many blocks for anyone (owner, Nov 23 2026): everything else folds into them */
 const MAX_BLOCKS = 6;
 
-export async function RoleOverview({ db, me, kind, base, subtitle, extras, folded = {}, own = [], hidden }: { db: SupabaseClient; me: Staff; kind: RoleKind; base: { greeting: string; firstName: string; today: string }; subtitle: string; extras?: React.ReactNode; /** What the role already had, inside the block it belongs to (their clients in My accounts, ideas in Ideas) */ folded?: Partial<Record<TopicKey, React.ReactNode>>; /** A block of the role's own (the support board, Tracking) */ own?: { id: string; label: string; blurb: string; node: React.ReactNode; count?: number }[]; hidden: { key: string; how: string; label: string | null; href: string | null; hidden_at: string }[] }) {
+export async function RoleOverview({ db, me, kind, base, subtitle, folded = {}, ownList = false, own = [], hidden }: { db: SupabaseClient; me: Staff; kind: RoleKind; base: { greeting: string; firstName: string; today: string }; subtitle: string; /** My accounts holds the role's own client list (it stands for the items there) */ ownList?: boolean; /** What the role already had, inside the block it belongs to (their clients in My accounts, ideas in Ideas) */ folded?: Partial<Record<TopicKey, React.ReactNode>>; /** A block of the role's own (the support board, Tracking) */ own?: { id: string; label: string; blurb: string; node: React.ReactNode; count?: number }[]; hidden: { key: string; how: string; label: string | null; href: string | null; hidden_at: string }[] }) {
   const snap = await todaySnapshot(db, me);
   const byTopic = new Map<TopicKey, TodayItem[]>();
   for (const i of snap.today.items) byTopic.set(i.topic, [...(byTopic.get(i.topic) ?? []), i]);
@@ -87,7 +86,7 @@ export async function RoleOverview({ db, me, kind, base, subtitle, extras, folde
       note: t === "pulse" ? "Your line at a glance. Nothing here is a to-do." : undefined,
       panel: folded[t],
       // My accounts with the role's own client list folded in: that list is the one design shown
-      cardsHidden: t === "accounts" && Boolean(folded[t]),
+      cardsHidden: t === "accounts" && ownList,
     };
   });
   for (const o of own) blocks.push({ id: `p-${o.id}`, label: o.label, blurb: o.blurb, tone: BLOCK_TONE.panel, panel: o.node, ...(o.count != null ? { count: o.count } : {}) });
@@ -97,11 +96,6 @@ export async function RoleOverview({ db, me, kind, base, subtitle, extras, folde
       <Suspense fallback={<TodayHeroSkeleton />}>
         <TodayHero db={db} me={me} />
       </Suspense>
-      {/* Closed automatically: Slack, email or call notes showed these done, each with its quote and Reopen */}
-      <Suspense fallback={null}>
-        <AutoClosed db={db} me={me} />
-      </Suspense>
-      {extras}
       <Blocks blocks={blocks} />
       <HiddenLog items={hidden.map((r) => ({ key: r.key, how: r.how as "done" | "dismissed", label: r.label, href: r.href, at: r.hidden_at }))} />
     </div>

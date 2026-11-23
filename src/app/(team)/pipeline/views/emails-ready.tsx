@@ -11,7 +11,7 @@ import { closeReviewTodo } from "../../csuite/actions";
 // a prefilled compose), Edit (a sheet, in the address so back closes it, with a chat to have the AI rework it), Dismiss.
 // Never sends anything.
 
-type Draft = { id: string; client: string; kind: string; subject: string; body: string; to: string[]; reason: string | null; opened: boolean; files?: { id: string; name: string }[] };
+export type Draft = { id: string; client: string; kind: string; subject: string; body: string; to: string[]; reason: string | null; opened: boolean; files?: { id: string; name: string }[] };
 
 export function EmailsReady({ drafts }: { drafts: Draft[] }) {
   const router = useRouter();
@@ -230,5 +230,44 @@ export function ReviewTodos({ todos }: { todos: { id: string; title: string; due
         ))}
       </ul>
     </section>
+  );
+}
+
+/**
+ * A drafted email on an Overview item (the reply or promise it answers, or its own "email ready" item): Open draft
+ * (into their Gmail, or a prefilled compose, in a new tab) and Edit (a sheet in the address, with the AI chat)
+ */
+export function DraftActions({ d }: { d: Draft }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [note, setNote] = useState<string | null>(null);
+  const editing = useParam("draft") === d.id;
+  const open = () => {
+    const tab = window.open("about:blank", "_blank");
+    start(async () => {
+      const r = await openEmailDraft(d.id).catch(() => ({ ok: false as const, error: "It couldn't open just now. Try again." }));
+      if (!r.ok) {
+        tab?.close();
+        return setNote(r.error);
+      }
+      if (tab) {
+        tab.opener = null;
+        tab.location.href = r.href;
+      } else window.open(r.href, "_blank", "noopener");
+      setNote(r.where === "gmail" ? "In your Gmail drafts, ready to send." : "Opened in a new compose window.");
+      router.refresh();
+    });
+  };
+  return (
+    <>
+      <button type="button" disabled={pending} onClick={open} className="inline-flex min-h-11 items-center rounded-full bg-brand px-4 text-[13px] font-medium text-white hover:bg-brand/90 disabled:opacity-50 sm:min-h-8 sm:text-[12px]">
+        {pending ? "Opening..." : "Open draft"}
+      </button>
+      <button type="button" onClick={() => pushParams({ draft: d.id })} className="inline-flex min-h-11 items-center rounded-full border border-ink/15 px-3.5 text-[13px] text-ink/75 hover:border-ink/35 hover:text-fg sm:min-h-8 sm:px-3 sm:text-[12px]">
+        Edit email
+      </button>
+      {note && <span className="text-[12px] text-ink/60">{note}</span>}
+      {editing && <EditSheet key={d.id} d={d} onClose={() => closeParams("draft")} onSaved={() => router.refresh()} />}
+    </>
   );
 }

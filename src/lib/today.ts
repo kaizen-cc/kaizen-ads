@@ -71,6 +71,8 @@ export type TodayItem = {
   dismiss?: string;
   /** A lead or exec may pause this client's line until a date ("Paused: hide until..."): the service's slug */
   pause?: { service: string };
+  /** An email drafted for this person to send about it (src/lib/email-drafts) */
+  emailDraft?: import("@/lib/exec-overview-core").ExecCard["emailDraft"];
   /** A message waiting on this person: the reply drafted for them */
   reply?: { id: string; source: "slack" | "gmail"; url: string | null; draft: string | null; channel: string | null; kind?: "owed" | "said" | "call" };
   /** Under "Everything else" (an exec's day, outside their focus): the topic it came from */
@@ -784,11 +786,43 @@ const inBlock = (d: Draft): Draft => {
   return b ? { ...d, topic: b, from: d.topic } : d;
 };
 
+/**
+ * Emails drafted for this person, and their to-dos from the executives' account review, as items of their day (never a
+ * section of their own, owner, Nov 23 2026): a drafted email rides on the reply or promise it answers (its main action is
+ * Open draft), or is its own "email ready" item when it answers nothing on their day.
+ */
+async function withDesk(db: SupabaseClient, me: Staff, drafts: Draft[]): Promise<Draft[]> {
+  const [{ myDrafts }, { myReviewTodos }, { DRAFT_KIND_LABEL }] = await Promise.all([import("@/lib/email-drafts/server"), import("@/lib/csuite/load"), import("@/lib/email-drafts/core")]);
+  const [rows, todos] = await Promise.all([myDrafts(db, me.id).catch(() => []), myReviewTodos(db, me.id).catch(() => [])]);
+  const out = [...drafts];
+  const at = new Map(out.map((d, i) => [d.key, i]));
+  for (const r of rows as unknown as { id: string; client_id: string | null; kind: string; subject: string; body: string; to_emails: string[] | null; reason: string | null; source_kind: string | null; source_id: string | null; status: string; attachments?: { document_id: string; name: string }[] | null; clients: { name: string; slug: string } | null }[]) {
+    const email = { id: r.id, client: r.clients?.name ?? "A client", kind: r.kind, subject: r.subject, body: r.body, to: r.to_emails ?? [], reason: r.reason, opened: r.status === "opened", files: (r.attachments ?? []).map((f) => ({ id: f.document_id, name: f.name })) };
+    const sid = r.source_id ?? "";
+    const keys = r.source_kind === "slack" ? [`owed:${sid}`, `owed2:${sid}`] : r.source_kind === "commitment" ? [`callp:${sid}`, `promise:${sid}`] : [];
+    const hit = keys.map((k) => at.get(k)).find((i) => i != null);
+    if (hit != null) {
+      const d = out[hit];
+      out[hit] = { ...d, emailDraft: email, ...(d.exec ? { exec: { ...d.exec, emailDraft: email } } : {}) };
+      continue;
+    }
+    const label = (DRAFT_KIND_LABEL as Record<string, string>)[r.kind] ?? "Email";
+    const card = { key: `draft:${r.id}`, tab: "needs" as const, kind: "draft" as const, client: email.client, clientId: r.client_id, clientSlug: r.clients?.slug ?? null, title: `${label} to ${email.client}: ${r.subject}`, detail: r.reason ?? "Drafted for you to send", severity: "high" as const, due: null, action: { label: "Open draft", href: null }, emailDraft: email };
+    out.push({ key: card.key, topic: "needs" as TopicKey, score: 70, client: email.client, clientSlug: r.clients?.slug ?? "", clientId: r.client_id, stat: { value: label, label: email.opened ? "opened" : "ready to send" }, title: card.title, story: card.detail, why: "An email drafted for you to send", evidence: [], action: { label: "Open draft" }, emailDraft: email, ...(me.isExec ? { exec: card } : {}) });
+  }
+  for (const t of todos as unknown as { id: string; title: string; detail: string | null; due_on: string | null; client: { id: string; name: string; slug?: string } | null }[]) {
+    const due = t.due_on ? `${t.due_on}T21:00:00Z` : null;
+    const card = { key: `todo:${t.id}`, tab: "needs" as const, kind: "todo" as const, client: t.client?.name ?? null, clientId: t.client?.id ?? null, clientSlug: t.client?.slug ?? null, title: t.title, detail: t.detail ?? "From the executives' account review", severity: "high" as const, due, action: { label: "Open the review", href: "/kpis?p=review" } };
+    out.push({ key: card.key, topic: "needs" as TopicKey, score: due && Date.parse(due) < Date.now() ? 84 : 68, client: t.client?.name ?? "Team", clientSlug: t.client?.slug ?? "", clientId: t.client?.id ?? null, stat: { value: t.due_on ? day(due!) : "To do", label: "from the account review" }, title: t.title, story: card.detail, why: "Asked of you in the account review", evidence: [], action: { label: "Open the review", href: "/kpis?p=review" }, due, ...(me.isExec ? { exec: card } : {}) });
+  }
+  return out;
+}
+
 /** A lead's rung-2 items: their own, linked to the teammate's item that sat 48 hours, never that item itself */
 async function leadItems(admin: SupabaseClient, me: string): Promise<Draft[]> {
   const { data } = await admin.from("ladder_nudges").select("id, item_key, kind, client_id, client_name, what, href, since, created_at, owner:profiles!ladder_nudges_owner_id_fkey(full_name), client:clients(slug)").eq("lead_id", me).in("status", ["open", "sent"]).order("since").limit(60);
   const { leadItemTitle } = await import("@/lib/item-owners-core");
-  return ((data ?? []) as unknown as { id: string; item_key: string; kind: string; client_id: string | null; client_name: string | null; what: string; href: string | null; since: string; created_at: string; owner: { full_name: string } | null; client: { slug: string | null } | null }[]).map((n) => {
+  const each = ((data ?? []) as unknown as { id: string; item_key: string; kind: string; client_id: string | null; client_name: string | null; what: string; href: string | null; since: string; created_at: string; owner: { full_name: string } | null; client: { slug: string | null } | null }[]).map((n) => {
     const hours = (Date.now() - Date.parse(n.since)) / 3_600_000;
     const owner = n.owner?.full_name ?? "A teammate";
     return {
@@ -803,16 +837,47 @@ async function leadItems(admin: SupabaseClient, me: string): Promise<Draft[]> {
       story: `${owner} has had it since ${day(n.since)} with nothing moving. Nudge them, or take it over.`,
       why: "Stuck with your teammate for 48 hours",
       evidence: [],
-      action: { label: "Nudge them", href: `/pipeline?nudge=${n.id}` },
+      action: { label: "Nudge them", href: `/pipeline?block=team&nudge=${n.id}` },
       due: n.since,
     };
   });
+  // A teammate with three or more stuck: one card with their count (Nudge them opens their nudges), so My team reads
+  // as a few rows, not dozens
+  const by = new Map<string, Draft[]>();
+  for (const d of each) by.set(d.stat.label, [...(by.get(d.stat.label) ?? []), d]);
+  const out: Draft[] = [];
+  for (const [, list] of by) {
+    if (list.length < 3) {
+      out.push(...list);
+      continue;
+    }
+    const top = [...list].sort((x, y) => y.score - x.score);
+    const who = top[0].stat.label.replace(/^with /, "");
+    const clients = new Set(list.map((d) => d.client).filter((c) => c !== "Team")).size;
+    out.push({
+      ...top[0],
+      key: `lead:person:${who}`,
+      client: "Team",
+      clientSlug: "",
+      clientId: null,
+      stat: { value: String(list.length), label: `stuck with ${who}` },
+      title: `${who}: ${list.length} stuck${clients ? ` across ${clients} ${clients === 1 ? "client" : "clients"}` : ""}`,
+      story: top
+        .slice(0, 3)
+        .map((d) => d.title)
+        .join(" · "),
+      score: Math.max(...list.map((d) => d.score)),
+    });
+  }
+  return out
 }
 
 /** Today's recap for this person: open items most critical first (with what they've done with each), and what got resolved. */
 export async function loadToday(db: SupabaseClient, me: Staff): Promise<Today> {
   const [all, { data: mine }, { data: hiddenRows }] = await Promise.all([
-    gather(db, me).then((d) => (me.isExec ? forExec(db, me, d) : ownedDay(db, me, d))),
+    gather(db, me)
+      .then((d) => (me.isExec ? forExec(db, me, d) : ownedDay(db, me, d)))
+      .then((d) => withDesk(db, me, d).catch(() => d)),
     db.from("daily_items").select("key, status, snapshot, first_seen_at, snoozed_until").eq("profile_id", me.id),
     db.from("hidden_items").select("key").eq("profile_id", me.id),
   ]);

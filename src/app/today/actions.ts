@@ -32,6 +32,16 @@ export async function setItem(key: string, status: Status, snap: ItemSnapshot) {
   if ((next === "dismissed" || next === "done") && /^said2?:/.test(key)) await closeSaid(key.split(":")[1], me.id, "done");
   // A call promise routed to you: Done closes it as done, Dismiss as not happening (with who on record)
   if ((next === "dismissed" || next === "done") && /^callp:/.test(key)) await closeCallPromise(key.split(":")[1], next === "done" ? "done" : "dropped");
+  // An email drafted for them ("draft:<id>"): Done means it went out; Not for me sets it aside
+  if ((next === "done" || next === "dismissed") && /^draft:/.test(key)) {
+    const { dismissEmailDraft } = await import("@/app/(team)/pipeline/email-draft-actions");
+    await dismissEmailDraft(key.slice("draft:".length), next === "done" ? "sent" : "dismissed").catch(() => null);
+  }
+  // A to-do from the executives' account review ("todo:<id>"): closed there too
+  if ((next === "done" || next === "dismissed") && /^todo:/.test(key)) {
+    const { closeReviewTodo } = await import("@/app/(team)/csuite/actions");
+    await closeReviewTodo(key.slice("todo:".length), next === "done" ? "done" : "dismissed").catch(() => null);
+  }
   // An Asana task ("asana:<gid>", "mine:asana:<gid>"): Done ticks it off in Asana itself (src/lib/asana-live.ts)
   if (next === "done" && /^(mine:)?asana:/.test(key) && !me.viewAs) {
     const { saveAsanaTask } = await import("@/app/(team)/asana-task-actions");

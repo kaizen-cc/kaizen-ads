@@ -18,7 +18,7 @@ export type ExecCard = {
   /** Stable, for Done and Later (daily_items) */
   key: string;
   tab: ExecTab;
-  kind: "owed" | "said" | "asana" | "mine" | "approval" | "taken" | "stuck" | "team" | "fire" | "account" | "pulse" | "system";
+  kind: "owed" | "said" | "asana" | "mine" | "approval" | "taken" | "stuck" | "team" | "fire" | "account" | "pulse" | "system" | "draft" | "todo";
   client: string | null;
   clientId: string | null;
   clientSlug?: string | null;
@@ -39,6 +39,8 @@ export type ExecCard = {
   /** Accounts: the line and the number that matters ("CPA $84 vs $50 target") */
   line?: string | null;
   stat?: string | null;
+  /** An email drafted for this person to send about it: the item's main action is Open draft */
+  emailDraft?: { id: string; client: string; kind: string; subject: string; body: string; to: string[]; reason: string | null; opened: boolean; files?: { id: string; name: string }[] } | null;
   /** A teammate to call about it (Accounts: the buyer) */
   callee?: { id: string; name: string } | null;
 };

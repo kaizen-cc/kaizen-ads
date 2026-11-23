@@ -9,6 +9,7 @@ import { BLURB, TONE, chips, type Tone } from "./exec-blocks";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { nudgeLead, takeItOver } from "../../exec-actions";
 import { openAsanaTask } from "@/components/asana-task-sheet";
+import { DraftActions } from "./emails-ready";
 
 // The executive Overview's blocks (owner, Nov 23 2026), under the Wrapped hero: Needs me, Escalated, Accounts, Pulse
 // and (the owner) System, each a designed block with its own color, a big number, one line and its sub-chips. A tap
@@ -208,7 +209,9 @@ function Card({ card }: { card: ExecCard }) {
       </div>
       {!readOnly && (
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
-          {card.kind === "asana" ? (
+          {card.emailDraft ? (
+            <DraftActions d={card.emailDraft} />
+          ) : card.kind === "asana" ? (
             <AsanaOpen gid={card.key.slice("asana:".length)} url={card.stat ?? null} />
           ) : escalated && card.lead && card.draft ? (
             <button type="button" onClick={() => setComposing((v) => !v)} aria-expanded={composing} className="inline-flex min-h-11 items-center rounded-full bg-brand px-4 text-[13px] font-medium text-white hover:bg-brand/90 sm:min-h-8 sm:text-[12px]">
