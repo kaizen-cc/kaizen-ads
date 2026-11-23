@@ -108,3 +108,34 @@ describe("Crust Pizza Co.: Toast and a POS's API add up; Toast's two metrics don
     expect(next?.map((m) => m.id)).toEqual(["SMvxJW", "a"]);
   });
 });
+
+describe("the report's own numbers count every revenue source", () => {
+  it("adds the sources up day by day, the store totals too; a day without them keeps the primary's", async () => {
+    const { combineDays, revenueSourceIds } = await import("@/lib/channel-reports/email-sources");
+    const metrics = [
+      { id: "SMvxJW", name: "Placed Order", integration: "Toast" },
+      { id: "Ycwy2j", name: "Placed Order", integration: "API", revenueSource: true },
+      { id: "WPD55w", name: "Prepared Order", integration: "Toast", revenueSource: false },
+    ];
+    const days = [
+      { metric_id: "SMvxJW", date: "2026-11-18", revenue: 5000, campaign_revenue: 4500, flow_revenue: 500, conversions: 120, store_revenue: 30000 },
+      { metric_id: "Ycwy2j", date: "2026-11-18", revenue: 3000, campaign_revenue: 2800, flow_revenue: 200, conversions: 90, store_revenue: 10000 },
+      { metric_id: "WPD55w", date: "2026-11-18", revenue: 5000, campaign_revenue: 4500, flow_revenue: 500, conversions: 120, store_revenue: 30000 },
+    ];
+    const ids = revenueSourceIds(metrics, days);
+    expect(ids).toEqual(["SMvxJW", "Ycwy2j"]);
+    const rows = [
+      { date: "2026-11-18", revenue: 5000, campaignRevenue: 4500, flowRevenue: 500, conversions: 120, storeRevenue: 30000 },
+      { date: "2026-11-19", revenue: 100, campaignRevenue: 0, flowRevenue: 100, conversions: 2, storeRevenue: null },
+    ];
+    expect(combineDays(rows, days, ids)).toEqual([
+      { date: "2026-11-18", revenue: 8000, campaignRevenue: 7300, flowRevenue: 700, conversions: 210, storeRevenue: 40000 },
+      rows[1],
+    ]);
+  });
+  it("one source: the days as they were", async () => {
+    const { combineDays } = await import("@/lib/channel-reports/email-sources");
+    const rows = [{ date: "2026-11-18", revenue: 5, campaignRevenue: 5, flowRevenue: 0, conversions: 1, storeRevenue: null }];
+    expect(combineDays(rows, [], ["a"])).toBe(rows);
+  });
+});

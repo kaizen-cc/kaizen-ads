@@ -158,3 +158,46 @@ export function sourcesText(s: RevenueSources, money: (n: number | null | undefi
   out.push(`- Combined (each order once): ${money(s.combined.revenue.now)} (before: ${money(s.combined.revenue.before)}), ${s.combined.orders.now ?? "n/a"} orders${s.combined.overlap.revenue > 0 ? `; ${money(s.combined.overlap.revenue)} recorded by both systems counted once` : ""}.`);
   return out.join("\n");
 }
+
+// ─── Every number of the report on all the revenue sources ──────────────────────────────────────────────────────────
+
+/** One ranked metric's day (klaviyo_metric_daily) */
+export type MetricDay = { metric_id: string; date: string; revenue?: unknown; campaign_revenue?: unknown; flow_revenue?: unknown; conversions?: unknown; store_revenue?: unknown };
+
+const n = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+
+/**
+ * Which ranked metrics count toward the report's revenue: the primary always, a lower one as the team set it on the
+ * Klaviyo card, else once it carries attributed revenue in the days read. Two or more: the report adds them up.
+ */
+export function revenueSourceIds(metrics: ConversionMetric[], days: MetricDay[]): string[] {
+  return metrics
+    .filter((m, i) => countsAsRevenue(m, i, { revenue: { now: days.filter((d) => d.metric_id === m.id).reduce((t, d) => t + n(d.revenue), 0), before: 0 } }))
+    .map((m) => m.id);
+}
+
+/**
+ * The report's days with every revenue source added up (E11EVEN: Speakeasy + Shopify; Crust: Toast + its POS's API):
+ * attributed revenue, campaigns', flows', orders and the systems' own revenue. A day no ranked metric was read for keeps
+ * what it had (the primary's). So the headline, the month to date, the pace, the share and the trend all count every
+ * source, as the per-source section does.
+ */
+export function combineDays<T extends { date: string; revenue: number; campaignRevenue: number; flowRevenue: number; conversions?: number | null; storeRevenue: number | null }>(rows: T[], days: MetricDay[], ids: string[]): T[] {
+  if (ids.length < 2) return rows;
+  const by = new Map<string, MetricDay[]>();
+  for (const d of days) if (ids.includes(d.metric_id)) by.set(d.date, [...(by.get(d.date) ?? []), d]);
+  const r2 = (x: number) => Math.round(x * 100) / 100;
+  return rows.map((row) => {
+    const ds = by.get(row.date);
+    if (!ds?.length) return row;
+    const stores = ds.filter((d) => d.store_revenue != null);
+    return {
+      ...row,
+      revenue: r2(ds.reduce((t, d) => t + n(d.revenue), 0)),
+      campaignRevenue: r2(ds.reduce((t, d) => t + n(d.campaign_revenue), 0)),
+      flowRevenue: r2(ds.reduce((t, d) => t + n(d.flow_revenue), 0)),
+      conversions: ds.reduce((t, d) => t + n(d.conversions), 0),
+      storeRevenue: stores.length ? r2(stores.reduce((t, d) => t + n(d.store_revenue), 0)) : row.storeRevenue,
+    };
+  });
+}

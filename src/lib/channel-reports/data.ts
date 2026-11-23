@@ -10,7 +10,7 @@ import { campaignsIn, channelPeriods, emailMetrics, heroImage, platformOfLine, s
 import { conversionMetricsOf, revenueTarget, type ConversionMetric } from "@/lib/email-metrics";
 import { monthSoFar } from "@/lib/reports/period";
 import { locationBreakdown, type LocationBreakdown, type LocationRow } from "@/lib/klaviyo/locations";
-import { mirroredOverlap, revenueSources } from "./email-sources";
+import { combineDays, mirroredOverlap, revenueSourceIds, revenueSources, type MetricDay } from "./email-sources";
 import { campaignPicks } from "./email-cards";
 import type { CampaignExtra } from "./email-engagement";
 import { parseAudiencesJson, type CampaignAudiences } from "@/lib/klaviyo/audiences";
@@ -167,6 +167,9 @@ export async function loadEmailMetrics(admin: SupabaseClient, clientId: string, 
     unsubscribed: numOrNull(d.unsubscribed),
     conversions: numOrNull(d.conversions),
   }));
+  // Several order systems counting toward revenue (the Klaviyo card's ranking): every day and every campaign adds them up
+  const sourcesRead = await combinedSources(admin, clientId, from, today, (camps ?? []).map((c) => c.campaign_id as string)).catch(() => null);
+  if (sourcesRead) dailyRows.splice(0, dailyRows.length, ...combineDays(dailyRows, sourcesRead.days, sourcesRead.ids));
   const campaigns: CampaignLite[] = (camps ?? []).map((c) => ({
     id: c.campaign_id as string,
     name: (c.name as string | null) ?? "(untitled)",
@@ -180,8 +183,8 @@ export async function loadEmailMetrics(admin: SupabaseClient, clientId: string, 
     unsubscribes: num(c.unsubscribes),
     bounced: num(c.bounced),
     spamComplaints: num(c.spam_complaints),
-    revenue: num(c.revenue),
-    conversions: num(c.conversions),
+    revenue: sourcesRead?.campaigns.get(c.campaign_id as string)?.revenue ?? num(c.revenue),
+    conversions: sourcesRead?.campaigns.get(c.campaign_id as string)?.conversions ?? num(c.conversions),
     openRate: numOrNull(c.open_rate),
     clickRate: numOrNull(c.click_rate),
   }));
@@ -259,7 +262,7 @@ export async function loadEmailMetrics(admin: SupabaseClient, clientId: string, 
     hasConversionMetric: (conn?.provider ?? "klaviyo") === "klaviyo" ? await hasConversionMetric(admin, clientId) : null,
   });
   // The target the board paces against: last month + 10% by itself, a higher one typed on the board wins
-  const row = m.revenueMeasured === false ? null : await emailTarget(admin, clientId, main);
+  const row = m.revenueMeasured === false ? null : await emailTarget(admin, clientId, main, sourcesRead?.ids ?? null);
   m.target = row ? targetLine("email", row, { kind, main, revenue: m.now.revenue }) : null;
   // The month to date counts against the whole month's target, not a weekly share of it
   if (m.mtd) m.mtd.target = row ? targetLine("email", row, { kind: "monthly", main: m.mtd.window, revenue: m.mtd.now.revenue }) : null;
@@ -296,10 +299,13 @@ function targetMonth(main: Window) {
  * The email revenue target as the Email board paces it (src/lib/email-metrics.ts): last month's attributed revenue + 10%,
  * worked out by itself, unless the target typed on the board is higher. Null with neither.
  */
-async function emailTarget(admin: SupabaseClient, clientId: string, main: Window): Promise<TargetRow | null> {
+async function emailTarget(admin: SupabaseClient, clientId: string, main: Window, sources: string[] | null = null): Promise<TargetRow | null> {
   const manual = await readTarget(admin, clientId, "email");
   const t = targetMonth(main);
-  const { data, error } = await admin.from("klaviyo_daily").select("revenue").eq("client_id", clientId).gte("date", t.prevStart).lte("date", t.prevEnd).limit(40);
+  // Last month on every revenue source when there are several (the month's target grows from all of them)
+  const { data, error } = sources && sources.length > 1
+    ? await admin.from("klaviyo_metric_daily").select("revenue").eq("client_id", clientId).in("metric_id", sources).gte("date", t.prevStart).lte("date", t.prevEnd).limit(200)
+    : await admin.from("klaviyo_daily").select("revenue").eq("client_id", clientId).gte("date", t.prevStart).lte("date", t.prevEnd).limit(40);
   const last = !error && data?.length ? data.reduce((s, d) => s + num(d.revenue), 0) : null;
   // A manual target on another metric (an older row) stays as it was
   if (manual && !/revenue|sales/i.test(manual.metric)) return manual;
@@ -312,6 +318,28 @@ async function unrankedSources(admin: SupabaseClient, clientId: string, ranked: 
   const { data } = await admin.from("sync_state").select("last_result").eq("source", `klaviyo-sources:${clientId}`).maybeSingle();
   const found = ((data?.last_result as { found?: unknown } | null)?.found ?? []) as NonNullable<EmailMetrics["unrankedSources"]>;
   return Array.isArray(found) ? found.filter((f) => f && typeof f.id === "string" && !ranked.includes(f.id) && Number(f.revenue) > 0) : [];
+}
+
+/**
+ * Every revenue source's days and campaigns, when two or more ranked metrics count toward revenue: their ids, their
+ * days (klaviyo_metric_daily) and each campaign's revenue and orders added up across them. Null with one source.
+ */
+async function combinedSources(admin: SupabaseClient, clientId: string, from: string, to: string, campaignIds: string[]) {
+  const ranked = await rankedMetrics(admin, clientId);
+  if (ranked.length < 2) return null;
+  const { data: days, error } = await admin.from("klaviyo_metric_daily").select("metric_id, date, revenue, campaign_revenue, flow_revenue, conversions, store_revenue").eq("client_id", clientId).in("metric_id", ranked.map((m) => m.id)).gte("date", from).lte("date", to).limit(5000);
+  if (error || !days?.length) return null;
+  const ids = revenueSourceIds(ranked, days as MetricDay[]);
+  if (ids.length < 2) return null;
+  const campaigns = new Map<string, { revenue: number; conversions: number }>();
+  for (let i = 0; i < campaignIds.length; i += 200) {
+    const { data } = await admin.from("klaviyo_campaign_metrics").select("campaign_id, metric_id, revenue, conversions").eq("client_id", clientId).in("metric_id", ids).in("campaign_id", campaignIds.slice(i, i + 200));
+    for (const r of data ?? []) {
+      const had = campaigns.get(r.campaign_id as string) ?? { revenue: 0, conversions: 0 };
+      campaigns.set(r.campaign_id as string, { revenue: Math.round((had.revenue + num(r.revenue)) * 100) / 100, conversions: had.conversions + num(r.conversions) });
+    }
+  }
+  return { ids, days: days as MetricDay[], campaigns };
 }
 
 /** The ranked conversion metrics on the connection, primary first ([] before that migration) */
