@@ -74,3 +74,23 @@ describe("items stuck past the lead", () => {
     expect(stepinWorthy(rows).map((r) => r.itemKey)).toEqual(["owed:3", "ticket:5", "ticket:6"]);
   });
 });
+
+import { flagHoles, flagStanding } from "@/lib/stepins/core";
+
+describe("flagged this week", () => {
+  it("names the holes, worst first", () => {
+    const h = flagHoles({ health: { atRisk: "said Nov 18", clientSilent: 6 }, changes: { unapproved: [1], clientPauses: [] }, budget: [{ over: true, projectedPct: 0.31 }], results: [{ text: "Meta: 12 results, behind target by 42%" }], commitments: [1, 2] });
+    expect(h).toEqual(["Retention risk", "1 change without sign-off", "Over budget (+31%)", "42% behind target", "2 open commitments", "6 days without an update"]);
+  });
+  it("a quiet, low-risk account alone isn't flagged; a clean one isn't either", () => {
+    expect(flagHoles({ risk: 15, health: { clientSilent: 6 } })).toEqual([]);
+    expect(flagHoles({ risk: 5, health: { clientSilent: 1 } })).toEqual([]);
+    expect(flagHoles({ risk: 30, health: { clientSilent: 1 } })).toEqual([]);
+  });
+  it("rung and status", () => {
+    const now = new Date("2026-11-23T12:00:00Z");
+    expect(flagStanding({ stepin: false, ladder: [], handled: false, now })).toEqual({ rung: "owner", status: { kind: "moving" } });
+    expect(flagStanding({ stepin: false, ladder: [{ since: "2026-11-19T12:00:00Z", atLead: true }], handled: false, now })).toEqual({ rung: "lead", status: { kind: "stuck", days: 4 } });
+    expect(flagStanding({ stepin: true, ladder: [], handled: true, now }).rung).toBe("stepin");
+  });
+});

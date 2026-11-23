@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 import { loadStepins } from "@/lib/stepins/act";
 import { StepinsHero, StepinCardView } from "@/components/stepins/deck";
 import { stepinPeople } from "@/components/stepins/section";
+import { loadFlagged } from "@/lib/stepins/flagged";
+import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 
 export const metadata: Metadata = { title: "Step-ins" };
 
@@ -15,11 +17,11 @@ export default async function StepinsPage() {
   const me = await requireStaff();
   if (!me.isExec) redirect("/pipeline");
   const db = await createClient();
-  const [cards, people] = await Promise.all([loadStepins(db, me, { status: "all" }), stepinPeople(db)]);
+  const [cards, people, flagged] = await Promise.all([loadStepins(db, me, { status: "all" }), stepinPeople(db), adminConfigured() ? loadFlagged(createAdminClient(), me).catch(() => []) : Promise.resolve([])]);
   const handled = cards.filter((c) => c.status === "handled");
   return (
     <div className="mx-auto grid max-w-6xl gap-6 md:gap-8">
-      <StepinsHero cards={cards} people={people} canRefresh />
+      <StepinsHero cards={cards} people={people} flagged={flagged} canRefresh />
       {handled.length > 0 && (
         <section className="grid gap-3">
           <h2 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">Handled · reopens if it slides again</h2>

@@ -50,3 +50,15 @@ export async function refreshStepins(): Promise<Result> {
   const r = await (await import("@/lib/stepins/run")).runStepins(a);
   return done({ ok: true, message: `${r.open} account${r.open === 1 ? "" : "s"} need an exec: ${r.opened} new, ${r.reopened} reopened, ${r.closed} recovered.` });
 }
+
+export async function commentOnFlagged(id: string, body: string): Promise<Result> {
+  const me = await requireStaff();
+  const a = admin();
+  return a ? done(await (await import("@/lib/stepins/flagged")).commentFlagged(a, me, id, body)) : { ok: false, error: "Can't save here." };
+}
+
+export async function assignFlaggedAccount(id: string, personId: string | null, dueOn: string | null): Promise<Result> {
+  const me = await requireStaff();
+  const a = admin();
+  return a ? done(await (await import("@/lib/stepins/flagged")).assignFlagged(a, me, id, { personId, dueOn })) : { ok: false, error: "Can't save here." };
+}

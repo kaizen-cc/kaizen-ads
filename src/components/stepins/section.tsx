@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
 import { loadStepins } from "@/lib/stepins/act";
+import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { StepinsHero } from "./deck";
 
 // On an exec's Overview, under the Wrapped hero: this week's step-ins (src/lib/stepins), the deck of client cards that
@@ -16,6 +17,7 @@ export async function stepinPeople(db: SupabaseClient) {
 
 export async function StepinsSection({ db, me }: { db: SupabaseClient; me: Staff }) {
   if (!me.isExec) return null;
-  const [cards, people] = await Promise.all([loadStepins(db, me).catch(() => []), stepinPeople(db).catch(() => [])]);
-  return <StepinsHero cards={cards} people={people} compact />;
+  const { loadFlagged } = await import("@/lib/stepins/flagged");
+  const [cards, people, flagged] = await Promise.all([loadStepins(db, me).catch(() => []), stepinPeople(db).catch(() => []), adminConfigured() ? loadFlagged(createAdminClient(), me).catch(() => []) : Promise.resolve([])]);
+  return <StepinsHero cards={cards} people={people} flagged={flagged} compact />;
 }

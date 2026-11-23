@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import type { Stepin } from "@/lib/stepins/act";
+import type { Flagged } from "@/lib/stepins/flagged";
+import { FlaggedList } from "./flagged-list";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { assignStepin, commentOnStepin, handleStepin, refreshStepins, reopenStepin } from "@/app/(team)/stepins/actions";
 
@@ -38,7 +40,7 @@ function useAct() {
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" });
 const TREND: Record<string, { t: string; c: string }> = { better: { t: "↗ improving", c: "#5be3a5" }, worse: { t: "↘ getting worse", c: "#ff6b78" }, flat: { t: "→ flat", c: "" } };
 
-export function StepinsHero({ cards, compact = false, people, canRefresh = false }: { cards: Stepin[]; compact?: boolean; people: Person[]; canRefresh?: boolean }) {
+export function StepinsHero({ cards, compact = false, people, canRefresh = false, flagged = [] }: { cards: Stepin[]; compact?: boolean; people: Person[]; canRefresh?: boolean; flagged?: Flagged[] }) {
   const story = useParam("story") === "stepins";
   const open = cards.filter((c) => c.status === "open");
   const fires = open.filter((c) => c.fire).length;
@@ -87,6 +89,7 @@ export function StepinsHero({ cards, compact = false, people, canRefresh = false
       </div>
       {refresh.msg && <p className={`text-[12.5px] ${refresh.msg.ok ? "text-ink/60" : "text-bad"}`}>{refresh.msg.text}</p>}
       {open.length > 0 && <Deck cards={compact ? open.slice(0, 8) : open} people={people} />}
+      <FlaggedList rows={flagged} people={people} />
       {story && open.length > 0 && <Story cards={open} people={people} />}
     </section>
   );
@@ -156,7 +159,7 @@ export function StepinCardView({ s, people, big = false }: { s: Stepin; people: 
           <Link href={`/clients/${c.client.slug}`} className="block truncate font-heading text-[21px] leading-tight hover:underline">
             {c.client.name}
           </Link>
-          <p className="mt-0.5 text-[12.5px] text-muted">{c.owners.length ? c.owners.map((o) => `${o.name} (${o.role})`).join(" · ") : "No owner seated"}</p>
+          <p className="mt-0.5 text-[12.5px] text-muted">{c.owners.length ? `On ${c.owners.map((o) => `${o.name.split(" ")[0]} (${o.role})`).join(" · ")}` : "No owner seated"}</p>
         </div>
         <span className="flex shrink-0 flex-wrap justify-end gap-1">
           {s.reasons.map((r, i) => (

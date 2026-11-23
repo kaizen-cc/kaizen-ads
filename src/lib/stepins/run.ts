@@ -11,6 +11,19 @@ import { emailBadWeek, stepinWorthy, nextStatus, perExec, severityOf, suggestSte
 const DAY = 86_400_000;
 const LIVE = ["active", "onboarding"];
 const nyDay = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+/** "Jorgi (Head of Email)": a first name with its role, the same way everywhere */
+function personLabel(p: { full_name: string; role: string } | null, fallback: string): string {
+  if (!p) return fallback;
+  const first = p.full_name.trim().split(/\s+/)[0] || p.full_name;
+  return `${first} (${roleName(p.role)})`;
+}
+let roleName: (r: string) => string = (r) => r;
+/** Who owes what, to whom: "Kyle (Head of Meta) owes a reply to Zach Osness" */
+function owesLine(owner: string, what: string, kind: string | null): string {
+  const w = what.replace(/^(?:a |the )?reply to /i, "a reply to ");
+  return kind === "owed" ? `${owner} owes ${w}` : kind === "said" ? `${owner} promised ${what.replace(/^you said:?\s*/i, "")}` : `${owner}: ${what}`;
+}
+
 const PLATFORM: Record<string, string> = { meta: "Meta", google: "Google", tiktok: "TikTok" };
 const money = (n: number) => `$${n >= 100 ? Math.round(n).toLocaleString("en-US") : n.toFixed(2)}`;
 
@@ -26,6 +39,8 @@ export type StepinCard = {
 type Cand = { clientId: string; reasons: Reason[] };
 
 export async function runStepins(admin: SupabaseClient, now = new Date()) {
+  const { roleLabel: rl } = await import("@/lib/roles");
+  roleName = (r) => rl(r as Parameters<typeof rl>[0]);
   const today = nyDay(now);
   const week = weekStartOf(today);
   const [{ liveFires, accountsForExecs }, { data: clients }] = await Promise.all([import("@/lib/exec-focus/server"), admin.from("clients").select("id, name, slug, services, services_extra, services_removed, strategy_only").is("archived_at", null).in("status", LIVE)]);
@@ -83,22 +98,22 @@ export async function runStepins(admin: SupabaseClient, now = new Date()) {
   // 4. Items that climbed past the lead (rung 3), one reason per client
   const { data: rung3 } = await admin
     .from("ladder_nudges")
-    .select("item_key, kind, client_id, line, what, since, owner:profiles!ladder_nudges_owner_id_fkey(full_name), lead:profiles!ladder_nudges_lead_id_fkey(full_name)")
+    .select("item_key, kind, client_id, line, what, since, owner:profiles!ladder_nudges_owner_id_fkey(full_name, role), lead:profiles!ladder_nudges_lead_id_fkey(full_name, role)")
     .not("exec_at", "is", null)
     .is("taken_by", null)
     .in("status", ["open", "sent"])
     .not("client_id", "is", null)
     .limit(1000);
-  const byClient = new Map<string, { line: string | null; what: string[]; owner: string; lead: string; since: string }[]>();
-  type R3 = { item_key: string; kind: string | null; client_id: string; line: string | null; what: string; since: string; owner: { full_name: string } | null; lead: { full_name: string } | null };
+  const byClient = new Map<string, { line: string | null; what: string[]; owner: string; lead: string; since: string; kind: string | null }[]>();
+  type R3 = { item_key: string; kind: string | null; client_id: string; line: string | null; what: string; since: string; owner: { full_name: string; role: string } | null; lead: { full_name: string; role: string } | null };
   const worthy = stepinWorthy(((rung3 ?? []) as unknown as R3[]).map((r) => ({ ...r, itemKey: r.item_key, clientId: r.client_id })));
   for (const r of worthy)
-    byClient.set(r.client_id, [...(byClient.get(r.client_id) ?? []), { line: r.line, what: [r.what], owner: r.owner?.full_name ?? "the owner", lead: r.lead?.full_name ?? "the lead", since: r.since }]);
+    byClient.set(r.client_id, [...(byClient.get(r.client_id) ?? []), { line: r.line, what: [r.what], owner: personLabel(r.owner, "the owner"), lead: personLabel(r.lead, "the lead"), since: r.since, kind: r.kind }]);
   for (const [clientId, rows] of byClient) {
     const lines = [...new Set(rows.map((r) => r.line))];
     for (const line of lines) {
       const mine = rows.filter((r) => r.line === line);
-      add(clientId, { kind: "escalated", line, title: `${mine.length} item${mine.length === 1 ? "" : "s"} stuck past ${mine[0].lead.split(" ")[0]}`, detail: mine.slice(0, 3).map((m) => `${m.what[0]} (${m.owner.split(" ")[0]})`).join("; ").slice(0, 300), since: mine.map((m) => m.since).sort()[0] ?? null });
+      add(clientId, { kind: "escalated", line, title: `${mine.length} item${mine.length === 1 ? "" : "s"} stuck past ${mine[0].lead}`, detail: mine.slice(0, 3).map((m) => owesLine(m.owner, m.what[0], m.kind)).join("; ").slice(0, 300), since: mine.map((m) => m.since).sort()[0] ?? null });
     }
   }
 

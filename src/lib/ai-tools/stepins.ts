@@ -98,4 +98,51 @@ const close: AiTool = {
   },
 };
 
-export const tools: AiTool[] = [list, comment, assign, close];
+async function findFlagged(user: Parameters<AiTool["run"]>[0], input: Record<string, unknown>) {
+  const { loadFlagged } = await import("@/lib/stepins/flagged");
+  const rows = await loadFlagged(createAdminClient(), user);
+  const id = str(input.id);
+  const c = str(input.client)?.toLowerCase();
+  const line = str(input.line)?.toLowerCase();
+  const hits = rows.filter((r) => (id ? r.id === id : Boolean(c) && r.client.toLowerCase().includes(c!) && (!line || r.line === line || r.lineLabel.toLowerCase().includes(line))));
+  if (hits.length === 1) return { row: hits[0] } as const;
+  if (!hits.length) return { error: "No flagged account matches. Use flagged_accounts to see them." } as const;
+  return { error: `More than one matches: ${hits.map((h) => `${h.client} ${h.lineLabel} (id ${h.id})`).join("; ")}. Say which line.` } as const;
+}
+
+const flagged: AiTool = {
+  name: "flagged_accounts",
+  description:
+    "Every account the line heads' Monday review flagged this week in this exec's lines (plus clients on fire): client, line, the hole in a few words, who it's on (name and role), moving or stuck N days, and where it sits (with the owner, with the lead, a step-in), with the numbers, what the team did and hasn't, the items stuck with the lead, and the execs' comments. Executives only. client narrows it. open_screen place 'flagged accounts' shows the list.",
+  input_schema: { type: "object", properties: { client: { type: "string" } }, additionalProperties: false },
+  run: async (user, input) => {
+    if (!user.isExec) return NOT_EXEC;
+    const { loadFlagged } = await import("@/lib/stepins/flagged");
+    const c = str(input.client)?.toLowerCase();
+    const rows = (await loadFlagged(createAdminClient(), user)).filter((r) => !c || r.client.toLowerCase().includes(c));
+    return {
+      ok: true,
+      page: "/stepins?flagged=1",
+      count: rows.length,
+      accounts: rows.slice(0, 40).map((r) => ({ id: r.id, client: r.client, line: r.lineLabel, holes: r.holes, on: r.owner?.label ?? null, status: r.status.kind === "stuck" ? `stuck ${r.status.days} days` : r.status.kind, rung: r.rung === "owner" ? "with the owner" : r.rung === "lead" ? "with the lead" : "step-in", due: r.dueOn, numbers: r.results.map((x) => x.text), teamDid: r.done, teamHasnt: r.notDone, stuckWithLead: r.items.map((x) => `${x.owner ? `${x.owner}: ` : ""}${x.text}`), comments: r.comments.slice(-4).map((m) => ({ by: m.author, said: m.body })) })),
+    };
+  },
+};
+
+const commentFlag: AiTool = {
+  name: "comment_flagged_account",
+  description: "Comment on a flagged account to the person it's on: it reaches them in the app on a thread every exec sees. It doesn't take it off them or escalate it. Optional who (a name) and due (YYYY-MM-DD) put it on someone else or set a due date. id from flagged_accounts, or client (+ line). Say what you'll send and ask first.",
+  input_schema: { type: "object", properties: { id: { type: "string" }, client: { type: "string" }, line: { type: "string" }, comment: { type: "string" }, who: { type: "string" }, due: { type: "string" } }, additionalProperties: false },
+  run: async (user, input) => {
+    if (!user.isExec) return NOT_EXEC;
+    const f = await findFlagged(user, input);
+    if ("error" in f) return { ok: false, error: f.error };
+    const fl = await import("@/lib/stepins/flagged");
+    const out: unknown[] = [];
+    if (str(input.comment)) out.push(await fl.commentFlagged(createAdminClient(), user, f.row.id, str(input.comment)!));
+    if (str(input.who) || str(input.due)) out.push(await fl.assignFlagged(createAdminClient(), user, f.row.id, { personName: str(input.who), dueOn: str(input.due) ?? undefined }));
+    return out.length ? (out.length === 1 ? out[0] : { ok: true, done: out }) : { ok: false, error: "Say the comment (or who / due)." };
+  },
+};
+
+export const tools: AiTool[] = [list, comment, assign, close, flagged, commentFlag];

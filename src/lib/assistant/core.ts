@@ -191,6 +191,8 @@ export const SCREEN_PLACES: Record<string, string> = {
   stepins: "/stepins",
   "exec review": "/stepins",
   "step-ins story": "/stepins?story=stepins",
+  "flagged accounts": "/stepins?flagged=1",
+  "flagged this week": "/stepins?flagged=1",
   economics: "/economics",
   boards: "/board",
   "creative board": "/board",

@@ -99,3 +99,53 @@ export function stepinWorthy<T extends { itemKey: string; kind: string | null; c
   for (const r of real) if (r.kind !== "owed" && r.kind !== "said") others.set(r.clientId, (others.get(r.clientId) ?? 0) + 1);
   return real.filter((r) => r.kind === "owed" || r.kind === "said" || (others.get(r.clientId) ?? 0) >= 2);
 }
+
+// ─── Flagged this week: every account the line heads' Monday review flagged ─────────────────────────────
+
+type ReviewShape = {
+  risk?: number;
+  health?: { atRisk?: string | null; clientSilent?: number | null; blockers?: string[] };
+  changes?: { unapproved?: unknown[]; clientPauses?: unknown[] };
+  budget?: { over?: boolean; projectedPct?: number; platform?: string }[];
+  results?: { text: string }[];
+  commitments?: unknown[];
+  scope?: { promised?: unknown[] };
+};
+
+/**
+ * What the Monday review flagged on an account, worst first, in a few words each (empty: not flagged). Flagged:
+ * retention risk, changes without sign-off, the client pausing things, over budget, 30%+ behind target, two or more
+ * open commitments, 5+ days quiet, onboarding blocked, or a review risk of 25 or more.
+ */
+export function flagHoles(r: ReviewShape): string[] {
+  const out: string[] = [];
+  if (r.health?.atRisk) out.push("Retention risk");
+  const unapproved = r.changes?.unapproved?.length ?? 0;
+  if (unapproved) out.push(`${unapproved} change${unapproved === 1 ? "" : "s"} without sign-off`);
+  if (r.changes?.clientPauses?.length) out.push("Client paused campaigns");
+  const over = (r.budget ?? []).find((b) => b.over);
+  if (over) out.push(`Over budget ${over.projectedPct != null ? `(+${Math.round(over.projectedPct * 100)}%)` : ""}`.trim());
+  const behind = (r.results ?? []).map((x) => x.text.match(/behind target by (\d+)%/)).find((m) => m && Number(m[1]) >= 30);
+  if (behind) out.push(`${behind[1]}% behind target`);
+  const owed = (r.commitments?.length ?? 0) + (r.scope?.promised?.length ?? 0);
+  if (owed >= 2) out.push(`${owed} open commitments`);
+  const quiet = r.health?.clientSilent;
+  if (quiet == null || quiet >= 5) out.push(quiet == null ? "No update to the client on record" : `${quiet} days without an update`);
+  if (r.health?.blockers?.length) out.push("Onboarding blocked");
+  // A quiet account alone (nothing else wrong, low risk) isn't flagged: the line head has it
+  const real = out.filter((h) => !/without an update|No update/.test(h));
+  if (!real.length && (r.risk ?? 0) < 25) return [];
+  return out;
+}
+
+export type Rung = "owner" | "lead" | "stepin";
+export type FlagStatus = { kind: "moving" | "stuck" | "handled"; days?: number };
+
+/** Where a flagged account stands: a step-in, stuck with the lead (the ladder), or with its owner; and moving or stuck */
+export function flagStanding(i: { stepin: boolean; ladder: readonly { since: string; atLead: boolean }[]; handled: boolean; now?: Date }): { rung: Rung; status: FlagStatus } {
+  const now = (i.now ?? new Date()).getTime();
+  const rung: Rung = i.stepin ? "stepin" : i.ladder.some((l) => l.atLead) ? "lead" : "owner";
+  if (i.handled) return { rung, status: { kind: "handled" } };
+  const oldest = i.ladder.map((l) => Date.parse(l.since)).filter(Number.isFinite).sort((a, b) => a - b)[0];
+  return oldest ? { rung, status: { kind: "stuck", days: Math.max(1, Math.floor((now - oldest) / 86_400_000)) } } : { rung, status: { kind: "moving" } };
+}
