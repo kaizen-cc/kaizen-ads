@@ -11,8 +11,11 @@ const ORDER = /\b(placed order|order placed|completed order|order completed|new 
 /** Order-like names that are a step, a line item or an undo, never the order itself */
 const NOT_ORDER = /ordered product|product ordered|line item|item|cancel|refund|return|fulfill|ship|deliver|started checkout|checkout started|viewed|abandon|added|subscri|review|status|updated|edited|paid out/i;
 
-/** How many unranked metrics one check reads (each is one Events-tier aggregate call) */
-export const MAX_CANDIDATES = 3;
+/** How many unranked metrics one check reads (each is one Events-tier aggregate call, not the Reporting API) */
+export const MAX_CANDIDATES = 6;
+
+/** An order the metric's name names (a placed or completed order, a closed check, a purchase), not a step or an undo */
+export const isOrderMetric = (name: string) => ORDER.test(name) && !NOT_ORDER.test(name);
 
 /** The account's order metrics not ranked yet, most order-like first (a "Placed Order" before a "Sale"), at most three */
 export function sourceCandidates(all: KlaviyoMetric[], rankedIds: string[]): KlaviyoMetric[] {
@@ -46,7 +49,13 @@ export function parseAttributedTotal(pages: unknown[]): { revenue: number; order
 }
 
 /** What the weekly check keeps (sync_state "klaviyo-sources:<client>") */
-export type SourcesMemo = { at: string; found: { id: string; name: string; integration: string | null; revenue: number; orders: number }[]; error?: string | null };
+export type SourcesMemo = {
+  at: string;
+  found: { id: string; name: string; integration: string | null; revenue: number; orders: number }[];
+  /** Every order-like metric the account has (ranked ones included), with its system: what was looked at, for Sync health */
+  metrics?: { id: string; name: string; integration: string | null; ranked: boolean }[];
+  error?: string | null;
+};
 
 /** The check runs once a week per client */
 export const SOURCES_EVERY_MS = 7 * 86_400_000;

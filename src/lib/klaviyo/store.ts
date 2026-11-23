@@ -301,15 +301,18 @@ export async function saveFlowDays(admin: SupabaseClient, clientId: string, seri
  * Read only in Klaviyo; a failure is noted in the memo, never failing the read.
  */
 async function checkUnrankedSources(admin: SupabaseClient, conn: ConnRow, key: string, ranked: string[], today: string, tz: string | null) {
-  const { SOURCES_EVERY_MS, parseAttributedTotal, sourceCandidates } = await import("./sources");
+  const { SOURCES_EVERY_MS, parseAttributedTotal, sourceCandidates, isOrderMetric } = await import("./sources");
   const source = `klaviyo-sources:${conn.client_id}`;
   const { data } = await admin.from("sync_state").select("last_result").eq("source", source).maybeSingle();
   const was = (data?.last_result as { at?: string } | null) ?? null;
   if (was?.at && Date.now() - Date.parse(was.at) < SOURCES_EVERY_MS) return;
   const found: { id: string; name: string; integration: string | null; revenue: number; orders: number }[] = [];
+  let metrics: { id: string; name: string; integration: string | null; ranked: boolean }[] = [];
   let error: string | null = null;
   try {
-    for (const m of sourceCandidates(await listMetrics(key), ranked)) {
+    const all = await listMetrics(key);
+    metrics = all.filter((m) => ranked.includes(m.id) || isOrderMetric(m.name)).map((m) => ({ id: m.id, name: m.name, integration: m.integration, ranked: ranked.includes(m.id) }));
+    for (const m of sourceCandidates(all, ranked)) {
       const t = parseAttributedTotal(await attributedPages(key, m.id, shift(today, -29), today, tz));
       if (t.revenue > 0 || t.orders > 0) found.push({ id: m.id, name: m.name, integration: m.integration, ...t });
     }
@@ -317,7 +320,7 @@ async function checkUnrankedSources(admin: SupabaseClient, conn: ConnRow, key: s
     if (isAuth(e)) throw e;
     error = redactKey(errText(e), key).slice(0, 240);
   }
-  await admin.from("sync_state").upsert({ source, last_run_at: new Date().toISOString(), last_result: { at: new Date().toISOString(), found, error } });
+  await admin.from("sync_state").upsert({ source, last_run_at: new Date().toISOString(), last_result: { at: new Date().toISOString(), found, metrics, error } });
 }
 
 /**
@@ -460,6 +463,13 @@ async function readFull(admin: SupabaseClient, conn: ConnRow, key: string): Prom
   });
   // Nobody ranked the metrics by hand: an order system email earns through joins the ranking by itself, the one with the
   // most attributed revenue first (E11EVEN: Shopify's Placed Order and the Speakeasy integration's), see autoRank
+  // The weekly look for other order systems, first, so a source found today is read today (not on the next read)
+  if (conn.conversion_metric_id) {
+    const rankedNow = conversionMetricsOf(conn.conversion_metrics, { id: conn.conversion_metric_id, name: conn.conversion_metric_name ?? null }).map((m) => m.id);
+    await checkUnrankedSources(admin, conn, key, rankedNow, today, tz).catch((e) => {
+      if (isAuth(e)) throw e;
+    });
+  }
   if (!conn.conversion_metric_manual && conn.conversion_metric_id) await rankBySources(admin, conn, key).catch((e) => {
     if (isAuth(e)) throw e;
   });
@@ -535,9 +545,7 @@ async function readFull(admin: SupabaseClient, conn: ConnRow, key: string): Prom
   }
 
   // Once a week: order metrics email earns through that nobody ranked yet (a custom POS next to Toast), for the report's QA
-  if (metricId && reportable) await checkUnrankedSources(admin, conn, key, [metricId, ...extras.map((m) => m.id)], today, tz).catch((e) => {
-    if (isAuth(e)) throw e;
-  });
+  // (the weekly look for other order systems ran before the ranking, at the start of this read)
 
   // Profile counts for the main lists and segments: the ones campaigns go to most, then the newest lists
   const used = new Map<string, number>();
