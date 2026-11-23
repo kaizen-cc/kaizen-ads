@@ -247,3 +247,44 @@ export function lastSentBlock(last: SentReport): string {
 How the buyer sent this client's last report, after all their edits. Follow its shape: the same sections, order, number of points, length, tone and kinds of comparisons, and the same trend charts unless the data has none. Never reuse its numbers, dates or one-off news: those come from <numbers> and the work log.${last.message?.trim() ? `\nThe message as sent:\n${clipTo(last.message.trim(), 2500)}` : ""}${shape ? `\nThe sections as sent:\n${clipTo(shape, 3500)}` : ""}${charts.length ? `\nTrend charts: ${charts.join("; ")}` : ""}${asks.length ? `\nWhat the buyer asked the AI to change on it (apply the ones about format, structure, metrics or tone again now, so they don't have to ask twice; skip one-off fixes about that week's facts):\n${asks.map((a) => `- ${a}`).join("\n")}` : ""}
 </last_report_as_sent>`;
 }
+
+// ─── Each piece of work once ──────────────────────────────────────────────────────────────────────────────────────
+
+/** Every writer (ads, email, social; draft and revise): no piece of work told twice across the report's sections */
+export const ONCE_RULE = `Say each piece of work once, in the one place it belongs: a launch, a flow, a test or a change goes in What we did (or what we're doing now, or what's next), never also restated in another section or a second paragraph. The summary/What happened paragraph gives the numbers and what they mean, and may name the work only in passing; it doesn't describe it again. Before you return, read the message and the sections top to bottom and cut every repeat (in the message too), keeping the clearest one. When asked to cut repetition, remove the repeats from both the message and the sections.`;
+
+const STOP = new Set(["the", "and", "for", "with", "our", "their", "this", "that", "was", "were", "are", "has", "have", "from", "into", "now", "new", "week", "all", "its", "they", "them", "who", "but", "not", "out", "too", "also", "still", "will", "been", "more"]);
+const wordsOf = (t: string) => new Set(t.toLowerCase().replace(/[^a-z0-9$%]+/g, " ").split(" ").filter((w) => w.length > 2 && !STOP.has(w)));
+
+/** Two points that say the same thing: nearly every word of the shorter one is in the other (and it isn't a two-word stub) */
+export function samePoint(a: string, b: string): boolean {
+  const A = wordsOf(a);
+  const B = wordsOf(b);
+  const small = Math.min(A.size, B.size);
+  if (small < 3) return A.size === B.size && [...A].every((w) => B.has(w)) && small > 0;
+  let shared = 0;
+  for (const w of A) if (B.has(w)) shared++;
+  return shared / small >= 0.85;
+}
+
+/**
+ * The backstop before a report is saved: a point already made in What we did (or earlier in its own list) isn't made
+ * again in what we're doing or what's next. Only near-identical points go; the first one stays.
+ */
+export function dedupeSections<T extends { did?: string[]; doing?: string[]; next?: string[] }>(s: T): T {
+  if (!s || typeof s !== "object") return s;
+  const seen: string[] = [];
+  const out = { ...s };
+  for (const key of ["did", "doing", "next"] as const) {
+    const list = s[key];
+    if (!Array.isArray(list)) continue;
+    const kept: string[] = [];
+    for (const p of list) {
+      if (typeof p === "string" && seen.some((x) => samePoint(x, p))) continue;
+      kept.push(p);
+      if (typeof p === "string") seen.push(p);
+    }
+    out[key] = kept;
+  }
+  return out;
+}

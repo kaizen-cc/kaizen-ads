@@ -3,6 +3,7 @@ import { buildReportEmail, messageBlocks, slackToPlain } from "@/lib/reports/del
 import { contentBasis, driveBehind } from "@/lib/reports/drive-save-core";
 import { outputsCheck, OUTPUTS_RULE } from "@/lib/reports/outputs-core";
 import { emailHtml } from "@/lib/email-layout";
+import { dedupeSections, ONCE_RULE, samePoint } from "@/lib/reports/style-core";
 
 // One report, one text: the Slack post IS the message, the email's body IS that same message (turned from Slack's
 // formatting into the email's, every point kept), and the PDF and pages are drawn from the sections. A strategist added
@@ -128,5 +129,50 @@ describe("a Drive copy says when the report changed after it was saved", () => {
     expect(driveBehind({ ...save, basis: now }, now)).toBe(false);
     expect(driveBehind({ ...save, basis: "old" }, now)).toBe(true);
     expect(driveBehind(save, now)).toBe(false);
+  });
+});
+
+describe("a cut reaches every version, and each piece of work is told once", () => {
+  it("removing a repeated paragraph from the message removes it from the email too", () => {
+    const repeated = `${MESSAGE}\n\n*What we did*\n• Launched the Winback and Thanx loyalty automated emails`;
+    const before = buildReportEmail({ ...base, message: repeated });
+    const after = buildReportEmail({ ...base, message: MESSAGE });
+    expect(before.text.match(/Winback and Thanx/g)).toHaveLength(2);
+    expect(after.text.match(/Winback and Thanx/g)).toHaveLength(1);
+    expect(outputsCheck({ message: repeated, sections: {} }, { message: MESSAGE, sections: {} }).email).toBe(true);
+  });
+
+  it("the email is the whole message, read as a complete email: greeting, every section, the PDF, the sign-off", () => {
+    const full = `${MESSAGE}\n\n*Highlights*\n• Grand Theft Appetite (email, Nov 19): $1,636 from 60 orders\n\n*What we learned*\nFewer, stronger sends are paying off.`;
+    const mail = buildReportEmail({ ...base, message: full });
+    const headings = mail.blocks.filter((b) => b.kind === "heading").map((b) => (b as { text: string }).text);
+    expect(headings).toEqual(["What happened", "Coming up", "Highlights", "What we learned"]);
+    expect(mail.text.startsWith("Hi Pat,")).toBe(true);
+    expect(mail.text).toContain("The full report is attached as a PDF.");
+    expect(mail.text).toContain("Any questions, just reply to this email.");
+    expect(mail.text.trim().endsWith("Kaizen Marketing")).toBe(true);
+    // Nothing of the message's content is missing from the email
+    for (const line of full.split("\n").slice(4).map((l) => l.replace(/^[•*]\s*|\*/g, "").trim()).filter(Boolean)) expect(mail.text).toContain(line);
+  });
+
+  it("a point already made isn't made again in another section", () => {
+    const s = dedupeSections({
+      did: ["Launched the Winback and Thanx loyalty automated emails", "Sent Grand Theft Appetite by email on November 19"],
+      doing: ["Launched the Winback and Thanx loyalty automated emails.", "Watching unsubscribes after they rose to 0.73%"],
+      next: ["November 25: Thanksgiving campaign", "November 25: Thanksgiving campaign"],
+    });
+    expect(s.did).toHaveLength(2);
+    expect(s.doing).toEqual(["Watching unsubscribes after they rose to 0.73%"]);
+    expect(s.next).toEqual(["November 25: Thanksgiving campaign"]);
+  });
+
+  it("keeps points that only share a few words", () => {
+    expect(samePoint("Thanksgiving, App Push 3 and 79 Cent Wings campaigns are scheduled", "November 25: Thanksgiving campaign")).toBe(false);
+    expect(samePoint("Paused two ads", "Paused two ad sets on Meta for the holiday")).toBe(false);
+  });
+
+  it("every writer is told to say each piece of work once and to cut repeats from the message and the sections", () => {
+    expect(ONCE_RULE).toMatch(/Say each piece of work once/);
+    expect(ONCE_RULE).toMatch(/both the message and the sections/);
   });
 });

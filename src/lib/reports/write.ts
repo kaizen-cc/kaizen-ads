@@ -17,7 +17,7 @@ import { applyManual, type ManualResults } from "./manual";
 import { leftOutNames as leftOutNamesOf } from "./campaign-scope";
 import { openWithHere } from "./slack-text";
 import type { UploadedFile } from "./upload-csv";
-import { lastSentBlock, lineOfPlatform, rulesBlock, type StyleLine, type StyleSource } from "./style-core";
+import { dedupeSections, lastSentBlock, lineOfPlatform, ONCE_RULE, rulesBlock, type StyleLine, type StyleSource } from "./style-core";
 import { styleRules, teachStyle, type Who } from "./style";
 import { styleAsks } from "./style-data";
 import type { MetaTarget } from "./custom-analysis";
@@ -88,7 +88,8 @@ message: the ${kind === "weekly" ? "Slack message to the client channel" : "Slac
 sections: the same content, structured, for the PDF and the report page: headline (one line, the main takeaway), summary (2 to 4 sentences, the numbers in context), did (what we did, 3 to 7 bullets), doing (what we're doing now and why, 2 to 5), next (what comes next, 2 to 5), highlights (2 to 4 short numeric callouts, e.g. "14 leads at $84.21, down 56%"). A weekly's "Month to date" section is drawn by the app from the numbers: never restate its figures wholesale, and mention pacing in the summary only when it is over or under budget by a meaningful margin.
 ${TAKEAWAY_RULES}
 ${DIAGNOSE_RULES}
-${MANUAL_RULE}`;
+${MANUAL_RULE}
+${ONCE_RULE}`;
 }
 
 // How a report explains the numbers, and how (rarely) it raises another service
@@ -98,7 +99,7 @@ Raising another service: only when <opportunity> names one. Then mention it once
 const QA_SYSTEM = `You are the QA for client reports at Kaizen Marketing, a paid social agency. Before a buyer sees a draft, you check it as if the client's trust depended on it. Compare the draft (message and sections) with the source data, the work log and what the buyer added. ${MANUAL_RULE}
 Flag:
 - fix: a number that doesn't match the data or the math (percent changes, cost per result = spend / results, ROAS = revenue / spend), a wrong period or comparison, an ad, change or plan that isn't in the sources, a client-facing mention of something internal (team names other than the client's, AI, Kaizen OS, other clients), a broken or missing preview link it refers to.
-- check: something the buyer should confirm before sending: a claim that's only loosely supported, wording that could read badly to the client, a missing section of the arc (did, doing, next), a number shown without what it's compared to.
+- check: something the buyer should confirm before sending: the same piece of work told twice (in two sections, or twice in the message), a claim that's only loosely supported, wording that could read badly to the client, a missing section of the arc (did, doing, next), a number shown without what it's compared to.
 - alert: something alarming in the data itself the buyer should know before sending, even if the draft is right: results collapsing, spend with no results, spend far past budget, tracking that looks broken (clicks but zero results for days, a sudden zero), days with no data, a big swing that needs an explanation.
 issue: what's wrong in one sentence. where: the line or section it's in (quote a few words). suggestion: the exact fix or what to check. Only real issues; no style nitpicks. A service named in <opportunity> may be mentioned once, softly; flag it as fix if it's pushy (prices, urgency, "upgrade"), repeated, or another service the sources didn't name.
 verdict: clean (nothing to fix or check), check (only checks or alerts), or fix (anything to fix).`;
@@ -332,6 +333,7 @@ export async function draftReport(admin: SupabaseClient, reportId: string) {
     }
     // And it always opens with @here, never with a person's mention
     out.message = openWithHere(out.message);
+    out.sections = dedupeSections(out.sections);
     await admin.from("reports").update({ message: out.message, sections: out.sections, message_basis: reportBasis(out.sections, c.r.extras), updated_at: new Date().toISOString() }).eq("id", reportId);
     // The QA runs before the buyer hears about it, so the note they get says whether there's anything to fix
     await qaReport(admin, reportId).catch(() => null);
@@ -428,6 +430,7 @@ export async function reviseReport(admin: SupabaseClient, reportId: string, ask:
     out.sections = scrubSections(out.sections);
   }
   out.message = openWithHere(out.message);
+  out.sections = dedupeSections(out.sections);
   // Read back what's being saved against what was there: the chat says which outputs changed, from the text itself
   const check = outputsCheck({ message: c.r.message, sections: c.r.sections }, out);
   const thumbs = await chatThumbs(opts.images).catch(() => []);

@@ -1,7 +1,7 @@
 import "server-only";
 import { chatThumbs } from "@/lib/chat-thumbs";
 import { OUTPUTS_RULE, outputsCheck } from "@/lib/reports/outputs-core";
-import { lastSentBlock } from "@/lib/reports/style-core";
+import { dedupeSections, lastSentBlock, ONCE_RULE } from "@/lib/reports/style-core";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson, askJsonWithTools, clientContext, contextBlock } from "@/lib/ai";
 import type { ChatTurn, Qa, QaFlag, Sections } from "@/lib/reports/write";
@@ -102,13 +102,13 @@ sections: the same content, structured, for the report page (the PDF draws the n
 ${TAKEAWAY_RULES}` : `${SOCIAL_MESSAGE(kind)}
 sections: the same content, structured, for the PDF and the report page: headline (one line, the main takeaway), summary (the What happened paragraph), did (what we did, 3 to 7 bullets from the work log), doing (what we're doing now and why, 2 to 5), next (the Coming up items), highlights (the Highlights bullets).
 ${SOCIAL_TAKEAWAY_RULES}`}`;
-  return whiteLabel ? `${base}\n${WHITE_LABEL_RULE}` : base;
+  return whiteLabel ? `${base}\n${ONCE_RULE}\n${WHITE_LABEL_RULE}` : `${base}\n${ONCE_RULE}`;
 }
 
 const QA_SYSTEM = (platform: ChannelPlatform) => `You are the QA for client reports at Kaizen Marketing, a marketing agency. Before the ${ROLE[lineOfPlatform(platform)]} sees a draft of this ${channelName(platform).toLowerCase()} report, you check it as if the client's trust depended on it. Compare the draft (message and sections) with the source data, the work log and what the ${ROLE[lineOfPlatform(platform)]} added.
 Flag:
 - fix: a number that doesn't match the data or the math (percent changes, rates), a wrong period or comparison,${platform === "klaviyo" ? " a Coming up item (date or campaign) that isn't in the Coming up list, the work log or what was said, an idea listed as if it were confirmed," : ""} a campaign, post, change or plan that isn't in the sources, revenue described as the store's total instead of attributed email revenue (email), an engagement rate quoted when the data says it isn't available (social), a client-facing mention of something internal (team names other than the client's, AI, Kaizen OS, other clients), an em dash.
-- check: something the ${ROLE[lineOfPlatform(platform)]} should confirm before sending: a claim that's only loosely supported, wording that could read badly to the client, ${platform === "klaviyo" ? "a message that leaves the email team's structure (title, Hi Team, What happened with its four bullets, Highlights, What we learned, Coming up), a client-facing internal word (flows, recipients, RPR)" : "a message that leaves the team's structure (title, Hi Team, What happened with its four bullets, Highlights, What we learned, Coming up), a Coming up item that isn't in the work log or what was said"}, a number shown without what it's compared to, a target mentioned without its progress.
+- check: something the ${ROLE[lineOfPlatform(platform)]} should confirm before sending: the same piece of work told twice (in two sections, or twice in the message), a claim that's only loosely supported, wording that could read badly to the client, ${platform === "klaviyo" ? "a message that leaves the email team's structure (title, Hi Team, What happened with its four bullets, Highlights, What we learned, Coming up), a client-facing internal word (flows, recipients, RPR)" : "a message that leaves the team's structure (title, Hi Team, What happened with its four bullets, Highlights, What we learned, Coming up), a Coming up item that isn't in the work log or what was said"}, a number shown without what it's compared to, a target mentioned without its progress.
 - alert: something alarming in the data itself the ${ROLE[lineOfPlatform(platform)]} should know before sending, even if the draft is right: revenue or reach collapsing, nothing sent or posted, followers lost, a red deliverability flag, days with no data.
 issue: what's wrong in one sentence. where: the line or section it's in (quote a few words). suggestion: the exact fix or what to check. Only real issues; no style nitpicks.
 verdict: clean (nothing to fix or check), check (only checks or alerts), or fix (anything to fix).`;
@@ -288,6 +288,7 @@ export async function draftChannelReport(admin: SupabaseClient, reportId: string
     }
     out.message = withTitle(out.message, channelTitle(c.client, c.r.kind, metrics));
     out.message = openWithHere(out.message);
+    out.sections = dedupeSections(out.sections);
     await admin.from("reports").update({ message: out.message, sections: out.sections, message_basis: reportBasis(out.sections, c.r.extras), updated_at: new Date().toISOString() }).eq("id", reportId);
     // The QA runs before the owner hears about it, so the note they get says whether there's anything to fix
     await qaChannelReport(admin, reportId).catch(() => null);
@@ -342,6 +343,7 @@ export async function reviseChannelReport(admin: SupabaseClient, reportId: strin
   }
   out.message = withTitle(out.message, channelTitle(c.client, c.r.kind, m));
   out.message = openWithHere(out.message);
+  out.sections = dedupeSections(out.sections);
   // Read back what's being saved against what was there: the chat says which outputs changed, from the text itself
   const check = outputsCheck({ message: c.r.message, sections: c.r.sections }, out);
   const thumbs = await chatThumbs(opts.images).catch(() => []);
