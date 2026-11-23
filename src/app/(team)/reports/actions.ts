@@ -1,7 +1,7 @@
 "use server";
 
 import { after } from "next/server";
-import { METRIC_KEYS, reportBasis, type MetricKey, type ReportLayout } from "@/lib/reports/format";
+import { METRIC_KEYS, isEventMetric, reportBasis, type MetricKey, type ReportLayout } from "@/lib/reports/format";
 import type { ReportMetrics } from "@/lib/reports/metrics";
 import { revalidatePath } from "next/cache";
 import { isExecOrLead, requireStaff, type Staff } from "@/lib/auth";
@@ -95,10 +95,11 @@ export async function saveReport(id: string, patch: { message?: string; extras?:
 /** A layout as it's kept: known metrics only, campaign names trimmed and capped (the campaigns left out of the report are `campaigns.hide`) */
 function tidyLayout(layout: ReportLayout): ReportLayout {
   const keys = new Set<string>(METRIC_KEYS);
-  const clean = (l?: string[]) => (l ? [...new Set(l.filter((k) => keys.has(k)))].slice(0, 12) as MetricKey[] : undefined);
+  // Tiles and the line under them may show any event the account counted; the scorecard's columns the known metrics only
+  const clean = (l?: string[], events = true) => (l ? [...new Set(l.filter((k) => keys.has(k) || (events && isEventMetric(k))))].slice(0, 12) as MetricKey[] : undefined);
   const names = (l?: string[]) => (l ? [...new Set(l.map((x) => String(x).trim().slice(0, 300)).filter(Boolean))].slice(0, 60) : undefined);
   const results = layout.campaigns?.results ? Object.fromEntries(Object.entries(layout.campaigns.results).slice(0, 60).map(([k, v]) => [String(k).slice(0, 300), String(v).slice(0, 200)])) : undefined;
-  return { tiles: clean(layout.tiles), table: clean(layout.table), columns: clean(layout.columns), campaigns: layout.campaigns ? { hide: names(layout.campaigns.hide), add: names(layout.campaigns.add), results } : undefined };
+  return { tiles: clean(layout.tiles), table: clean(layout.table), columns: clean(layout.columns, false), campaigns: layout.campaigns ? { hide: names(layout.campaigns.hide), add: names(layout.campaigns.add), results } : undefined };
 }
 
 /**

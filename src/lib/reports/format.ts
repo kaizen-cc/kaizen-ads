@@ -109,7 +109,23 @@ export function pdfDisposition(name: string, inline = false) {
 
 /** Every number a report can show, in a tile, a row of the key metrics table, or a column of the campaign table */
 export const METRIC_KEYS = ["spend", "results", "cost_per_result", "revenue", "roas", "ctr", "clicks", "cpc", "cpm", "impressions", "views_6s", "hook_rate"] as const;
-export type MetricKey = (typeof METRIC_KEYS)[number];
+export type BaseMetric = (typeof METRIC_KEYS)[number];
+/**
+ * Any event the account counted, as a metric of its own: "n:<action type>" its count (add to carts, leads, landing page
+ * views, video views…), "c:<action type>" its cost (spend over the count). Offered from what the report's period actually
+ * counted (Period.actions), so a tile can show anything the data source returns.
+ */
+export type EventMetric = `n:${string}` | `c:${string}`;
+export type MetricKey = BaseMetric | EventMetric;
+export const isEventMetric = (k: unknown): k is EventMetric => typeof k === "string" && /^[nc]:[\w.:\- ]{1,120}$/.test(k);
+/** A metric a layout may keep: a known one, or an event's count or cost */
+export const isMetricKey = (k: unknown): k is MetricKey => (METRIC_KEYS as readonly string[]).includes(k as string) || isEventMetric(k);
+/** An action type as a person reads it when the report has no name for it ("offsite_conversion.fb_pixel_add_to_cart" → "Add to cart") */
+export function eventName(type: string, labels?: Record<string, string> | null) {
+  if (labels?.[type]) return labels[type];
+  const t = type.replace(/^(offsite_conversion\.fb_pixel_|onsite_web_app_|onsite_web_|onsite_conversion\.|offsite_conversion\.|omni_|app_custom_event\.fb_mobile_|action:|tiktok_)/, "").replace(/[._]+/g, " ").trim();
+  return t ? t[0].toUpperCase() + t.slice(1) : type;
+}
 /** Only TikTok reports have video views and hook rates */
 export const TIKTOK_ONLY: readonly MetricKey[] = ["views_6s", "hook_rate"];
 /** The metrics a report on this platform can show */
@@ -126,16 +142,32 @@ export const metricKeysFor = (platform: string | null | undefined): MetricKey[] 
  *  it travels in the Slack or email message that carries the report */
 export type ReportLayout = { tiles?: MetricKey[]; table?: MetricKey[]; columns?: MetricKey[]; campaigns?: { hide?: string[]; add?: string[]; results?: Record<string, string> }; notes?: boolean };
 
-type Nums = { spend: number; results: number; costPerResult: number | null; revenue?: number; roas: number | null; ctr: number | null; clicks?: number; cpc?: number | null; cpm?: number | null; impressions?: number; views6s?: number; hookRate?: number | null };
+type Nums = { actions?: Record<string, number> | null; spend: number; results: number; costPerResult: number | null; revenue?: number; roas: number | null; ctr: number | null; clicks?: number; cpc?: number | null; cpm?: number | null; impressions?: number; views6s?: number; hookRate?: number | null };
 
 export function metricLabel(m: Pick<ReportMetrics, "conversion">, k: MetricKey, short = false) {
+  if (isEventMetric(k)) {
+    const name = eventName(k.slice(2), (m as { eventLabels?: Record<string, string> | null }).eventLabels);
+    // "Adds to cart (pixel)" → "Cost per add to cart (pixel)": the first word made singular when the name doesn't end in one
+    const one = name.toLowerCase().replace(/ies$/, "y").replace(/s$/, "") === name.toLowerCase() ? name.toLowerCase().replace(/^(\w+?)s\b/, "$1") : name.toLowerCase().replace(/ies$/, "y").replace(/s$/, "");
+    return k.startsWith("c:") ? `Cost per ${one}` : name;
+  }
   const one = singular(m.conversion);
   return { spend: "Spend", results: m.conversion, cost_per_result: short ? `Per ${one}` : `Cost per ${one}`, revenue: "Revenue", roas: "ROAS", ctr: short ? "CTR" : "Click-through rate", clicks: "Link clicks", cpc: "CPC", cpm: "CPM", impressions: "Impressions", views_6s: short ? "6s views" : "6-second views", hook_rate: "Hook rate" }[k];
 }
 
-export const BETTER: Record<MetricKey, "up" | "down" | "none"> = { spend: "none", results: "up", cost_per_result: "down", revenue: "up", roas: "up", ctr: "up", clicks: "up", cpc: "down", cpm: "down", impressions: "up", views_6s: "up", hook_rate: "up" };
+export const BETTER: Record<BaseMetric, "up" | "down" | "none"> = { spend: "none", results: "up", cost_per_result: "down", revenue: "up", roas: "up", ctr: "up", clicks: "up", cpc: "down", cpm: "down", impressions: "up", views_6s: "up", hook_rate: "up" };
+
+/** Whether a rise is good news for this metric: more of an event is, a higher cost per event isn't */
+export const betterOf = (k: MetricKey): "up" | "down" | "none" => (isEventMetric(k) ? (k.startsWith("c:") ? "down" : "up") : BETTER[k]);
 
 export function metricNumber(p: Nums, k: MetricKey): number | null {
+  if (isEventMetric(k)) {
+    // Periods drawn before events were kept have no counts: unknown, never zero
+    if (!p.actions) return null;
+    const n = p.actions[k.slice(2)] ?? 0;
+    if (k.startsWith("n:")) return n;
+    return n > 0 ? Math.round((p.spend / n) * 100) / 100 : null;
+  }
   const v = { spend: p.spend, results: p.results, cost_per_result: p.costPerResult, revenue: p.revenue ?? null, roas: p.roas, ctr: p.ctr, clicks: p.clicks ?? null, cpc: p.cpc ?? null, cpm: p.cpm ?? null, impressions: p.impressions ?? null, views_6s: p.views6s ?? null, hook_rate: p.hookRate ?? null }[k];
   return v == null || !Number.isFinite(v) ? null : v;
 }
@@ -146,6 +178,7 @@ export function metricText(p: Nums, k: MetricKey) {
 
 /** A number as its metric shows it ($, %, x or a count) */
 export function formatMetric(k: MetricKey, n: number | null) {
+  if (isEventMetric(k)) return k.startsWith("c:") ? money(n) : count(n);
   if (["spend", "cost_per_result", "revenue", "cpc", "cpm"].includes(k)) return money(n);
   if (k === "roas") return multiple(n);
   if (k === "ctr" || k === "hook_rate") return percent(n);
@@ -164,7 +197,7 @@ export function tilesFor(m: ReportMetrics, keys: MetricKey[], main: Period = m.m
   return keys.map((k) => {
     const sub =
       k === "results" && main.costPerResult != null ? `${money(main.costPerResult)} per ${singular(m.conversion)}` : k === "ctr" && main.clicks ? `${count(main.clicks)} link clicks` : k === "roas" && main.revenue ? `${money(main.revenue)} revenue` : k === "cost_per_result" && m.target != null && !m.roasKpi ? `Target ${money(m.target)}` : `${metricText(compare, k)} in ${compare.label}`;
-    return { label: metricLabel(m, k), value: metricText(main, k), sub, delta: delta(metricNumber(main, k), metricNumber(compare, k), BETTER[k]), now: metricNumber(main, k), before: metricNumber(compare, k) };
+    return { label: metricLabel(m, k), value: metricText(main, k), sub, delta: delta(metricNumber(main, k), metricNumber(compare, k), betterOf(k)), now: metricNumber(main, k), before: metricNumber(compare, k) };
   });
 }
 
@@ -182,7 +215,7 @@ export function rowsFor(m: ReportMetrics, keys: MetricKey[]): KpiRow[] {
     label: metricLabel(m, k, true).replace(/^Per /, "Cost per "),
     now: metricText(m.main, k),
     before: metricText(m.compare, k),
-    delta: delta(metricNumber(m.main, k), metricNumber(m.compare, k), BETTER[k]),
+    delta: delta(metricNumber(m.main, k), metricNumber(m.compare, k), betterOf(k)),
     target: k === "spend" && m.monthlyBudget != null ? `${money(m.monthlyBudget)} budget` : k === "cost_per_result" && m.target != null && !m.roasKpi ? money(m.target) : k === "roas" && m.target != null && m.roasKpi ? multiple(m.target) : "–",
   }));
 }

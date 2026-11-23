@@ -17,6 +17,25 @@ export const MAX_TILES = 6;
 
 const EMAIL_TILES = ["revenue", "orders", "split", "campaignRevenue", "flowRevenue", "aov", "recipients", "openRate", "clickRate", "orderRate", "subscribers", "sms", "rpr"] as const;
 const SOCIAL_TILES = ["followers", "reach", "views", "rate", "interactions", "posts", "profileViews", "engaged", "gained"] as const;
+/** More of what the data source returns, any of which can be a tile: the email provider's sends, cadence and list health,
+ *  the automated emails' own rates; social's unfollows and net change, and each platform's own numbers ("instagram:reach") */
+const EMAIL_MORE = ["sends", "campaignsSent", "cadence", "unsubRate", "spamRate", "bounceRate", "share", "storeRevenue", "joined", "left", "flowRecipients", "flowOpenRate", "flowClickRate", "flowOrderRate"] as const;
+const SOCIAL_MORE = ["followerChange", "lost"] as const;
+const PER_PLATFORM = ["followers", "reach", "views", "rate", "interactions", "posts", "profileViews"] as const;
+const PER_PLATFORM_KEY = /^([a-z_]+):(followers|reach|views|rate|interactions|posts|profileViews)$/;
+const PLATFORM_NAME: Record<string, string> = { facebook: "Facebook", instagram: "Instagram", tiktok: "TikTok", linkedin: "LinkedIn", youtube: "YouTube", x: "X", threads: "Threads", pinterest: "Pinterest" };
+const platformName = (p: string) => PLATFORM_NAME[p] ?? p.replace(/^\w/, (c) => c.toUpperCase());
+
+/** How the picker groups a line's tiles (search finds them by these names too) */
+const EMAIL_GROUP: Record<string, string> = { revenue: "Revenue", orders: "Revenue", split: "Revenue", campaignRevenue: "Revenue", flowRevenue: "Revenue", aov: "Revenue", sms: "Revenue", rpr: "Revenue", share: "Revenue", storeRevenue: "Revenue", recipients: "Campaigns", openRate: "Campaigns", clickRate: "Campaigns", orderRate: "Campaigns", sends: "Campaigns", campaignsSent: "Campaigns", cadence: "Campaigns", flowRecipients: "Automated emails", flowOpenRate: "Automated emails", flowClickRate: "Automated emails", flowOrderRate: "Automated emails", subscribers: "List", joined: "List", left: "List", unsubRate: "Deliverability", spamRate: "Deliverability", bounceRate: "Deliverability" };
+const SOCIAL_GROUP: Record<string, string> = { followers: "Audience", gained: "Audience", lost: "Audience", followerChange: "Audience", reach: "Reach", views: "Reach", profileViews: "Reach", rate: "Engagement", interactions: "Engagement", engaged: "Engagement", posts: "Publishing" };
+
+/** A tile's group in the picker */
+export function tileGroup(m: Metrics, key: string): string {
+  const per = key.match(PER_PLATFORM_KEY);
+  if (per) return platformName(per[1]);
+  return (m.platform === "social" ? SOCIAL_GROUP[key] : EMAIL_GROUP[key]) ?? "More";
+}
 
 const EMAIL_COLUMNS = ["date", "channel", "status", "recipients", "open", "click", "orders", "orderRate", "revenue", "rpr"] as const;
 const SOCIAL_COLUMNS = ["followers", "change", "reach", "views", "rate", "posts"] as const;
@@ -25,9 +44,15 @@ const COLUMN_LABEL: Record<string, string> = { date: "Sent", channel: "Type", st
 
 /** Every tile a report on this line can show (an older email report without the detail has fewer) */
 export function tileOptions(m: Metrics): string[] {
-  if (m.platform === "social") return [...SOCIAL_TILES];
-  if (!m.detail) return ["revenue", "campaignRevenue", "flowRevenue", "subscribers", "openRate", "clickRate", "sms", "rpr"];
-  return [...EMAIL_TILES];
+  if (m.platform === "social") {
+    // Each platform's own numbers when the account posts on more than one
+    const per = (m.platforms ?? []).length >= 2 ? (m.platforms ?? []).flatMap((p) => PER_PLATFORM.map((k) => `${p.platform}:${k}`)) : [];
+    const keys = [...new Set<string>([...SOCIAL_TILES, ...SOCIAL_MORE, ...per])];
+    return keys.filter((k) => (SOCIAL_TILES as readonly string[]).includes(k) || tileView(m, k) != null);
+  }
+  const base: string[] = m.detail ? [...EMAIL_TILES] : ["revenue", "campaignRevenue", "flowRevenue", "subscribers", "openRate", "clickRate", "sms", "rpr"];
+  // The extra ones only when this report has the numbers for them
+  return [...base, ...EMAIL_MORE.filter((k) => tileView(m, k) != null)];
 }
 
 /** The tiles a report starts with: what the team's own report leads with */
@@ -58,7 +83,8 @@ export function columnKeys(platform: ChannelPlatform, layout?: ChannelLayout | n
 
 /** A layout as it's kept: known tiles and columns only, no repeats, within the limits */
 export function tidyChannelLayout(platform: ChannelPlatform, layout: ChannelLayout | null | undefined): ChannelLayout {
-  const tiles = [...new Set((layout?.tiles ?? []).filter((k) => (platform === "social" ? (SOCIAL_TILES as readonly string[]) : (EMAIL_TILES as readonly string[])).includes(k)))].slice(0, MAX_TILES);
+  const known = (k: string) => (platform === "social" ? ([...SOCIAL_TILES, ...SOCIAL_MORE] as readonly string[]).includes(k) || PER_PLATFORM_KEY.test(k) : ([...EMAIL_TILES, ...EMAIL_MORE] as readonly string[]).includes(k));
+  const tiles = [...new Set((layout?.tiles ?? []).filter((k) => typeof k === "string" && known(k)))].slice(0, MAX_TILES);
   const columns = [...new Set((layout?.columns ?? []).filter((k) => columnOptions(platform).includes(k)))];
   return { ...(tiles.length ? { tiles } : {}), ...(columns.length ? { columns } : {}), ...(layout?.notes === true ? { notes: true } : {}) };
 }
@@ -99,15 +125,25 @@ export function tileView(m: Metrics, key: string): TileView | null {
         return tile(key, "Accounts engaged", int(now.engaged), null, int(before.engaged), moveOf(now.engaged, before.engaged));
       case "gained":
         return tile(key, "New followers", int(now.gained), now.lost != null ? `${int(now.lost)} unfollowed` : null, int(before.gained), moveOf(now.gained, before.gained));
-      default:
-        return null;
+      case "lost":
+        return now.lost == null ? null : tile(key, "Unfollows", int(now.lost), null, int(before.lost), moveOf(now.lost, before.lost, "down"));
+      case "followerChange":
+        return now.followerChange == null ? null : tile(key, "Net follower change", signed(now.followerChange), now.followers != null ? `${int(now.followers)} followers now` : null, before.followerChange != null ? signed(before.followerChange) : "–", moveOf(now.followerChange, before.followerChange));
+      default: {
+        // One platform's own number ("instagram:reach")
+        const per = key.match(PER_PLATFORM_KEY);
+        const p = per ? (m.platforms ?? []).find((x) => x.platform === per[1]) : null;
+        if (!per || !p) return null;
+        const base = tileView({ ...m, now: p.now, before: p.before, target: null }, per[2]);
+        return base ? { ...base, key, label: `${platformName(per[1])} ${base.label.toLowerCase()}`, sub: null } : null;
+      }
     }
   }
   const c = m.currency;
   const { now, before } = m;
   const d = m.detail ?? null;
   // A source with no revenue (Customer.io without a purchase event, Brevo without a store) has no money tiles: unmeasured, not zero
-  if (m.revenueMeasured === false && ["revenue", "orders", "split", "campaignRevenue", "flowRevenue", "aov", "orderRate", "sms", "rpr"].includes(key)) return null;
+  if (m.revenueMeasured === false && ["revenue", "orders", "split", "campaignRevenue", "flowRevenue", "aov", "orderRate", "sms", "rpr", "share", "storeRevenue", "flowOrderRate"].includes(key)) return null;
   switch (key) {
     case "revenue":
       return tile(key, d ? "Revenue from email & SMS" : "Attributed revenue", money(now.revenue, c), targetSub(m.target, c) ?? (now.estimated ? "Added up from campaigns and automated emails" : d ? "Attributed by Klaviyo" : null), money(before.revenue, c), moveOf(now.revenue, before.revenue));
@@ -152,6 +188,34 @@ export function tileView(m: Metrics, key: string): TileView | null {
     }
     case "sms":
       return tile(key, "SMS revenue", money(now.smsRevenue, c), "Within the revenue from email & SMS", money(before.smsRevenue, c), moveOf(now.smsRevenue, before.smsRevenue));
+    case "sends":
+      return tile(key, "Messages sent", int(now.sends), "Every email and text", int(before.sends), moveOf(now.sends, before.sends, "none"));
+    case "campaignsSent":
+      return tile(key, "Campaigns sent", int(now.campaignsSent), null, int(before.campaignsSent), moveOf(now.campaignsSent, before.campaignsSent, "none"));
+    case "cadence":
+      return tile(key, "Campaigns a week", now.cadence.toFixed(1), null, before.cadence.toFixed(1), moveOf(now.cadence, before.cadence, "none"));
+    case "unsubRate":
+      return now.unsubscribeRate == null ? null : tile(key, "Unsubscribe rate", pct(now.unsubscribeRate, 2), null, pct(before.unsubscribeRate, 2), moveOf(now.unsubscribeRate, before.unsubscribeRate, "down"));
+    case "spamRate":
+      return now.spamRate == null ? null : tile(key, "Spam complaint rate", pct(now.spamRate, 3), null, pct(before.spamRate, 3), moveOf(now.spamRate, before.spamRate, "down"));
+    case "bounceRate":
+      return now.bounceRate == null ? null : tile(key, "Bounce rate", pct(now.bounceRate, 2), null, pct(before.bounceRate, 2), moveOf(now.bounceRate, before.bounceRate, "down"));
+    case "share":
+      return now.share == null ? null : tile(key, "Share of store revenue", pct(now.share), "Revenue from email and SMS over the store's", pct(before.share), moveOf(now.share, before.share));
+    case "storeRevenue":
+      return now.storeRevenue == null ? null : tile(key, "Store revenue", money(now.storeRevenue, c), "Every order placed in the store", money(before.storeRevenue, c), moveOf(now.storeRevenue, before.storeRevenue));
+    case "joined":
+      return d?.subscribers?.joined.now == null ? null : tile(key, "New subscribers", int(d.subscribers.joined.now), null, int(d.subscribers.joined.before), moveOf(d.subscribers.joined.now, d.subscribers.joined.before));
+    case "left":
+      return d?.subscribers?.left.now == null ? null : tile(key, "Unsubscribed", int(d.subscribers.left.now), null, int(d.subscribers.left.before), moveOf(d.subscribers.left.now, d.subscribers.left.before, "down"));
+    case "flowRecipients":
+      return d?.flow?.recipients.now == null ? null : tile(key, "Automated email recipients", int(d.flow.recipients.now), null, int(d.flow.recipients.before), moveOf(d.flow.recipients.now, d.flow.recipients.before, "none"));
+    case "flowOpenRate":
+      return d?.flow?.open.now == null ? null : tile(key, "Automated email open rate", pct(d.flow.open.now), null, pct(d.flow.open.before), moveOf(d.flow.open.now, d.flow.open.before));
+    case "flowClickRate":
+      return d?.flow?.click.now == null ? null : tile(key, "Automated email click rate", pct(d.flow.click.now, 2), null, pct(d.flow.click.before, 2), moveOf(d.flow.click.now, d.flow.click.before));
+    case "flowOrderRate":
+      return d?.flow?.orderRate.now == null ? null : tile(key, "Automated email order rate", pct(d.flow.orderRate.now, 2), null, pct(d.flow.orderRate.before, 2), moveOf(d.flow.orderRate.now, d.flow.orderRate.before));
     case "rpr":
       return tile(key, "Revenue per recipient", now.revenuePerRecipient != null ? cents(now.revenuePerRecipient, c) : "–", "Every email and text sent", before.revenuePerRecipient != null ? cents(before.revenuePerRecipient, c) : "–", moveOf(now.revenuePerRecipient, before.revenuePerRecipient));
     default:

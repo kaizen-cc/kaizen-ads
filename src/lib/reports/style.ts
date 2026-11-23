@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { addedLines, changeLine, currentVersion, mergeRules, nextVersion, sectionsDiff, type StyleLine, type StyleRule, type StyleSource, type StyleVersion } from "./style-core";
-import type { ReportLayout } from "./format";
+import { eventName, isEventMetric, type ReportLayout } from "./format";
 
 // Reading and teaching a client's report style (see style-core.ts for what it is). Read with the server's rights by
 // callers that already checked the person may work on the client's reports. A database without the table yet falls
@@ -125,6 +125,6 @@ const LABEL: Record<string, string> = { spend: "Spend", results: "Results", cost
 /** The metrics a buyer picked, as style rules ("Tiles: Spend, Purchases, ROAS"), one per place they can be picked */
 export function layoutRules(layout: ReportLayout, platform: string): string[] {
   const where = platform === "google" ? "Google" : platform === "tiktok" ? "TikTok" : "Meta";
-  const line = (name: string, keys?: string[]) => (keys?.length ? `${where} ${name.toLowerCase()}: ${keys.map((k) => LABEL[k] ?? k).join(", ")}` : null);
+  const line = (name: string, keys?: string[]) => (keys?.length ? `${where} ${name.toLowerCase()}: ${keys.map((k) => LABEL[k] ?? (isEventMetric(k) ? `${k.startsWith("c:") ? "Cost per " : ""}${eventName(k.slice(2)).toLowerCase()}` : k)).join(", ")}` : null);
   return [line("Tiles", layout.tiles), line("Key metrics", layout.table), line("Campaign columns", layout.columns)].filter((x): x is string => Boolean(x));
 }

@@ -42,6 +42,8 @@ export type Period = {
   /** TikTok: 6-second video views, and the hook rate (6-second views over impressions, %) */
   views6s?: number;
   hookRate?: number | null;
+  /** Every event the account counted in the period (its action type → how many), so any of them can be a tile (see EventMetric) */
+  actions?: Record<string, number>;
 };
 
 /** result: what this campaign is optimized for ("Purchase", "Post engagement"), counted the way the KPI board counts it */
@@ -84,6 +86,8 @@ export type ReportMetrics = {
    * when there are two or more. Reports drafted before it have none and show no breakdown.
    */
   goalParts?: GoalPart[];
+  /** The events counted in the report's periods, by their names ("offsite_conversion.fb_pixel_add_to_cart" → "Adds to cart (pixel)") */
+  eventLabels?: Record<string, string>;
   /** Day by day in the main period (the client dashboard's chart), when asked for */
   daily?: { date: string; spend: number; results: number; revenue: number; clicks: number; impressions: number }[];
   /** Where performance is weak and why (set when the report is drafted) */
@@ -185,7 +189,9 @@ export function period(rows: { date: string; impressions?: number | string | nul
   let clicks = 0;
   let views6s = 0;
   let video = false;
+  const actions: Record<string, number> = {};
   for (const d of ds) {
+    for (const [k, v] of Object.entries(d.actions ?? {})) if (Number(v)) actions[k] = (actions[k] ?? 0) + Number(v);
     spend += d.spend;
     results += resultsOf(d, conv, type);
     clicks += d.linkClicks ?? 0;
@@ -213,6 +219,7 @@ export function period(rows: { date: string; impressions?: number | string | nul
     costPerResult: results ? r2(spend / results) : null,
     revenue: r2(revenue),
     roas: spend && revenue ? r2(revenue / spend) : null,
+    actions: Object.fromEntries(Object.entries(actions).map(([k, v]) => [k, Math.round(v * 10) / 10])),
   };
 }
 
@@ -464,6 +471,7 @@ export async function reportMetrics(admin: SupabaseClient, base: Target, kind: "
     compare,
     mtd: ps.mtd ? period(all, days, ps.mtd, conv, type, valueType) : null,
     mtdCompare: ps.mtdCompare ? period(all, days, ps.mtdCompare, conv, type, valueType) : null,
+    eventLabels: Object.fromEntries([...new Set([...Object.keys(main.actions ?? {}), ...Object.keys(compare.actions ?? {})])].map((k) => [k, actionLabel(k)])),
     campaigns,
     ...(leftOut.length ? { leftOut } : {}),
     topAds,

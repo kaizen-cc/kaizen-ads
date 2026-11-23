@@ -1,5 +1,5 @@
 import type { Period, ReportMetrics, TopAd } from "./metrics";
-import { BETTER, count, metricLabel, metricNumber, money, multiple, percent, singular, type MetricKey, type ReportLayout } from "./format";
+import { betterOf, count, isEventMetric, metricLabel, metricNumber, money, multiple, percent, singular, type MetricKey, type ReportLayout } from "./format";
 
 // The weekly report's layout as plain functions (no server code), shared by the PDF, the studio and the tests: which
 // four numbers lead (by the client's KPI), whether each moved the right way (green) or the wrong way (red), the five-week
@@ -97,7 +97,7 @@ export function move(k: MetricKey, now: number | null | undefined, before: numbe
   const pct = Math.abs(raw).toFixed(1);
   if (pct === "0.0") return { pct: "0.0%", up: false, tone: "flat" };
   const up = raw > 0;
-  const better = BETTER[k];
+  const better = betterOf(k);
   const tone: Tone = better === "none" ? "flat" : up === (better === "up") ? "good" : "bad";
   return { pct: `${pct}%`, up, tone };
 }
@@ -107,6 +107,7 @@ export type WeeklyTile = { key: MetricKey; label: string; value: string; before:
 /** A number as a weekly shows it: money with cents under $1,000, counts with commas */
 export function weeklyValue(k: MetricKey, n: number | null) {
   if (n == null || !Number.isFinite(n)) return "–";
+  if (isEventMetric(k)) return k.startsWith("c:") ? `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : Math.round(n).toLocaleString("en-US");
   if (["spend", "cost_per_result", "revenue", "cpc", "cpm"].includes(k)) return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   if (k === "roas") return multiple(n);
   if (k === "ctr" || k === "hook_rate") return percent(n);

@@ -14,7 +14,7 @@ import { scoreColumns, supportKeys, swapTile, takeawaysFor, weeklyTileKeys, type
 import { leaveOutCampaigns } from "@/lib/reports/campaign-scope";
 import { mentionLabel, openWithHere } from "@/lib/reports/slack-text";
 import { RecapDeckButton } from "./recap-deck-button";
-import { metricKeysFor, clockTime, metricLabel, platformName, reportBasis, type MetricKey, type ReportLayout } from "@/lib/reports/format";
+import { clockTime, platformName, reportBasis, type MetricKey, type ReportLayout } from "@/lib/reports/format";
 import type { ReportMetrics } from "@/lib/reports/metrics";
 import { jointMessage, jointNote, type JointInfo, type JointNote } from "@/lib/reports/joint-core";
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
@@ -41,7 +41,9 @@ import { roleForReport } from "@/lib/agent-call/call-context";
 import { SocialTeamPanel } from "./social-team-panel";
 import { channelNoteText, takeawaysFor as channelTakeaways, type EmailMetrics, type SocialMetrics } from "@/lib/channel-reports/core";
 import type { ChannelPdfInput } from "@/lib/channel-reports/channel-doc";
-import { columnKeys, columnLabel, columnOptions, MAX_TILES, swapChannelTile, tileKeys, tileLabel, tileOptions, type ChannelLayout } from "@/lib/channel-reports/layout";
+import { columnKeys, columnLabel, columnOptions, MAX_TILES, swapChannelTile, tileGroup, tileKeys, tileLabel, tileOptions, type ChannelLayout } from "@/lib/channel-reports/layout";
+import { adsMetricOptions, type MetricOption } from "@/lib/reports/metric-options";
+import { MetricPicker } from "./metric-picker";
 import { channelsFor, defaultSendOption, furthestStep, initialStep, previewFormat, previewFormatsFor, resolveStep, sendOptions, stepsFor, type PreviewFormat, type SendOption, type StudioStep } from "@/lib/reports/studio-steps";
 
 // One report, start to finish, in three steps and then sent: review the report (the PDF the client gets, with the AI
@@ -842,7 +844,8 @@ export function ReportStudio({
     // What's on the page now: the tiles at the top and the table columns, each one click away
     const tiles = tileKeys(m, chLayout);
     const cols = columnKeys(m.platform, chLayout);
-    const nameOf = (where: "tiles" | "columns", k: string) => (where === "tiles" ? tileLabel(m, k) : columnLabel(k));
+    // Every tile this report has numbers for (grouped, searchable), and the table's columns
+    const chOptions = (where: "tiles" | "columns"): MetricOption[] => (where === "tiles" ? tileOptions(m).map((k) => ({ key: k, label: tileLabel(m, k), group: tileGroup(m, k) })) : columnOptions(m.platform).map((k) => ({ key: k, label: columnLabel(k), group: "Table columns" })));
     const choose = (where: "tiles" | "columns", i: number, k: string) =>
       setChLayout(where === "tiles" ? { ...chLayout, tiles: swapChannelTile(tiles, i, k) } : { ...chLayout, columns: cols.includes(k) ? cols : cols.map((x, j) => (j === i ? k : x)) });
     const drop = (where: "tiles" | "columns", i: number) => setChLayout(where === "tiles" ? { ...chLayout, tiles: tiles.filter((_, j) => j !== i) } : { ...chLayout, columns: cols.filter((_, j) => j !== i) });
@@ -853,24 +856,18 @@ export function ReportStudio({
       const i = Number(at);
       const now = where === "tiles" ? tiles : cols;
       const current = now[i] ?? null;
-      const options = where === "tiles" ? tileOptions(m) : columnOptions(m.platform);
       return (
-        <>
-          <p className="px-1 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-faint">{where === "tiles" ? "Show in this tile" : "Show in this column"}</p>
-          <div className="grid gap-1">
-            {options.filter((k) => k === current || (where === "tiles" ? true : !now.includes(k))).map((k) => (
-              <button key={k} type="button" onClick={() => (choose(where, i, k), close())} className={`flex h-10 items-center justify-between rounded-[10px] px-3 text-left text-[13.5px] hover:bg-surface-2 ${k === current ? "bg-surface-2 text-fg" : "text-muted"}`}>
-                {nameOf(where, k)}
-                {k === current ? <span className="text-[11px] text-faint">Now</span> : now.includes(k) ? <span className="text-[11px] text-faint">Swaps places</span> : null}
-              </button>
-            ))}
-          </div>
-          {now.length > 1 && (
-            <button type="button" onClick={() => (drop(where, i), close())} className="h-10 rounded-[10px] px-3 text-left text-[13px] text-bad hover:bg-bad-soft/40">
-              Remove this {where === "tiles" ? "tile" : "column"}
-            </button>
-          )}
-        </>
+        <MetricPicker
+          title={where === "tiles" ? "Show in this tile" : "Show in this column"}
+          options={chOptions(where)}
+          current={current}
+          taken={now}
+          hideTaken={where === "columns"}
+          onPick={(k) => (k !== current && choose(where, i, k), close())}
+          onRemove={now.length > 1 ? () => (drop(where, i), close()) : undefined}
+          removeLabel={`Remove this ${where === "tiles" ? "tile" : "column"}`}
+          onClose={close}
+        />
       );
     };
     const adding_ = addingMetric === "tiles" || addingMetric === "columns" ? addingMetric : null;
@@ -890,21 +887,20 @@ export function ReportStudio({
           )}
         </div>
         {adding_ && (
-          <div className="flex flex-wrap gap-1.5">
-            {(adding_ === "tiles" ? tileOptions(m).filter((k) => !tiles.includes(k)) : columnOptions(m.platform).filter((k) => !cols.includes(k))).map((k) => (
-              <button
-                key={k}
-                type="button"
-                disabled={adding_ === "tiles" && tiles.length >= MAX_TILES}
-                onClick={() => {
-                  setChLayout(adding_ === "tiles" ? { ...chLayout, tiles: [...tiles, k].slice(0, MAX_TILES) } : { ...chLayout, columns: [...cols, k] });
-                  setAddingMetric(null);
-                }}
-                className="h-9 rounded-full bg-surface-2 px-3 text-[12.5px] hover:text-fg disabled:opacity-40 max-md:h-10"
-              >
-                {nameOf(adding_, k)}
-              </button>
-            ))}
+          <div className="rounded-[14px] border border-line bg-surface p-3 md:max-w-sm">
+            <MetricPicker
+              title={adding_ === "tiles" ? "Add a tile" : "Add a table column"}
+              options={chOptions(adding_)}
+              current={null}
+              taken={adding_ === "tiles" ? tiles : cols}
+              hideTaken
+              full={adding_ === "tiles" && tiles.length >= MAX_TILES ? `The page holds ${MAX_TILES} tiles: tap one on the page to swap it, or remove one first.` : null}
+              onPick={(k) => {
+                setChLayout(adding_ === "tiles" ? { ...chLayout, tiles: [...tiles, k].slice(0, MAX_TILES) } : { ...chLayout, columns: [...cols, k] });
+                setAddingMetric(null);
+              }}
+              onClose={() => setAddingMetric(null)}
+            />
           </div>
         )}
         <div className="flex flex-wrap items-center gap-1.5 border-t border-line pt-2 text-[12.5px]">
@@ -1034,17 +1030,8 @@ export function ReportStudio({
       else now.splice(i, 1);
       setLayout({ ...layout, [where]: now });
     };
-    const picker = (where: "tiles" | "table" | "columns", current: MetricKey | null, choose: (k: MetricKey) => void) =>
-      m && (
-        <div className="grid gap-1">
-          {metricKeysFor(report.platform).filter((k) => k === current || !list[where].includes(k)).map((k) => (
-            <button key={k} type="button" onClick={() => choose(k)} className={`flex h-10 items-center justify-between rounded-[10px] px-3 text-left text-[13.5px] hover:bg-surface-2 ${k === current ? "bg-surface-2 text-fg" : "text-muted"}`}>
-              {metricLabel(m, k)}
-              {k === current && <span className="text-[11px] text-faint">Now</span>}
-            </button>
-          ))}
-        </div>
-      );
+    // Every metric this report has data for in that place (tiles and the line under them: every event the account counted too)
+    const adsOptions = (where: "tiles" | "table" | "columns"): MetricOption[] => (m ? adsMetricOptions(m, report.platform, where) : []);
     const hotMenu = (target: string, close: () => void) => {
       const [platform, kind, ...rest] = target.split("/");
       if (!m) return null;
@@ -1063,19 +1050,24 @@ export function ReportStudio({
         const where = kind === "tile" ? "tiles" : kind === "row" ? "table" : "columns";
         const i = Number(rest[0]);
         const current = list[where][i] ?? null;
+        // A tile swaps with the line under it; a row or column already shown elsewhere stays out of the list
+        const taken = where === "tiles" ? [...list.tiles, ...list.table] : list[where];
         return (
-          <>
-            {title(kind === "tile" ? "Show in this tile" : kind === "row" ? "Show in this row" : "Show in this column")}
-            {picker(where, current, (k) => {
-              swap(where, i, k);
+          <MetricPicker
+            title={kind === "tile" ? "Show in this tile" : kind === "row" ? "Show in this row" : "Show in this column"}
+            options={adsOptions(where)}
+            current={current}
+            taken={taken}
+            takenNote={where === "tiles" ? "Swaps places" : "On the page"}
+            hideTaken={where !== "tiles"}
+            onPick={(k) => {
+              if (k !== current) swap(where, i, k as MetricKey);
               close();
-            })}
-            {list[where].length > 1 && (
-              <button type="button" onClick={() => (swap(where, i, null), close())} className="h-10 rounded-[10px] px-3 text-left text-[13px] text-bad hover:bg-bad-soft/40">
-                Remove this {kind === "tile" ? "tile" : kind === "row" ? "row" : "column"}
-              </button>
-            )}
-          </>
+            }}
+            onRemove={list[where].length > 1 ? () => (swap(where, i, null), close()) : undefined}
+            removeLabel={`Remove this ${kind === "tile" ? "tile" : kind === "row" ? "row" : "column"}`}
+            onClose={close}
+          />
         );
       }
       // A trend chart: taken out, or redrawn by the AI with a different metric or range
@@ -1245,20 +1237,20 @@ export function ReportStudio({
             )}
           </div>
           {addingMetric && addingMetric !== "campaign" && (
-            <div className="flex flex-wrap gap-1.5">
-              {metricKeysFor(report.platform).filter((k) => !list[addingMetric].includes(k)).map((k) => (
-                <button
-                  key={k}
-                  type="button"
-                  onClick={() => {
-                    setLayout({ ...layout, [addingMetric]: [...list[addingMetric], k].slice(0, addingMetric === "tiles" ? 6 : addingMetric === "columns" ? 7 : 10) });
-                    setAddingMetric(null);
-                  }}
-                  className="h-9 rounded-full bg-surface-2 px-3 text-[12.5px] hover:text-fg max-md:h-10"
-                >
-                  {metricLabel(m, k)}
-                </button>
-              ))}
+            <div className="rounded-[14px] border border-line bg-surface p-3 md:max-w-sm">
+              <MetricPicker
+                title={addingMetric === "tiles" ? "Add a tile" : addingMetric === "table" ? "Add a key metric" : "Add a scorecard column"}
+                options={adsOptions(addingMetric)}
+                current={null}
+                taken={list[addingMetric]}
+                hideTaken
+                full={list[addingMetric].length >= (addingMetric === "tiles" ? 6 : addingMetric === "columns" ? 7 : 10) ? "That's as many as the page holds: tap one on the page to swap it, or remove one first." : null}
+                onPick={(k) => {
+                  setLayout({ ...layout, [addingMetric]: [...list[addingMetric], k as MetricKey].slice(0, addingMetric === "tiles" ? 6 : addingMetric === "columns" ? 7 : 10) });
+                  setAddingMetric(null);
+                }}
+                onClose={() => setAddingMetric(null)}
+              />
             </div>
           )}
           <div className="flex flex-wrap items-center gap-1.5 border-t border-line pt-2 text-[12.5px]">
