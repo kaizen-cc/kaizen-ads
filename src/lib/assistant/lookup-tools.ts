@@ -37,9 +37,9 @@ export function lookupTools(ctx: AssistantCtx): LoopTool[] {
   async function slackFor(need: "search" | "history"): Promise<{ token: string } | { note: string; connect: string }> {
     const { slackUserToken } = await import("@/lib/slack-user");
     const t = await slackUserToken(ctx.me.id);
-    if (!t) return { note: "Their Slack isn't connected to Kaizen OS, so their DMs can't be searched. They can connect it (one tap, then approve in Slack).", connect: CONNECT };
+    if (!t) return { note: "Their Slack isn't connected to Kaizen OS, so their DMs can't be searched. They can connect it (one tap, then approve in Slack), from the link or under Settings › Connections › Your accounts (the Slack row).", connect: CONNECT };
     const want = need === "search" ? ["search:read"] : ["im:history"];
-    if (!want.every((s) => t.scopes.includes(s))) return { note: "Their Slack is connected for posting only, not for reading. Reconnect with reading allowed (one tap, then approve in Slack). If Slack refuses, an admin adds search:read, channels:history, groups:history, im:history and mpim:history to the Kaizen OS app's User Token Scopes first.", connect: CONNECT };
+    if (!want.every((s) => t.scopes.includes(s))) return { note: "Their Slack is connected for posting only, not for reading. Reconnect with reading allowed (one tap, then approve in Slack), from the link or under Settings › Connections › Your accounts (the Slack row). If Slack refuses, an admin adds search:read, channels:history, groups:history, im:history and mpim:history to the Kaizen OS app's User Token Scopes first.", connect: CONNECT };
     return { token: t.token };
   }
 

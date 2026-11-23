@@ -1,12 +1,13 @@
 import type { Staff } from "@/lib/auth";
 import { isWriteTool } from "@/lib/connectors/core";
 import { encryptionKey } from "@/lib/meta-token-core";
+import { slackAccountState } from "@/lib/slack-account-core";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { ConnectorsAdmin, MyConnections, type AdminItem, type MineItem } from "./connectors";
 
 // Settings › Connections › Team connectors (execs enable connectors for the team: the team's requests, the Directory of
 // verified servers synced daily or on Refresh now, custom ones, roles) and Your accounts (everyone: what they've
-// connected, pointing to Kaizen AI's plug menu where connecting lives).
+// connected, pointing to Kaizen AI's plug menu where connecting lives, plus their own Slack, connected right here).
 
 export async function ConnectorsTab() {
   if (!adminConfigured()) return <p className="text-sm text-muted">Server key missing.</p>;
@@ -56,7 +57,12 @@ export async function MyConnectionsTab({ me }: { me: Staff }) {
   if (!adminConfigured()) return <p className="text-sm text-muted">Server key missing.</p>;
   const admin = createAdminClient();
   const { offeredConnectors, myConnections } = await import("@/lib/connectors/server");
-  const [offered, mine] = await Promise.all([offeredConnectors(admin, me), myConnections(admin, me.id)]);
+  const [offered, mine, slackRow] = await Promise.all([
+    offeredConnectors(admin, me),
+    myConnections(admin, me.id),
+    // Their own Slack (connected natively, not as a connector): a missing table reads as not connected
+    admin.from("slack_user_tokens").select("scopes, created_at").eq("profile_id", me.id).maybeSingle().then((r) => (r.data ?? null) as { scopes: string | null; created_at: string | null } | null, () => null),
+  ]);
   const items: MineItem[] = offered.map((c) => {
     const m = mine.find((x) => x.connector_id === c.id);
     return {
@@ -74,5 +80,6 @@ export async function MyConnectionsTab({ me }: { me: Staff }) {
       writes: m ? m.tools.filter(isWriteTool).length : 0,
     };
   });
-  return <MyConnections items={items} isExec={me.isExec} />;
+  const slack = { state: slackAccountState(slackRow), since: slackRow?.created_at ?? null };
+  return <MyConnections items={items} isExec={me.isExec} slack={slack} />;
 }

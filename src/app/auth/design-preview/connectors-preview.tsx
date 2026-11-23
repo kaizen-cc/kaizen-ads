@@ -61,5 +61,5 @@ const MINE: MineItem[] = [
 ];
 
 export function ConnectorsPreview({ mine }: { mine: boolean }) {
-  return mine ? <MyConnections items={MINE} isExec /> : <ConnectorsAdmin items={ADMIN} ready encryption catalogTotal={23866} lastSync={at} syncError={null} syncPartial={false} loadDirectory={load} />;
+  return mine ? <MyConnections items={MINE} isExec slack={{ state: "posting", since: null }} /> : <ConnectorsAdmin items={ADMIN} ready encryption catalogTotal={23866} lastSync={at} syncError={null} syncPartial={false} loadDirectory={load} />;
 }
