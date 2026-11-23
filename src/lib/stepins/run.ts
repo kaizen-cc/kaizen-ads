@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { hasLine } from "@/lib/service-gate";
 import { weekStartOf } from "@/lib/line-review/core";
-import { emailBadWeek, nextStatus, perExec, severityOf, suggestStep, trendOf, type CardStatus, type Reason } from "./core";
+import { emailBadWeek, stepinWorthy, nextStatus, perExec, severityOf, suggestStep, trendOf, type CardStatus, type Reason } from "./core";
 
 // The executives' step-ins, built Monday morning and refreshed every morning after (cron ?step=stepins). One living
 // card per client in exec_stepins: opened when the account needs an exec, kept current through the week, closed as
@@ -83,14 +83,16 @@ export async function runStepins(admin: SupabaseClient, now = new Date()) {
   // 4. Items that climbed past the lead (rung 3), one reason per client
   const { data: rung3 } = await admin
     .from("ladder_nudges")
-    .select("client_id, line, what, since, owner:profiles!ladder_nudges_owner_id_fkey(full_name), lead:profiles!ladder_nudges_lead_id_fkey(full_name)")
+    .select("item_key, kind, client_id, line, what, since, owner:profiles!ladder_nudges_owner_id_fkey(full_name), lead:profiles!ladder_nudges_lead_id_fkey(full_name)")
     .not("exec_at", "is", null)
     .is("taken_by", null)
     .in("status", ["open", "sent"])
     .not("client_id", "is", null)
     .limit(1000);
   const byClient = new Map<string, { line: string | null; what: string[]; owner: string; lead: string; since: string }[]>();
-  for (const r of (rung3 ?? []) as unknown as { client_id: string; line: string | null; what: string; since: string; owner: { full_name: string } | null; lead: { full_name: string } | null }[])
+  type R3 = { item_key: string; kind: string | null; client_id: string; line: string | null; what: string; since: string; owner: { full_name: string } | null; lead: { full_name: string } | null };
+  const worthy = stepinWorthy(((rung3 ?? []) as unknown as R3[]).map((r) => ({ ...r, itemKey: r.item_key, clientId: r.client_id })));
+  for (const r of worthy)
     byClient.set(r.client_id, [...(byClient.get(r.client_id) ?? []), { line: r.line, what: [r.what], owner: r.owner?.full_name ?? "the owner", lead: r.lead?.full_name ?? "the lead", since: r.since }]);
   for (const [clientId, rows] of byClient) {
     const lines = [...new Set(rows.map((r) => r.line))];

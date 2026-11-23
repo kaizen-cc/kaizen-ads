@@ -58,3 +58,19 @@ describe("the rules", () => {
     expect(suggestStep([meta], "Ana")).toMatch(/15 minutes with Ana/);
   });
 });
+
+import { stepinWorthy } from "@/lib/stepins/core";
+
+describe("items stuck past the lead", () => {
+  it("unsent reports never make a step-in; client-facing items do; other items need two on a client", () => {
+    const rows = [
+      { itemKey: "report:1", kind: "other", clientId: "a" },
+      { itemKey: "report:2", kind: "other", clientId: "a" },
+      { itemKey: "owed:3", kind: "owed", clientId: "b" },
+      { itemKey: "ticket:4", kind: "other", clientId: "c" },
+      { itemKey: "ticket:5", kind: "other", clientId: "d" },
+      { itemKey: "ticket:6", kind: "other", clientId: "d" },
+    ];
+    expect(stepinWorthy(rows).map((r) => r.itemKey)).toEqual(["owed:3", "ticket:5", "ticket:6"]);
+  });
+});

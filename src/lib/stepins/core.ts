@@ -87,3 +87,15 @@ export function trendOf(i: { d7: number | null | undefined; d30: number | null |
 export function perExec(cards: readonly { reasons: readonly Pick<Reason, "kind" | "line">[] }[], execs: readonly { name: string; focus: readonly string[] }[]): Record<string, number> {
   return Object.fromEntries(execs.map((e) => [e.name, cards.filter((c) => execSees(c.reasons, e.focus)).length]));
 }
+
+/**
+ * Which items stuck past a lead make a step-in: what a client is waiting on (a reply owed, something we said yes to),
+ * or two or more other items stuck on the same client. Unsent reports never do: that's team backlog, already in the
+ * Escalated block, not an account in trouble.
+ */
+export function stepinWorthy<T extends { itemKey: string; kind: string | null; clientId: string }>(rows: readonly T[]): T[] {
+  const real = rows.filter((r) => !r.itemKey.startsWith("report:"));
+  const others = new Map<string, number>();
+  for (const r of real) if (r.kind !== "owed" && r.kind !== "said") others.set(r.clientId, (others.get(r.clientId) ?? 0) + 1);
+  return real.filter((r) => r.kind === "owed" || r.kind === "said" || (others.get(r.clientId) ?? 0) >= 2);
+}
