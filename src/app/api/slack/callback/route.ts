@@ -12,7 +12,7 @@ export async function GET(request: Request) {
   const jar = await cookies();
   const saved = jar.get("slack_oauth")?.value;
   jar.delete({ name: "slack_oauth", path: "/api/slack" }); // one use only
-  let started: { state?: string; next?: string } = {};
+  let started: { state?: string; next?: string; read?: boolean } = {};
   try {
     started = saved ? JSON.parse(saved) : {};
   } catch {
@@ -24,6 +24,13 @@ export async function GET(request: Request) {
   if (!slackOAuthConfigured()) return back({ slack: "not_configured" });
   // Cancelling on Slack's screen comes back as error=access_denied
   const denied = url.searchParams.get("error");
+  // Slack refused the reading scopes (the Slack app doesn't list them as User Token Scopes): connect for posting now,
+  // and the executives hear once what to add in the Slack app
+  if (denied === "invalid_scope" && started.read !== false) {
+    const [{ createAdminClient }, { tellExecsSlackReadScopes }] = await Promise.all([import("@/lib/supabase/admin"), import("@/lib/personal-connections")]);
+    await tellExecsSlackReadScopes(createAdminClient()).catch(() => undefined);
+    return Response.redirect(`${url.origin}/api/slack/connect?post=1&next=${encodeURIComponent(withParams(url.origin, next, { slack_read: "unavailable" }).slice(url.origin.length))}`, 302);
+  }
   if (denied) return back({ slack: "error", reason: denied });
   const code = url.searchParams.get("code");
   if (!code || !started.state || url.searchParams.get("state") !== started.state) return back({ slack: "error", reason: "state_mismatch" });

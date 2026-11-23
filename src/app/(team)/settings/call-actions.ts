@@ -105,8 +105,19 @@ export async function startCall(roleKey: string, opts: { talk?: TalkMode; headsU
   // The assistant: a hello that remembers them (a birthday, how the trip went), unless the line just dropped
   if (roleKey === ASSISTANT_KEY && mode !== "continue") {
     const [memory, { data: tips }] = await Promise.all([loadMemory(admin, me.id), admin.from("assistant_tips").select("tip, seen_at, used_at, tipped_at").eq("profile_id", me.id)]);
-    const hello = assistantGreeting({ name: firstNameOf(me.fullName), memory, today: localDayIn(opts.tz), seed: seedOf(call.id as string), mode, timed: greeting, hour, tips: me.viewAs ? null : tips });
-    greeting = hello.text;
+    // A broken personal connection (their Slack connected for posting only, or expired): said once, instead of a tip
+    let connLine: string | null = null;
+    if (!me.viewAs) {
+      const [{ slackConnection }, { helloConnectionLine }] = await Promise.all([import("@/lib/personal-connections"), import("@/lib/personal-connections-core")]);
+      const slack = await slackConnection(me.id).catch(() => null);
+      const line = slack ? helloConnectionLine("slack", slack.state) : null;
+      if (line && slack) {
+        const { error: told } = await admin.from("connection_notices").insert({ profile_id: me.id, service: "slack", state: slack.state });
+        if (!told) connLine = line;
+      }
+    }
+    const hello = assistantGreeting({ name: firstNameOf(me.fullName), memory, today: localDayIn(opts.tz), seed: seedOf(call.id as string), mode, timed: greeting, hour, tips: me.viewAs || connLine ? null : tips });
+    greeting = connLine ? `${hello.text} ${connLine}` : hello.text;
     if (hello.followed) await markFollowedUp(admin, me.id, hello.followed);
     // Told once, then not again for a while
     if (hello.tipped) await admin.from("assistant_tips").update({ tipped_at: new Date().toISOString() }).eq("profile_id", me.id).eq("tip", hello.tipped);

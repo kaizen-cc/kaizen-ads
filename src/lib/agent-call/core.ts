@@ -803,6 +803,8 @@ export type CallCard = {
   copy?: CallCopyDoc;
   /** Times for an internal call (find_meeting_time): tap one, confirm, booked; or say yes on the call */
   slots?: CallSlots;
+  /** A Connect / Reconnect card for one of their accounts: once it's connected, the conversation picks the ask back up */
+  connect?: { service: "slack" | "gmail" | "drive" | "calendar" | "asana" };
 };
 
 /** Times offered for an internal call, as the slot card shows them (booked from the card or by a spoken yes) */

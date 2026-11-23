@@ -2,7 +2,9 @@
 
 import { DocumentCardView } from "./document-card";
 import { CopyDocCardView } from "./copy-doc-card";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { CONNECTED_CHANNEL } from "@/app/connected/connected-notice";
+import { resumeLine } from "@/lib/personal-connections-core";
 import { callTranscript, saveCallDraft } from "@/app/(team)/settings/call-actions";
 import { DraftSave } from "./draft-save";
 import { SlotsCard } from "./slots-card";
@@ -315,7 +317,50 @@ function DraftCard({ c, callId, onApprove, onDismiss }: { c: CallCard & { draft:
 }
 
 /** Link cards the agent showed: in the app (the call stays up) or a new tab; drafted messages to edit and approve */
-export function CardsStrip({ cards, onOpen, onDismiss, compact = false, callId = null, onApprove, onSay }: { cards: CallCard[]; onOpen: (c: CallCard) => void; onDismiss: (id: string) => void; compact?: boolean; callId?: string | null; onApprove?: (text: string) => void; /** Tell the assistant something the person did on a card (a call booked from it) */ onSay?: (text: string) => void }) {
+/**
+ * A Connect / Reconnect card on screen: once they've connected in the other tab (it lands on /connected, which tells
+ * this one), the conversation says so for them, so the assistant picks the ask back up, and the card goes.
+ */
+function useResumeOnConnect(cards: CallCard[], onSay: ((text: string) => void) | undefined, onDismiss: (id: string) => void) {
+  const waiting = cards
+    .filter((c) => c.connect)
+    .map((c) => `${c.id}|${c.connect!.service}`)
+    .join(",");
+  const said = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!waiting || !onSay) return;
+    const pending = waiting.split(",").map((x) => {
+      const [id, service] = x.split("|");
+      return { id, service };
+    });
+    const heard = (raw: unknown) => {
+      const m = (typeof raw === "string" ? (() => { try { return JSON.parse(raw); } catch { return null; } })() : raw) as { service?: string } | null;
+      const hit = pending.find((p) => p.service === m?.service);
+      if (!hit || said.current.has(hit.id)) return;
+      said.current.add(hit.id);
+      onDismiss(hit.id);
+      onSay(resumeLine(hit.service as Parameters<typeof resumeLine>[0]));
+    };
+    let ch: BroadcastChannel | null = null;
+    try {
+      ch = new BroadcastChannel(CONNECTED_CHANNEL);
+      ch.onmessage = (e) => heard(e.data);
+    } catch {
+      ch = null;
+    }
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === CONNECTED_CHANNEL) heard(e.newValue);
+    };
+    window.addEventListener("storage", onStorage);
+    return () => {
+      ch?.close();
+      window.removeEventListener("storage", onStorage);
+    };
+  }, [waiting, onSay, onDismiss]);
+}
+
+export function CardsStrip({ cards, onOpen, onDismiss, compact = false, callId = null, onApprove, onSay }: { cards: CallCard[]; onOpen: (c: CallCard) => void; onDismiss: (id: string) => void; compact?: boolean; callId?: string | null; onApprove?: (text: string) => void; /** Tell the assistant something the person did on a card (a call booked from it, an account connected) */ onSay?: (text: string) => void }) {
+  useResumeOnConnect(cards, onSay, onDismiss);
   if (!cards.length) return null;
   return (
     <ul className={`grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 ${compact ? "" : "sm:grid-cols-[repeat(2,minmax(0,1fr))]"}`} aria-label="Shared on the call">

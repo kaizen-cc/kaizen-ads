@@ -20,7 +20,11 @@ async function googleOrHelp<T>(fn: () => Promise<T>, scope: string): Promise<T |
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     const help = scopeHelp(msg, scope);
-    return { error: help ? "Google hasn't allowed this yet." : `Google didn't answer: ${clip(msg, 200)}`, ...(help ? { for_the_admin: help } : {}) };
+    if (help) {
+      const service = scope.includes("drive") ? "drive" : scope.includes("calendar") ? "calendar" : "gmail";
+      return { error: "Google hasn't allowed this yet.", ...(await import("@/lib/personal-connections")).googleNeeds(service, scope) };
+    }
+    return { error: `Google didn't answer: ${clip(msg, 200)}` };
   }
 }
 

@@ -1,7 +1,7 @@
+import { WorkConnections } from "./work-connections";
 import type { Staff } from "@/lib/auth";
 import { isWriteTool } from "@/lib/connectors/core";
 import { encryptionKey } from "@/lib/meta-token-core";
-import { slackAccountState } from "@/lib/slack-account-core";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { ConnectorsAdmin, MyConnections, type AdminItem, type MineItem } from "./connectors";
 
@@ -53,16 +53,12 @@ export async function ConnectorsTab() {
   );
 }
 
-export async function MyConnectionsTab({ me }: { me: Staff }) {
+export async function MyConnectionsTab({ me, flash }: { me: Staff; flash?: string | null }) {
   if (!adminConfigured()) return <p className="text-sm text-muted">Server key missing.</p>;
   const admin = createAdminClient();
   const { offeredConnectors, myConnections } = await import("@/lib/connectors/server");
-  const [offered, mine, slackRow] = await Promise.all([
-    offeredConnectors(admin, me),
-    myConnections(admin, me.id),
-    // Their own Slack (connected natively, not as a connector): a missing table reads as not connected
-    admin.from("slack_user_tokens").select("scopes, created_at").eq("profile_id", me.id).maybeSingle().then((r) => (r.data ?? null) as { scopes: string | null; created_at: string | null } | null, () => null),
-  ]);
+  const { myWorkConnections } = await import("@/lib/personal-connections");
+  const [offered, mine, work] = await Promise.all([offeredConnectors(admin, me), myConnections(admin, me.id), me.viewAs ? Promise.resolve(null) : myWorkConnections(me).catch(() => null)]);
   const items: MineItem[] = offered.map((c) => {
     const m = mine.find((x) => x.connector_id === c.id);
     return {
@@ -80,6 +76,10 @@ export async function MyConnectionsTab({ me }: { me: Staff }) {
       writes: m ? m.tools.filter(isWriteTool).length : 0,
     };
   });
-  const slack = { state: slackAccountState(slackRow), since: slackRow?.created_at ?? null };
-  return <MyConnections items={items} isExec={me.isExec} slack={slack} />;
+  return (
+    <div className="grid gap-8">
+      {work && <WorkConnections rows={work} flash={flash} />}
+      <MyConnections items={items} isExec={me.isExec} />
+    </div>
+  );
 }

@@ -4,6 +4,7 @@ import { textAnswer } from "@/lib/kaizen-ai/my-tools";
 import type { GmailMessage } from "@/lib/context/google";
 import { uploadText, type CallUpload } from "./uploads";
 import type { AssistantCtx } from "./tools";
+import type { NeedsConnection } from "@/lib/personal-connections-core";
 
 // The assistant's lookups in the person's own private places, on a call or in its chat: their Slack (DMs included,
 // through their own connected Slack token) and their Gmail (their own mailbox only, read only), each searched and a
@@ -12,7 +13,6 @@ import type { AssistantCtx } from "./tools";
 // tools; agents and Kaizen AI threads others can see don't.
 
 const clip = (s: unknown, n: number) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
-const CONNECT = "/api/slack/connect?read=1&next=/assistant";
 
 type SlackMatch = { channel?: { id?: string; name?: string; is_im?: boolean; is_mpim?: boolean; is_private?: boolean }; user?: string; username?: string; ts?: string; text?: string; permalink?: string };
 
@@ -33,14 +33,19 @@ export function lookupTools(ctx: AssistantCtx): LoopTool[] {
     return n;
   }
 
-  /** Their Slack token when it may search; else what to tell them */
-  async function slackFor(need: "search" | "history"): Promise<{ token: string } | { note: string; connect: string }> {
-    const { slackUserToken } = await import("@/lib/slack-user");
-    const t = await slackUserToken(ctx.me.id);
-    if (!t) return { note: "Their Slack isn't connected to Kaizen OS, so their DMs can't be searched. They can connect it (one tap, then approve in Slack), from the link or under Settings › Connections › Your accounts (the Slack row).", connect: CONNECT };
-    const want = need === "search" ? ["search:read"] : ["im:history"];
-    if (!want.every((s) => t.scopes.includes(s))) return { note: "Their Slack is connected for posting only, not for reading. Reconnect with reading allowed (one tap, then approve in Slack), from the link or under Settings › Connections › Your accounts (the Slack row). If Slack refuses, an admin adds search:read, channels:history, groups:history, im:history and mpim:history to the Kaizen OS app's User Token Scopes first.", connect: CONNECT };
-    return { token: t.token };
+  /** Their Slack token when it may read; else the needs_connection answer, with the Connect card on screen */
+  async function slackFor(): Promise<{ token: string } | NeedsConnection> {
+    const { slackTokenFor, showConnect } = await import("@/lib/personal-connections");
+    const got = await slackTokenFor(ctx.me.id, "read");
+    if ("needs_connection" in got) showConnect(ctx.emit, got);
+    return got;
+  }
+  /** A Slack error that's the connection itself (expired, missing a scope): the same answer and card */
+  async function slackFailed(error: string | undefined): Promise<NeedsConnection | null> {
+    const { slackErrorNeeds, showConnect } = await import("@/lib/personal-connections");
+    const n = slackErrorNeeds(error);
+    if (n) showConnect(ctx.emit, n);
+    return n;
   }
 
   const tools: LoopTool[] = [
@@ -52,16 +57,16 @@ export function lookupTools(ctx: AssistantCtx): LoopTool[] {
       run: async (input) => {
         const query = clip(input.query, 300);
         if (!query) return { error: "What should I look for?" };
-        const got = await slackFor("search");
-        if ("note" in got) {
+        const got = await slackFor();
+        if ("needs_connection" in got) {
           // Meanwhile: the client channels Kaizen OS already keeps (only clients they can see; no DMs)
           const words = query.replace(/[%_,()"]/g, " ").split(/\s+/).filter((w) => w.length >= 3 && !w.includes(":")).slice(0, 4);
           const { data } = words.length ? await ctx.db.from("context_items").select("author, body, occurred_at, url, clients(name)").in("source", ["slack_internal", "slack_external"]).or(words.map((w) => `body.ilike.%${w}%`).join(",")).order("occurred_at", { ascending: false }).limit(12) : { data: [] };
-          return { searched: "client channels only (no DMs)", why: got.note, connect_link: got.connect, matches: ((data ?? []) as unknown as { author: string | null; body: string | null; occurred_at: string; url: string | null; clients: { name: string } | null }[]).map((i) => ({ who: i.author, client: i.clients?.name ?? null, when: i.occurred_at.slice(0, 10), text: clip(i.body, 400), link: i.url })) };
+          return { ...got, searched: "client channels only (no DMs)", matches: ((data ?? []) as unknown as { author: string | null; body: string | null; occurred_at: string; url: string | null; clients: { name: string } | null }[]).map((i) => ({ who: i.author, client: i.clients?.name ?? null, when: i.occurred_at.slice(0, 10), text: clip(i.body, 400), link: i.url })) };
         }
         const { slackRead } = await import("@/lib/slack-user");
         const r = await slackRead<{ ok: boolean; error?: string; messages?: { total?: number; matches?: SlackMatch[] } }>(got.token, "search.messages", { query, count: String(Math.min(30, Number(input.limit) || 15)), sort: "timestamp", sort_dir: "desc" });
-        if (!r.ok) return { error: r.error === "missing_scope" ? "Their Slack connection can't search yet." : `Slack said ${r.error ?? "no"}.`, connect_link: CONNECT };
+        if (!r.ok) return (await slackFailed(r.error)) ?? { error: `Slack said ${r.error ?? "no"}.` };
         const matches = r.messages?.matches ?? [];
         return {
           total: r.messages?.total ?? matches.length,
@@ -85,15 +90,15 @@ export function lookupTools(ctx: AssistantCtx): LoopTool[] {
       run: async (input) => {
         const [channel, ts] = String(input.thread ?? "").split(":");
         if (!/^[CDG][A-Z0-9]{6,}$/.test(channel ?? "") || !/^\d+\.\d+$/.test(ts ?? "")) return { error: "That isn't a thread ref from search_my_slack." };
-        const got = await slackFor("history");
-        if ("note" in got) return { error: got.note, connect_link: got.connect };
+        const got = await slackFor();
+        if ("needs_connection" in got) return got;
         const { slackRead } = await import("@/lib/slack-user");
         type Msg = { user?: string; username?: string; text?: string; ts?: string; files?: { name?: string }[] };
         let msgs: Msg[] = [];
         let cursor = "";
         for (let page = 0; page < 10; page++) {
           const r = await slackRead<{ ok: boolean; error?: string; messages?: Msg[]; response_metadata?: { next_cursor?: string } }>(got.token, "conversations.replies", { channel, ts, limit: "200", ...(cursor ? { cursor } : {}) });
-          if (!r.ok) return { error: r.error === "missing_scope" ? "Their Slack connection can't read conversations yet." : r.error === "thread_not_found" ? "Slack can't find that thread." : `Slack said ${r.error ?? "no"}.`, connect_link: r.error === "missing_scope" ? CONNECT : undefined };
+          if (!r.ok) return (await slackFailed(r.error)) ?? { error: r.error === "thread_not_found" ? "Slack can't find that thread." : `Slack said ${r.error ?? "no"}.` };
           msgs = msgs.concat(r.messages ?? []);
           cursor = r.response_metadata?.next_cursor ?? "";
           if (!cursor) break;
@@ -124,7 +129,8 @@ export function lookupTools(ctx: AssistantCtx): LoopTool[] {
           };
         } catch (e) {
           const m = e instanceof Error ? e.message : String(e);
-          return { error: m.includes("unauthorized_client") ? "Kaizen OS isn't allowed to read mail as them (the gmail.readonly scope isn't delegated). An admin adds it in the Google Admin console." : `Gmail couldn't search (${m.slice(0, 120)}).` };
+          if (/unauthorized_client|access_denied|insufficient/i.test(m)) return (await import("@/lib/personal-connections")).googleNeeds("gmail", "https://www.googleapis.com/auth/gmail.readonly", "search your Gmail");
+          return { error: `Gmail couldn't search (${m.slice(0, 120)}).` };
         }
       },
     },

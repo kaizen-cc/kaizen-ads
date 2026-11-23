@@ -26,6 +26,9 @@ function tokenFor(subject: string, scope: string) {
   return new JWT({ email: key.client_email, key: key.private_key, scopes: [scope], subject }).getAccessToken().then((r) => r.token!);
 }
 
+/** A token for one person and one scope (the connection checks: does Google allow this scope for them?) */
+export const googleTokenFor = (subject: string, scope: string) => tokenFor(subject, scope);
+
 /** A Gmail read token for one person's mailbox (watching for messages they owe a reply). */
 export const gmailToken = (mailbox: string) => tokenFor(mailbox, GMAIL_SCOPE);
 

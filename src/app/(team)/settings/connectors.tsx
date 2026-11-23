@@ -908,11 +908,12 @@ function Requests({ groups, onNeedsApp }: { groups: RequestGroup[]; onNeedsApp: 
  * Your accounts: what you've connected, at a glance. Connecting, reconnecting and disconnecting live in Kaizen AI's plug
  * menu now (like Claude), so each row opens it there. Links from before (?connector=, ?connected=) still land here.
  */
-export function MyConnections({ items, isExec, slack }: { items: MineItem[]; isExec: boolean; slack: { state: SlackAccountState; since: string | null } }) {
+export function MyConnections({ items, isExec, slack }: { items: MineItem[]; isExec: boolean; /** Their Slack, when "Your work accounts" above isn't showing it */ slack?: { state: SlackAccountState; since: string | null } }) {
   const focus = useParam("connector");
   const connected = useParam("connected");
   const error = useParam("connect_error");
-  const slackNote = slackFlash(useParam("slack"), useParam("reason"));
+  const slackFlashed = slackFlash(useParam("slack"), useParam("reason"));
+  const slackNote = slack ? slackFlashed : null;
   const flash = error ?? (connected ? `${items.find((i) => i.key === connected)?.name ?? "It"} is connected. Switch it on in any Kaizen AI chat from the plug button.` : (slackNote?.text ?? null));
   const flashBad = Boolean(error) || (!connected && Boolean(slackNote?.bad));
   return (
@@ -933,7 +934,7 @@ export function MyConnections({ items, isExec, slack }: { items: MineItem[]; isE
           </button>
         </div>
       ) : null}
-      <SlackRow state={slack.state} since={slack.since} />
+      {slack && <SlackRow state={slack.state} since={slack.since} />}
       {!items.length ? (
         <div className="grid justify-items-center gap-3 rounded-[20px] border border-dashed border-line px-6 py-14 text-center">
           <p className="font-heading text-[19px] text-fg">Nothing enabled for you yet</p>

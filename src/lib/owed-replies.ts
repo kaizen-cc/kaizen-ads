@@ -337,7 +337,12 @@ export async function markReplied(admin: Admin, id: string, profileId: string) {
 }
 
 /** The definitive look before a notice: everything said after it in its thread (or the channel), and reactions on it. */
-async function slackSince(o: Row) {
+async function slackSince(o: Row, admin?: Admin) {
+  // A DM (read with the person's own token: the bot isn't in anyone's DMs)
+  if (admin) {
+    const dm = await (await import("@/lib/owed-dms")).dmSince(admin, o);
+    if (dm) return dm;
+  }
   const channel = o.channel_id as string;
   const ts = o.message_ts as string;
   const thread = (o.thread_ts as string | null) ?? ts;
@@ -514,11 +519,11 @@ async function gmailAnswered(o: Row, teamEmails: Set<string>) {
 // ─── Deciding ───────────────────────────────────────────────────────────────
 
 /** Whether it's been answered, looking at the source itself. Unknown (the source can't be read) counts as not. */
-async function isAnswered(o: Row, who: Awaited<ReturnType<typeof slackPeople>> | null, teamEmails: Set<string>, context: Map<string, string>) {
+async function isAnswered(o: Row, who: Awaited<ReturnType<typeof slackPeople>> | null, teamEmails: Set<string>, context: Map<string, string>, admin?: Admin) {
   try {
     if (o.source === "gmail") return await gmailAnswered(o, teamEmails);
     if (!who) return false;
-    const { after, asker, reactors } = await slackSince(o);
+    const { after, asker, reactors } = await slackSince(o, admin);
     const mine = [...who.profileOf].filter(([, p]) => p === o.target_id).map(([s]) => s);
     context.set(o.id as string, after.slice(0, 6).map((x) => `${who.nameOf.get(x.user ?? "") ?? "Someone"}: ${plain(x.text ?? "", who.nameOf).slice(0, 300)}`).join("\n"));
     const reacted = [...reactors].filter((u) => who.team.has(u) && u !== asker);
@@ -601,11 +606,14 @@ export async function runOwedReplies(admin: Admin) {
   const gmailOn = googleConfigured();
   const fail = (e: unknown) => ({ error: e instanceof Error ? e.message : String(e) });
   const slackRun = slackOn ? await scanSlack(admin).catch(fail) : null;
+  // DMs and group DMs waiting on a reply, read with each person's own Slack (only people who allowed reading)
+  const dmRun = slackRun && !("error" in slackRun) ? await (await import("@/lib/owed-dms")).scanDms(admin, slackRun.who).catch(fail) : null;
   const gmailRun = gmailOn ? await scanGmail(admin).catch(fail) : null;
   // Client emails asking to change who gets our emails: applied or left to confirm (its own failure stops nothing else)
   const contactChanges = gmailRun && !("error" in gmailRun) ? await runContactChanges(admin, gmailRun.lists).catch(fail) : null;
   const scanned = {
     slack: !slackRun ? { skipped: "Slack isn't connected" } : "error" in slackRun ? slackRun : slackRun.notes,
+    dms: dmRun,
     gmail: !gmailRun ? { skipped: "Google isn't connected" } : "error" in gmailRun ? gmailRun : gmailRun.notes,
     contactChanges,
   };
@@ -629,7 +637,7 @@ export async function runOwedReplies(admin: Admin) {
   for (const o of (open ?? []).filter((x) => x.status === "watching")) {
     if (workingHours(new Date(o.asked_at)) < NUDGE_AFTER[o.source as "slack" | "gmail"]) continue;
     if (!byId.get(o.target_id)?.is_active) continue;
-    const how = await isAnswered(o, who, teamEmails, context);
+    const how = await isAnswered(o, who, teamEmails, context, admin);
     if (how) {
       await closeAnswered(admin, o, stamp, how === "reacted" ? "reacted" : "replied");
       tally.answered++;
@@ -676,7 +684,7 @@ export async function runOwedReplies(admin: Admin) {
   const dropped = new Set<string>();
   for (let i = 0; i < unread.length; i += 15) {
     const batch = unread.slice(i, i + 15);
-    for (const o of batch) if (!context.has(o.id)) await isAnswered(o, who, teamEmails, context);
+    for (const o of batch) if (!context.has(o.id)) await isAnswered(o, who, teamEmails, context, admin);
     for (const [id, v] of await judge(batch, context, names)) {
       if (v.needsReply) {
         await admin.from("owed_replies").update({ gist: v.gist.slice(0, 120) }).eq("id", id);
@@ -709,7 +717,7 @@ export async function runOwedReplies(admin: Admin) {
   const paused = await pausedKeys(admin, keys).catch(() => new Set<string>());
   for (const o of nudged) {
     // Looked at every run, so a reply closes it (and its notice) within the hour, not only when it's about to escalate
-    const how = await isAnswered(o, who, teamEmails, context);
+    const how = await isAnswered(o, who, teamEmails, context, admin);
     if (how) {
       await closeAnswered(admin, o, stamp, how === "reacted" ? "reacted" : "replied");
       tally.answered++;
@@ -760,7 +768,7 @@ export async function runOwedReplies(admin: Admin) {
 
   // Escalated ones: closed once answered, and the lead and execs told
   for (const o of (open ?? []).filter((x) => x.status === "escalated" && !dropped.has(x.id)).slice(0, 40)) {
-    const how = await isAnswered(o, who, teamEmails, context);
+    const how = await isAnswered(o, who, teamEmails, context, admin);
     if (how) {
       await closeAnswered(admin, o, stamp, how === "reacted" ? "reacted" : "replied");
       tally.answered++;

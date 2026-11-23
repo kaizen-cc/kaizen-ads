@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CallSlots } from "@/lib/agent-call/core";
 import { serviceAccountClientId } from "./platform-drafts-core";
+import { needsConnection, type NeedsConnection } from "@/lib/personal-connections-core";
 import { busyOf, calendarScopeMissing, DEFAULT_MINUTES, DEFAULT_TZ, defaultWindow, freeStarts, nextBatch, overlaps, rfc3339, sameDomain, slotLabel, slotView, zonedTime, type Person } from "./scheduling-core";
 
 // Internal calls on Google Calendar, the server side shared by the assistant's tools and the slot cards: who the
@@ -15,13 +16,16 @@ export const EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events";
 
 export type Me = { id: string; email: string; fullName: string };
 export type Who = { id: string; name: string; email: string };
-export type Fail = { ok: false; error: string; for_the_admin?: string; options?: string[] };
+export type Fail = { ok: false; error: string; for_the_admin?: string; options?: string[]; needs_connection?: NeedsConnection["needs_connection"]; say?: string };
 
 /** Google's refusal of a calendar scope, as the admin's one step (the client ID from the key, never the key) */
 export function scopeFail(scope: string, what: string): Fail {
   const id = serviceAccountClientId(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+  const n = needsConnection("calendar", "admin");
   return {
     ok: false,
+    needs_connection: n.needs_connection,
+    say: n.say,
     error: `${what} needs one Admin console setting first, so nothing was booked.`,
     for_the_admin: `Add ${scope} to the service account's domain-wide delegation${id ? ` (client ID ${id})` : ""}: admin.google.com, Security > Access and data control > API controls > Manage domain-wide delegation.`,
   };

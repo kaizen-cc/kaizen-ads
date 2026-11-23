@@ -1101,7 +1101,12 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
               ))}
             </nav>
           )}
-          {section === "yours" && <MyConnectionsTab me={me} />}
+          {section === "yours" && (
+            <MyConnectionsTab
+              me={me}
+              flash={sp.slack === "connected" ? (sp.slack_read === "unavailable" ? "Slack is connected for posting. Reading it needs one setting in the Slack app first; the executives have been told." : "Slack is connected. Your assistant can search and read it for you now.") : sp.slack === "error" ? `Slack didn't connect (${typeof sp.reason === "string" ? sp.reason : "try again"}).` : null}
+            />
+          )}
           {section === "team" && <ConnectorsTab />}
           {section === "keys" && (
             <div className="grid gap-6">

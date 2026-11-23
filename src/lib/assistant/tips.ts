@@ -52,7 +52,7 @@ export const TIPS: readonly Tip[] = [
 ];
 
 /** Tools that run behind the scenes and aren't worth a tip on their own */
-export const NO_TIP: ReadonlySet<string> = new Set(["switch_mode", "confirm_connector_action"]);
+export const NO_TIP: ReadonlySet<string> = new Set(["switch_mode", "confirm_connector_action", "connect_account"]);
 
 const TIP_OF = new Map(TIPS.flatMap((t) => t.tools.map((name) => [name, t.key] as const)));
 /** The tip a tool belongs to (null for behind-the-scenes and outside tools) */

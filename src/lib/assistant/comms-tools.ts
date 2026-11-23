@@ -75,7 +75,7 @@ type Found = {
   gist: string;
   client: string | null;
   owedId: string | null;
-  slack?: { channel: string; thread: string; where: string };
+  slack?: { channel: string; thread: string | null; where: string };
   email?: { mailbox: string; threadId: string; subject: string };
 };
 
@@ -90,13 +90,13 @@ async function findThreads(ctx: CommsCtx, input: { channel: "slack" | "email"; c
   const out: Found[] = [];
   const { data: owed } = await ctx.db
     .from("owed_replies")
-    .select("id, source, channel_id, channel_name, thread_ts, message_ts, mailbox, gmail_thread_id, from_name, subject, gist, body, asked_at, client_id, clients(name)")
+    .select("id, source, message_key, channel_id, channel_name, thread_ts, message_ts, mailbox, gmail_thread_id, from_name, subject, gist, body, asked_at, client_id, clients(name)")
     .eq("target_id", ctx.me.id)
     .in("status", OPEN)
     .eq("source", input.channel === "slack" ? "slack" : "gmail")
     .order("asked_at", { ascending: false })
     .limit(30);
-  type Owed = { id: string; channel_id: string | null; channel_name: string | null; thread_ts: string | null; message_ts: string | null; mailbox: string | null; gmail_thread_id: string | null; from_name: string | null; subject: string | null; gist: string | null; body: string | null; asked_at: string; client_id: string | null; clients: { name: string } | null };
+  type Owed = { id: string; message_key: string | null; channel_id: string | null; channel_name: string | null; thread_ts: string | null; message_ts: string | null; mailbox: string | null; gmail_thread_id: string | null; from_name: string | null; subject: string | null; gist: string | null; body: string | null; asked_at: string; client_id: string | null; clients: { name: string } | null };
   for (const o of (owed ?? []) as unknown as Owed[]) {
     if (input.client && o.client_id !== input.client.id) continue;
     if (input.channel === "email" && (!o.mailbox || o.mailbox.toLowerCase() !== ctx.me.email.toLowerCase() || !o.gmail_thread_id)) continue;
@@ -109,7 +109,7 @@ async function findThreads(ctx: CommsCtx, input: { channel: "slack" | "email"; c
       gist: clip(o.gist ?? o.subject ?? o.body, 200),
       client: o.clients?.name ?? null,
       owedId: o.id,
-      ...(input.channel === "slack" ? { slack: { channel: o.channel_id as string, thread: (o.thread_ts ?? o.message_ts) as string, where: o.channel_name ? `#${o.channel_name}` : "Slack" } } : { email: { mailbox: o.mailbox as string, threadId: o.gmail_thread_id as string, subject: o.subject ?? "" } }),
+      ...(input.channel === "slack" ? { slack: String(o.message_key ?? "").startsWith("dm:") ? { channel: o.channel_id as string, thread: null, where: o.channel_name ?? "a DM" } : { channel: o.channel_id as string, thread: (o.thread_ts ?? o.message_ts) as string, where: o.channel_name ? `#${o.channel_name}` : "Slack" } } : { email: { mailbox: o.mailbox as string, threadId: o.gmail_thread_id as string, subject: o.subject ?? "" } }),
     });
   }
   if (input.client) {
@@ -240,11 +240,20 @@ async function keepClientDraft(ctx: CommsCtx, clientId: string, d: Draft): Promi
 async function saveDraftToPlatform(ctx: CommsCtx, d: Draft): Promise<{ ok: true; where: string; href: string | null } | { ok: false; error: string; needs?: "slack" | "google_admin" }> {
   const r = await placeCallDraft(ctx.admin, ctx.me, ctx.callId!, d);
   if (!r.ok) {
-    if (r.needsConnect) ctx.emit?.({ t: "card", card: { id: "connect-slack", title: "Connect your Slack", detail: "So drafts land in your own Slack", href: "/api/slack/connect?next=%2Fassistant", external: true, cta: "Connect" } });
+    if (r.needsConnect) await connectSlack(ctx, "reconnect");
     return { ok: false, error: r.error, needs: r.needsConnect ? "slack" : r.scope ? "google_admin" : undefined };
   }
   showDraft(ctx, r.draft, d.slack ? "slack_draft" : "gmail_draft", r.href ?? "/assistant", Boolean(r.href));
   return { ok: true, where: r.where, href: r.href };
+}
+
+/** Slack needs connecting (or reconnecting): the card on screen, and the needs_connection answer */
+async function connectSlack(ctx: CommsCtx, state: "missing" | "reconnect") {
+  const [{ needsConnection }, { showConnect, slackConnection }] = await Promise.all([import("@/lib/personal-connections-core"), import("@/lib/personal-connections")]);
+  const now = await slackConnection(ctx.me.id).catch(() => null);
+  const n = needsConnection("slack", now?.state === "missing" ? "missing" : state);
+  showConnect(ctx.emit, n);
+  return n;
 }
 
 // ─── The tools ──────────────────────────────────────────────────────────────
@@ -430,8 +439,8 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
           const r = await postAsUser(ctx.me.id, { channel: d.slack.channel, text: d.text, thread: d.slack.thread ?? undefined });
           if (!r.ok) {
             if (r.needsConnect) {
-              ctx.emit?.({ t: "card", card: { id: "connect-slack", title: "Connect your Slack", detail: "So replies go out as you", href: "/api/slack/connect?next=%2Fassistant", external: true, cta: "Connect" } });
-              return { sent: false, needs: "slack", note: "Their Slack isn't connected (or it expired). Say so in a sentence: connect it from the card, then you'll send it. The draft stays on screen to copy meanwhile." };
+              const n = await connectSlack(ctx, "reconnect");
+              return { sent: false, ...n, note: "Their Slack isn't connected (or it expired). Say so in a sentence: connect it from the card, then you'll send it. The draft stays on screen to copy meanwhile." };
             }
             return { sent: false, error: r.error };
           }
@@ -466,6 +475,32 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
           showDraft(ctx, d, "copy");
           return { sent: false, fallback: "copy", why: saved.error, note: "Email can't go out as them from the app yet: the draft is on screen with a copy button. Say so in a sentence." };
         }
+      },
+    },
+    {
+      name: "connect_account",
+      description: `Shows ${from} the one-tap Connect / Reconnect card for one of their own accounts, right in the conversation (on a call too). Use it when they say yes to reconnecting ("yes, reconnect it"), ask to connect their Slack, or a tool answered needs_connection and the card isn't on screen. Slack and Asana are connected by them (their own sign-ins); Gmail, Drive and Calendar go through Kaizen's company access, so for those it says what an admin turns on instead. Once they're connected the conversation tells you: then do what they'd asked.`,
+      input_schema: { type: "object", properties: { service: { type: "string", enum: ["slack", "gmail", "drive", "calendar", "asana"] } }, required: ["service"], additionalProperties: false },
+      status: () => "Getting the connect card…",
+      run: async (input) => {
+        const service = (["slack", "gmail", "drive", "calendar", "asana"].includes(String(input.service)) ? input.service : "slack") as "slack" | "gmail" | "drive" | "calendar" | "asana";
+        if (service === "asana") {
+          const [{ asanaConnection }, { showConnect }, { needsConnection }] = await Promise.all([import("@/lib/asana-user"), import("@/lib/personal-connections"), import("@/lib/personal-connections-core")]);
+          const a = await asanaConnection(ctx.admin, ctx.me.id);
+          if (a.connected) return { card: false, connected: true, note: "Their Asana is already connected. Go ahead with what they asked." };
+          if (!a.configured) return { card: false, note: "Connecting your own Asana isn't set up yet (an admin adds the Asana app's keys). Kaizen's shared Asana account still works meanwhile." };
+          const n = needsConnection("asana", "missing", { what: "see your own Asana tasks" });
+          showConnect(ctx.emit, n);
+          return { card: true, ...n };
+        }
+        if (service !== "slack") return { card: false, note: "Google goes through Kaizen's company access: there's nothing for them to connect. If it isn't working, it's an admin setting (Settings > Connections > Yours shows which)." };
+        const { slackConnection, showConnect } = await import("@/lib/personal-connections");
+        const { needsConnection } = await import("@/lib/personal-connections-core");
+        const now = await slackConnection(ctx.me.id, true);
+        if (now.state === "connected") return { card: false, connected: true, note: "Their Slack is already connected with everything you need. Go ahead with what they asked." };
+        const n = needsConnection("slack", now.state);
+        showConnect(ctx.emit, n);
+        return { card: true, ...n };
       },
     },
     {
