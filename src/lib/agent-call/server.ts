@@ -384,7 +384,15 @@ export async function streamAnswer(input: {
   const timer = input.timer ?? callTimer();
   const tag = input.tag ?? "";
   // Each tool's time, by name
-  const tools: LoopTool[] = input.tools.map((t) => ({ ...t, run: (x: Record<string, unknown>) => timer.time(`${tag}tool:${t.name}`, () => Promise.resolve(t.run(x))) }));
+  // One tool per name: the API refuses the whole turn on a repeated name ("Tool names must be unique"), which the person
+  // hears as "I lost my train of thought". The first registration wins; a repeat is logged so it gets fixed at the source.
+  const seenNames = new Set<string>();
+  const unique = input.tools.filter((t) => {
+    if (!seenNames.has(t.name)) return seenNames.add(t.name), true;
+    console.error(`[agent call] duplicate tool dropped: ${t.name}`);
+    return false;
+  });
+  const tools: LoopTool[] = unique.map((t) => ({ ...t, run: (x: Record<string, unknown>) => timer.time(`${tag}tool:${t.name}`, () => Promise.resolve(t.run(x))) }));
   const fk = shaping.filler ? (input.filler ?? null) : null;
   const fillerSaid = () => Boolean(fk && FILLERS.get(fk.callId)?.turn === fk.turn);
   const noteFiller = (line: string) => {
