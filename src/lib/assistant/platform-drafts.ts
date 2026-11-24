@@ -25,14 +25,15 @@ export type GmailDraftResult = { ok: true; draftId: string; messageId: string | 
 
 /** The email as a draft in the person's own Gmail. A refused scope tells the execs once, in Kaizen OS. */
 export async function saveGmailDraft(admin: SupabaseClient, e: EmailToDraft): Promise<GmailDraftResult> {
-  const { gmailComposeToken, googleConfigured, googlePost } = await import("@/lib/context/google");
+  const { gmailComposeToken, gmailSignature, googleConfigured, googlePost } = await import("@/lib/context/google");
   if (!googleConfigured()) return { ok: false, scope: false, error: "Google isn't connected to Kaizen OS, so drafts can't go into Gmail yet." };
   const clientId = serviceAccountClientId(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
   try {
     const { mailFiles } = await import("@/lib/documents/attach");
     const { attached, missing } = await mailFiles(admin, e.files ?? []);
     if (missing.length) throw new Error(`files missing: ${missing.join(", ")}`);
-    const raw = rawEmail({ from: `${e.fromName} <${e.mailbox}>`, to: e.to, cc: e.cc ?? null, subject: e.subject, body: e.body, inReplyTo: e.inReplyTo ?? null, references: e.references ?? null, attachments: attached });
+    const signature = await gmailSignature(e.mailbox);
+    const raw = rawEmail({ from: `${e.fromName} <${e.mailbox}>`, to: e.to, cc: e.cc ?? null, subject: e.subject, body: e.body, inReplyTo: e.inReplyTo ?? null, references: e.references ?? null, attachments: attached, signature });
     const token = await gmailComposeToken(e.mailbox);
     const made = await googlePost<{ id: string; message?: { id: string } }>(token, "https://gmail.googleapis.com/gmail/v1/users/me/drafts", { message: { raw, ...(e.threadId ? { threadId: e.threadId } : {}) } });
     return { ok: true, draftId: made.id, messageId: made.message?.id ?? null, href: gmailDraftLink(e.mailbox, made.message?.id) };

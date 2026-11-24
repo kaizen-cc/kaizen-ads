@@ -40,6 +40,21 @@ export const gmailToken = (mailbox: string) => tokenFor(mailbox, GMAIL_SCOPE);
 export const gmailSendToken = (mailbox: string) => tokenFor(mailbox, "https://www.googleapis.com/auth/gmail.send");
 export const gmailComposeToken = (mailbox: string) => tokenFor(mailbox, "https://www.googleapis.com/auth/gmail.compose");
 
+/**
+ * Their own Gmail signature (HTML, the one set for their address in Gmail's settings), read with the mailbox read
+ * access Kaizen already has. Null when there isn't one or Gmail won't say: the email goes out without it.
+ */
+export async function gmailSignature(mailbox: string): Promise<string | null> {
+  try {
+    const token = await gmailToken(mailbox);
+    const r = await google<{ signature?: string }>(token, `https://gmail.googleapis.com/gmail/v1/users/me/settings/sendAs/${encodeURIComponent(mailbox.trim().toLowerCase())}`);
+    return r.signature?.trim() || null;
+  } catch (e) {
+    console.error("[gmail signature]", e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
 /** A POST to a Google API (Gmail send or draft), with its error in words */
 export async function googlePost<T>(token: string, url: string, body: unknown): Promise<T> {
   const res = await fetch(url, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body), cache: "no-store" });
