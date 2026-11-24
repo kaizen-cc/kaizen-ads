@@ -10,6 +10,9 @@ export function parseFolderRef(input: string): FolderRef | null {
   if (!s) return null;
   const link = s.match(/drive\.google\.com\/(?:drive\/(?:u\/\d+\/)?folders\/|open\?id=|folderview\?id=)([A-Za-z0-9_-]{10,})/);
   if (link) return { id: link[1] };
+  // A folder or shared drive by its id, as code passes it ("id:0AFx…")
+  const tagged = s.match(/^id:([A-Za-z0-9_-]{10,})$/);
+  if (tagged) return { id: tagged[1] };
   if (/^[A-Za-z0-9_-]{25,}$/.test(s)) return { id: s };
   const path = s
     .replace(/^(my drive|shared drives?)\s*[/>]\s*/i, "")

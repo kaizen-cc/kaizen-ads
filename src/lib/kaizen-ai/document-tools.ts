@@ -247,29 +247,39 @@ export function documentTools(ctx: ToolCtx): ChatTool[] {
     {
       name: "upload_to_drive",
       description:
-        "Puts documents Kaizen OS made (case studies, SOWs, proposals: their document_id) into a Google Drive folder the person points to, as them: the folder's link, or its path as they say it (\"00-Business Manifesto/08-Kaizen Content\": a shared drive or any folder they can reach, then subfolders). subfolder: a folder inside it to put them in, made when it isn't there (\"Case Studies\"). A file with the same name there is replaced with the new version. Returns each file's Drive link. When the folder isn't found, say so and ask for its link.",
-      input_schema: { type: "object", properties: { document_ids: ITEMS, folder: { type: "string", description: "A Drive folder link, or a path of folder names" }, subfolder: { type: "string" } }, required: ["document_ids", "folder"], additionalProperties: false },
+        "Puts documents Kaizen OS made (case studies, SOWs, proposals: their document_id) into Google Drive, as the person. The Drive rule: folder is the one they named or linked in this conversation (its link, or its path as they say it: \"00-Business Manifesto/08-Kaizen Content\"); leave folder out when they didn't name one, and it proposes the folder they confirmed last time for this client and kind of document (say its 'say' line, then call again with confirmed: true on their yes) or tells you to ask. Never pick a folder yourself, never My Drive's root. subfolder: folders inside it (\"Case Studies\" or \"08-Kaizen Content/Case Studies\"); only the last one is made when missing. Several matching folders come back as candidates to ask about; a folder that isn't found, say so. After saving, give each file's link and the folder's path. A file of the same name there is replaced with the new version.",
+      input_schema: {
+        type: "object",
+        properties: { document_ids: ITEMS, folder: { type: "string", description: "The Drive folder link or path they named in this conversation; leave out otherwise" }, subfolder: { type: "string" }, confirmed: { type: "boolean", description: "True only after they said yes to the proposed folder" } },
+        required: ["document_ids"],
+        additionalProperties: false,
+      },
       status: () => "Putting it in Drive…",
       run: async (input) => {
         if (ctx.me.viewAs) return { error: "While viewing as someone, nothing is put in their Drive." };
         const ids = (Array.isArray(input.document_ids) ? input.document_ids : []).map(String).filter((x) => /^[0-9a-f-]{36}$/i.test(x)).slice(0, 20);
         if (!ids.length) return { error: "Which documents? Use their document_id." };
-        const { driveFolder, uploadToFolder, documentBytes } = await import("@/lib/drive-push");
-        const f = await driveFolder(ctx.me.email, clip(input.folder, 500), clip(input.subfolder, 120) || null);
-        if ("error" in f) return { uploaded: false, error: f.error };
-        const out: { file: string; link: string | null }[] = [];
-        const missing: string[] = [];
+        const { uploadToFolder, documentBytes } = await import("@/lib/drive-push");
+        const { destinationForSave, rememberDestination } = await import("@/lib/drive-destination");
+        const { pathText, savedLine } = await import("@/lib/drive-destination-core");
+        const docs: { id: string; name: string; bytes: Uint8Array; clientId: string | null; kind: string }[] = [];
         for (const id of ids) {
           const d = await documentBytes(ctx.db, ctx.admin, id);
-          if (!d) {
-            missing.push(id);
-            continue;
-          }
-          const up = await uploadToFolder(ctx.me.email, f.id, d.name, d.bytes, "application/pdf");
+          if (d) docs.push({ id, ...d });
+        }
+        if (!docs.length) return { error: "None of those documents are ones you can see." };
+        const key = { profileId: ctx.me.id, clientId: docs[0].clientId, docType: docs[0].kind };
+        const where = await destinationForSave(ctx.admin, { email: ctx.me.email, key, folder: input.folder, subfolder: input.subfolder, confirmed: input.confirmed });
+        if ("reply" in where) return where.reply;
+        const dest = where.save;
+        const out: { file: string; link: string | null }[] = [];
+        for (const d of docs) {
+          const up = await uploadToFolder(ctx.me.email, dest.id, d.name, d.bytes, "application/pdf");
           out.push({ file: d.name, link: up.link });
         }
-        if (f.link) ctx.cards.push({ type: "link", title: `In Drive: ${f.name}`, detail: `${out.length} file${out.length === 1 ? "" : "s"}${f.made ? ", in a new folder" : ""}`, href: f.link, cta: "Open the folder", external: true });
-        return { uploaded: out.length, folder: f.name, folder_link: f.link, made_folder: f.made, files: out, ...(missing.length ? { not_found: missing.length } : {}) };
+        await rememberDestination(ctx.admin, key, dest);
+        if (dest.link) ctx.cards.push({ type: "link", title: `In Drive: ${pathText(dest.path)}`, detail: `${out.length} file${out.length === 1 ? "" : "s"}${dest.made ? ", in a new folder" : ""}`, href: dest.link, cta: "Open the folder", external: true });
+        return { saved: out.length, folder_path: pathText(dest.path), folder_link: dest.link, made_folder: Boolean(dest.made), files: out, say: out.map((f) => savedLine(f.link, dest)).join(" "), ...(docs.length < ids.length ? { not_found: ids.length - docs.length } : {}) };
       },
     },
     {
@@ -305,14 +315,21 @@ export function documentTools(ctx: ToolCtx): ChatTool[] {
           }
         }
         if (unknown.length) return { queued: false, unknown, note: "Some names didn't match a client you can see: ask about these first (offer the closest match), then queue them all together." };
-        if (input.confirmed !== true) return { queued: false, list: items.map((i) => i.client), note: "Say the list back in one line (and the Drive folder) and ask once; call again with confirmed: true on their yes." };
-        if (input.folder) {
-          const { driveFolder } = await import("@/lib/drive-push");
-          const f = await driveFolder(ctx.me.email, clip(input.folder, 500), null);
-          if ("error" in f) return { queued: false, error: `${f.error} Ask for the folder's link, or queue them without Drive.` };
+        // The Drive rule: only the folder they named here, found now (several matches: ask; not found: say so)
+        let folder: string | null = null;
+        let folderPath: string | null = null;
+        if (clip(input.folder, 500)) {
+          const { findDestination } = await import("@/lib/drive-destination");
+          const { pathText, subPath } = await import("@/lib/drive-destination-core");
+          const f = await findDestination(ctx.me.email, clip(input.folder, 500), null, "find");
+          if ("ask" in f) return { queued: false, candidates: f.ask.map((d) => ({ path: pathText(d.path), link: d.link })), say: f.say };
+          if ("notFound" in f) return { queued: false, folder_not_found: true, say: `${f.notFound} Or queue them without Drive.` };
+          folder = `https://drive.google.com/drive/folders/${f.dest.id}`;
+          folderPath = pathText([...f.dest.path, ...subPath(clip(input.subfolder, 200))]);
         }
+        if (input.confirmed !== true) return { queued: false, list: items.map((i) => i.client), drive_folder: folderPath ?? "none: kept in Kaizen OS only", note: "Say the list back in one line with the Drive folder's full path (or that they stay in Kaizen OS only when no folder was named) and ask once; call again with confirmed: true on their yes." };
         const { queueJob } = await import("@/lib/assistant/after-call-jobs");
-        const id = await queueJob(ctx.admin, { profileId: ctx.me.id, callId: null, title: `Case studies (${items.length})`, items, folder: clip(input.folder, 500) || null, subfolder: clip(input.subfolder, 120) || null });
+        const id = await queueJob(ctx.admin, { profileId: ctx.me.id, callId: null, title: `Case studies (${items.length})`, items, folder, subfolder: clip(input.subfolder, 200) || null, folderPath });
         return { queued: true, job: id, clients: items.map((i) => i.client), note: "Queued: they run in the background now, about a minute or two each, and they'll get a notice in the app as each is ready (and in Drive when a folder was given). Say so in a line." };
       },
     },

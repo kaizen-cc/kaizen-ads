@@ -223,6 +223,16 @@ const over = (f: CopyField) => f.limit != null && [...f.text].length > f.limit;
 
 // ─── Google export (as the person, through the Workspace service account) ──
 
+/** The Drive rule, as the model reads it on every tool that saves into Drive */
+const DRIVE_RULE =
+  "Where it goes: folder is the Drive folder they named or linked in this conversation (its link, or its path like Shared drive/Folder); leave it out when they didn't, and it proposes the folder they confirmed last time for this client and kind of file (say its 'say' line and call again with confirmed: true on their yes) or tells you to ask. Never pick a folder yourself or save to My Drive's root. Several matches come back as candidates to ask about. After saving, give the file's link and the folder's path.";
+const DRIVE_PLACE = {
+  folder: { type: "string", description: "The Drive folder link or path they named in this conversation; leave out otherwise" },
+  subfolder: { type: "string", description: "Folders inside it; only the last is made when missing" },
+  client: { type: "string", description: "The client it's for, if any (the remembered folder is per client)" },
+  confirmed: { type: "boolean", description: "True only after they said yes to the proposed folder" },
+} as const;
+
 async function driveAs(email: string) {
   if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON) throw new Error("Google isn't connected for exports yet.");
   const { JWT } = await import("google-auth-library");
@@ -230,14 +240,14 @@ async function driveAs(email: string) {
   return (await new JWT({ email: key.client_email, key: key.private_key, scopes: ["https://www.googleapis.com/auth/drive"], subject: email }).getAccessToken()).token!;
 }
 
-/** A new Google file in the person's own Drive, converted from the content given */
-async function uploadAs(email: string, name: string, googleType: string, body: string, contentType: string) {
+/** A new Google file in the folder the Drive rule settled on (never My Drive's root), converted from the content given */
+async function uploadAs(email: string, name: string, googleType: string, body: string, contentType: string, folderId: string) {
   const token = await driveAs(email).catch((e) => {
     throw new Error(`Google refused the export (${e instanceof Error ? e.message.slice(0, 120) : "unknown"}). Kaizen's service account needs Drive delegated in the Workspace admin.`);
   });
   const boundary = `kaizen${Date.now()}`;
-  const payload = `--${boundary}\r\ncontent-type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name, mimeType: googleType })}\r\n--${boundary}\r\ncontent-type: ${contentType}; charset=UTF-8\r\n\r\n${body}\r\n--${boundary}--`;
-  const res = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink", {
+  const payload = `--${boundary}\r\ncontent-type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name, mimeType: googleType, parents: [folderId] })}\r\n--${boundary}\r\ncontent-type: ${contentType}; charset=UTF-8\r\n\r\n${body}\r\n--${boundary}--`;
+  const res = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,webViewLink", {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": `multipart/related; boundary=${boundary}` },
     body: payload,
@@ -329,6 +339,20 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
   const card = (c: Card) => {
     ctx.cards.push(c);
     return ctx.cards.length - 1;
+  };
+  // The Drive rule (src/lib/drive-destination.ts): the folder named here, else the remembered one with a quick yes, else ask
+  const driveDestination = async (input: Record<string, unknown>, docType: string) => {
+    const clientId = typeof input.client === "string" && input.client.trim() ? (await clientOf(ctx, input)).id : null;
+    const { destinationForSave } = await import("@/lib/drive-destination");
+    return destinationForSave(ctx.admin, { email: ctx.me.email, key: { profileId: ctx.me.id, clientId, docType }, folder: input.folder, subfolder: input.subfolder, confirmed: input.confirmed });
+  };
+  const savedToDrive = async (input: Record<string, unknown>, docType: string, dest: import("@/lib/drive-destination-core").Destination, link: string, title: string, detail: string, cta: string) => {
+    const clientId = typeof input.client === "string" && input.client.trim() ? (await clientOf(ctx, input)).id : null;
+    const { rememberDestination } = await import("@/lib/drive-destination");
+    const { pathText, savedLine } = await import("@/lib/drive-destination-core");
+    await rememberDestination(ctx.admin, { profileId: ctx.me.id, clientId, docType }, dest);
+    card({ type: "link", title, detail: `${detail} · ${pathText(dest.path)}`, href: link, cta, external: true });
+    return { link, folder_path: pathText(dest.path), folder_link: dest.link, say: savedLine(link, dest) };
   };
   const tools: ChatTool[] = [
     {
@@ -1196,28 +1220,30 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
     },
     {
       name: "export_to_google_doc",
-      description: "Saves something from this conversation (a report, a plan, a script, copy) as a new Google Doc in the person's own Drive and returns the link. Write the full content in markdown (headings, lists, tables).",
-      input_schema: { type: "object", properties: { title: { type: "string" }, markdown: { type: "string" } }, required: ["title", "markdown"], additionalProperties: false },
+      description: `Saves something from this conversation (a report, a plan, a script, copy) as a new Google Doc in Drive and returns the link. Write the full content in markdown (headings, lists, tables). ${DRIVE_RULE}`,
+      input_schema: { type: "object", properties: { title: { type: "string" }, markdown: { type: "string" }, ...DRIVE_PLACE }, required: ["title", "markdown"], additionalProperties: false },
       status: () => "Making the Google Doc…",
       run: async (input) => {
         if (ctx.me.viewAs) throw new Error("While viewing as someone, nothing is created in their Drive.");
-        const f = await uploadAs(ctx.me.email, String(input.title).slice(0, 200), "application/vnd.google-apps.document", mdToHtml(String(input.markdown)), "text/html");
-        card({ type: "link", title: String(input.title), detail: "In your Google Drive", href: f.webViewLink, cta: "Open the Doc", external: true });
-        return { link: f.webViewLink };
+        const where = await driveDestination(input, "google_doc");
+        if ("reply" in where) return where.reply;
+        const f = await uploadAs(ctx.me.email, String(input.title).slice(0, 200), "application/vnd.google-apps.document", mdToHtml(String(input.markdown)), "text/html", where.save.id);
+        return savedToDrive(input, "google_doc", where.save, f.webViewLink, String(input.title), "In Google Drive", "Open the Doc");
       },
     },
     {
       name: "export_to_google_sheet",
-      description: "Saves a table as a new Google Sheet in the person's own Drive and returns the link. rows: the first row is the header.",
-      input_schema: { type: "object", properties: { title: { type: "string" }, rows: { type: "array", items: { type: "array", items: { type: ["string", "number", "null"] } } } }, required: ["title", "rows"], additionalProperties: false },
+      description: `Saves a table as a new Google Sheet in Drive and returns the link. rows: the first row is the header. ${DRIVE_RULE}`,
+      input_schema: { type: "object", properties: { title: { type: "string" }, rows: { type: "array", items: { type: "array", items: { type: ["string", "number", "null"] } } }, ...DRIVE_PLACE }, required: ["title", "rows"], additionalProperties: false },
       status: () => "Making the Google Sheet…",
       run: async (input) => {
         const rows = ((input.rows ?? []) as unknown[][]).slice(0, 5000);
         const csv = rows.map((r) => r.map(csvCell).join(",")).join("\r\n");
         if (ctx.me.viewAs) throw new Error("While viewing as someone, nothing is created in their Drive.");
-        const f = await uploadAs(ctx.me.email, String(input.title).slice(0, 200), "application/vnd.google-apps.spreadsheet", csv, "text/csv");
-        card({ type: "link", title: String(input.title), detail: `${Math.max(0, rows.length - 1)} rows · in your Google Drive`, href: f.webViewLink, cta: "Open the Sheet", external: true });
-        return { link: f.webViewLink };
+        const where = await driveDestination(input, "google_sheet");
+        if ("reply" in where) return where.reply;
+        const f = await uploadAs(ctx.me.email, String(input.title).slice(0, 200), "application/vnd.google-apps.spreadsheet", csv, "text/csv", where.save.id);
+        return savedToDrive(input, "google_sheet", where.save, f.webViewLink, String(input.title), `${Math.max(0, rows.length - 1)} rows · in Google Drive`, "Open the Sheet");
       },
     },
     {
