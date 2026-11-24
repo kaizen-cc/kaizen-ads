@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { asanaAssignees, asanaTask, commentAsanaTask, saveAsanaTask, subtaskAsanaTask } from "@/app/(team)/asana-task-actions";
 import { quickDue, type TaskDetail } from "@/lib/asana-live-core";
+import { describe } from "@/lib/asana-due";
 import { deferClear } from "@/lib/undo";
 
 // An Asana task on the Overview, the recap and its sheet (owner, Nov 24 2026: the generic Done / Later / Hand off didn't
@@ -124,7 +125,20 @@ export function AsanaItemActions({ itemKey, gid, url, title, clientSlug = null, 
               {task.assignedBy ? `${task.project || task.section ? " · " : ""}assigned by ${task.assignedBy}` : ""}
             </p>
           )}
-          {notes && <p className="[overflow-wrap:anywhere]">{notes.length > 280 ? `${notes.slice(0, 280)}…` : notes}</p>}
+          {/* About two lines; links as short labels ("Loom video", "Attachment") that open in a new tab, never raw addresses */}
+          {notes && (
+            <p className="line-clamp-2 [overflow-wrap:anywhere]">
+              {describe(notes).map((p, i) =>
+                p.href ? (
+                  <a key={i} href={p.href} target="_blank" rel="noreferrer" className="underline underline-offset-2">
+                    {p.text} ↗
+                  </a>
+                ) : (
+                  <span key={i}>{p.text}</span>
+                ),
+              )}
+            </p>
+          )}
           {task.subtasks.length > 0 && (
             <ul className="grid gap-1" aria-label="Subtasks">
               {task.subtasks.slice(0, 8).map((s) => (
@@ -144,7 +158,17 @@ export function AsanaItemActions({ itemKey, gid, url, title, clientSlug = null, 
                 {last.by ?? "Someone"} · {when(last.at)}
                 {task.comments.length > 1 ? ` · ${task.comments.length} comments` : ""}
               </span>
-              <span className="whitespace-pre-wrap [overflow-wrap:anywhere]">{last.text.length > 400 ? `${last.text.slice(0, 400)}…` : last.text}</span>
+              <span className="line-clamp-3 [overflow-wrap:anywhere]">
+                {describe(last.text, 300).map((p, i) =>
+                  p.href ? (
+                    <a key={i} href={p.href} target="_blank" rel="noreferrer" className="underline underline-offset-2">
+                      {p.text} ↗
+                    </a>
+                  ) : (
+                    <span key={i}>{p.text}</span>
+                  ),
+                )}
+              </span>
             </div>
           )}
         </div>

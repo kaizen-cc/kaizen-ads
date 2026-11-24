@@ -17,6 +17,7 @@ import { DraftActions } from "./emails-ready";
 import { ItemContext } from "@/components/item-context";
 import { SubItems } from "@/components/sub-items";
 import { AsanaItemActions } from "@/components/asana-item-actions";
+import { asanaSummary, orderAsana } from "@/lib/asana-due";
 import { closeLocally, useClosed } from "@/lib/closed-items";
 import { deferClear } from "@/lib/undo";
 
@@ -49,6 +50,8 @@ export type BlockDef = {
   /** The big number (items: how many; a panel: its own count, or none) */
   count?: number;
   chips?: string[];
+  /** A quiet chip that opens the block with everything in it ("67 open in all") */
+  allChip?: string;
   empty?: { title: string; line: string };
   /** Read only (Pulse): a note above its items, and its number isn't a to-do count */
   note?: string;
@@ -111,7 +114,10 @@ export function Blocks({ blocks }: { blocks: BlockDef[] }) {
       <style>{`@keyframes block-in { from { opacity: 0; transform: translateY(10px) } to { opacity: 1; transform: none } }`}</style>
       {blocks.map((bl, i) => {
         const listed = bl.cards && (bl.count == null || bl.count === bl.cards.length);
-        const count = listed ? (bl.cards ?? []).filter((c) => !closed.has(c.key) && subsLeft(c, closed) !== null).length : (bl.count ?? bl.cards?.length);
+        const live = (bl.cards ?? []).filter((c) => !closed.has(c.key) && subsLeft(c, closed) !== null);
+        // Asana's big number is what's due today (src/lib/asana-due.ts), counted again as tasks close
+        const asanaToday = bl.id === "asana" && bl.cards?.length && !bl.cards.some((c) => c.key === "asana:connect") ? asanaSummary(live.filter((c) => c.kind === "asana")).big : null;
+        const count = asanaToday ?? (listed ? live.length : (bl.count ?? bl.cards?.length));
         const calm = count === 0 && !bl.bigLabel;
         const tone = calm ? CALM : bl.tone;
         const isOpen = open === bl.id;
@@ -144,13 +150,33 @@ export function Blocks({ blocks }: { blocks: BlockDef[] }) {
                   )}
                   <span className="min-w-0 pb-1.5 text-[15px] leading-snug text-ink/80">{calm && bl.empty ? bl.empty.title : bl.blurb}</span>
                 </span>
-                {(bl.chips ?? []).length > 0 && (
+                {((bl.chips ?? []).length > 0 || bl.allChip) && (
                   <span className="flex flex-wrap gap-1.5">
                     {(bl.chips ?? []).map((c) => (
                       <span key={c} className="rounded-full bg-ink/[0.06] px-2.5 py-1 text-[11.5px] text-ink/65">
                         {c}
                       </span>
                     ))}
+                    {/* Everything, quietly: opens the block with the whole list */}
+                    {bl.allChip && (
+                      <span
+                        role="link"
+                        tabIndex={0}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setLeftAnchor(true);
+                          pushParams({ block: bl.id, all: bl.id, tab: null });
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key !== "Enter") return;
+                          e.stopPropagation();
+                          pushParams({ block: bl.id, all: bl.id, tab: null });
+                        }}
+                        className="rounded-full px-2.5 py-1 text-[11.5px] text-ink/50 underline underline-offset-2 hover:text-fg"
+                      >
+                        {bl.allChip}
+                      </span>
+                    )}
                   </span>
                 )}
               </span>
@@ -201,8 +227,12 @@ function BlockItems({ id, cards, empty, note }: { id: string; cards: ExecCard[];
     const v = subsLeft(c, closed);
     return v ? [v] : [];
   });
-  const { shown, more } = capTab(cards);
-  const list = all ? cards : shown;
+  // Asana by when it's due: overdue, today, tomorrow, this week; later and undated wait behind "more" (src/lib/asana-due.ts)
+  const ordered = id === "asana" ? orderAsana(cards) : null;
+  const capped = capTab(ordered ? ordered.soon : cards);
+  const shown = capped.shown;
+  const more = ordered ? capped.more + ordered.later.length : capped.more;
+  const list = all ? (ordered ? [...ordered.soon, ...ordered.later] : cards) : shown;
   if (!cards.length) return <p className="px-2 py-4 text-sm text-ink/60">{empty}</p>;
   return (
     <div className="grid gap-3">
@@ -216,7 +246,7 @@ function BlockItems({ id, cards, empty, note }: { id: string; cards: ExecCard[];
       </ul>
       {more > 0 && (
         <button type="button" onClick={() => pushParams({ all: all ? null : id })} className="min-h-11 justify-self-start rounded-full border border-ink/15 px-4 text-sm text-ink/70 hover:border-ink/30 hover:text-fg">
-          {all ? "Show fewer" : `${more} more`}
+          {all ? "Show fewer" : ordered?.later.length ? `${more} more (later and no date)` : `${more} more`}
         </button>
       )}
     </div>

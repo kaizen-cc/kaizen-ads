@@ -1,5 +1,6 @@
 import type { Tier, TodayItem, TopicKey } from "@/lib/today";
 import { subsLeft, type ExecCard, type SubItem, type SubsTitle } from "@/lib/exec-overview-core";
+import { dueByToday } from "@/lib/asana-due";
 
 // How the daily recap is counted, in one place for every screen that shows its numbers (the recap itself, the "Your
 // day" card on the Overview and the theme cards under it). Everything about one client in a topic is one look: three
@@ -19,7 +20,7 @@ const EXEC_ONLY: TopicKey[] = ["needs", "escalated", "pulse", "system", "asana",
 export const QUIET_TOPIC: TopicKey = "elsewhere";
 const RANK: Record<Tier, number> = { critical: 2, high: 1, normal: 0 };
 
-type Countable = Pick<TodayItem, "client" | "tier" | "score" | "topic">;
+type Countable = Pick<TodayItem, "client" | "tier" | "score" | "topic"> & { due?: string | null };
 
 /** Everything in a topic about one client, gathered: one row to review, counted once. */
 export type Bucket<T extends Countable = TodayItem> = { key: string; client: string; items: T[]; tier: Tier };
@@ -67,6 +68,8 @@ export function countLooks(items: Countable[]): Looks {
   const byTier: Record<Tier, number> = { critical: 0, high: 0, normal: 0 };
   const byTopic = Object.fromEntries(TOPIC_KEYS.map((k) => [k, { n: 0, critical: 0 }])) as Looks["byTopic"];
   let total = 0;
+  // An Asana task counts once it's due today or overdue; the rest of someone's Asana isn't today's to-do (src/lib/asana-due.ts)
+  items = items.filter((i) => i.topic !== "asana" || dueByToday(i.due));
   for (const g of topicGroups(items)) {
     for (const b of g.buckets) {
       // Everything else has its own count, never in the totals; so does an exec's Pulse (read only, never a to-do)
@@ -143,7 +146,7 @@ export function lookHeadline(topic: TopicKey, n: number): string {
     case "team":
       return `${n} ${s(n, "teammate's item has", "teammates' items have")} sat 48 hours with nothing moving`;
     case "asana":
-      return `${n} open Asana ${s(n, "task is", "tasks are")} yours`;
+      return `${n} Asana ${s(n, "task is", "tasks are")} due today`;
   }
 }
 
@@ -187,7 +190,7 @@ export function lookChip(topic: TopicKey, n: number): string {
     case "team":
       return `${n} stuck on your team`;
     case "asana":
-      return `${n} in Asana`;
+      return `${n} due in Asana`;
   }
 }
 

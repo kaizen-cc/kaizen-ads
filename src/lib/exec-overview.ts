@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
 import type { TodayDraft, TopicKey } from "@/lib/today";
 import { isInternalClient } from "@/lib/internal-clients";
+import { dueBucket } from "@/lib/asana-due";
 import { execHears, groupEscalated, primaryHref, safetySub, sortCards, sortNeeds, type ExecCard, type ExecTab, type FireRow, type Rung3Row } from "@/lib/exec-overview-core";
 
 // The executive Overview and morning recap (owner, Nov 23 2026; the rules in ./exec-overview-core.ts). One model, built
@@ -438,7 +439,7 @@ export function cardToDraft(c: ExecCard): TodayDraft {
       : c.tab === "needs"
         ? Math.min(95, (overdue ? 86 : c.due ? 72 : 64) + (c.severity === "critical" ? 6 : 0))
         : c.tab === "asana"
-          ? overdue ? 74 : c.due ? 58 : 45
+          ? ({ overdue: 74, today: 66, tomorrow: 60, week: 55, later: c.due ? 50 : 45 } as const)[dueBucket(c.due)]
         : c.tab === "accounts"
           ? c.severity === "critical"
             ? 82

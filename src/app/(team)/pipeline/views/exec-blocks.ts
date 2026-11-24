@@ -2,6 +2,7 @@
 // build the blocks (role-overview) and the client blocks (exec-home) share them. Never "use client": a server page
 // can't call a function from a client file (Nov 23 2026: "Attempted to call itemChips() from the server").
 import type { ExecCard, ExecTab } from "@/lib/exec-overview-core";
+import { asanaSummary } from "@/lib/asana-due";
 
 export const BLURB: Record<ExecTab, string> = {
   needs: "Replies, promises, tasks and approvals on you",
@@ -56,13 +57,8 @@ export function chips(tab: ExecTab, cards: ExecCard[]): string[] {
       const shown = cards.length - 1;
       return [setup.action.href ? "Connect Asana" : "Being set up", shown ? `${shown} from the shared view` : "nothing visible yet"];
     }
-    const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
-    const week = new Date(Date.now() + 7 * 86_400_000).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
-    const day = (c: ExecCard) => (c.due ? c.due.slice(0, 10) : null);
-    const late = count((c) => Boolean(day(c) && day(c)! < today));
-    const now = count((c) => day(c) === today);
-    const soon = count((c) => Boolean(day(c) && day(c)! > today && day(c)! <= week));
-    return [late && `${late} overdue`, now && `${now} today`, soon && `${soon} this week`].filter((x): x is string => Boolean(x));
+    // Beside the big number (due today): tomorrow and the rest of the week (src/lib/asana-due.ts)
+    return asanaSummary(cards.filter((c) => c.kind === "asana")).chips;
   }
   if (tab === "pulse")
     return [count((c) => c.severity === "fire") && n(count((c) => c.severity === "fire"), "client on fire", "clients on fire"), count((c) => c.key.startsWith("pulse:team:")) && n(count((c) => c.key.startsWith("pulse:team:")), "lead", "leads"), "this week"].filter((x): x is string => Boolean(x));
@@ -93,9 +89,14 @@ export function itemChips(id: string, cards: ExecCard[]): string[] {
 }
 
 
-/** The Asana block while their own Asana isn't connected: a word, not a count of what the shared view sees */
-export function asanaLabel(id: string, cards: ExecCard[]): { bigLabel?: string } {
+/**
+ * The Asana block's header (owner, Nov 24 2026): the big number is what's due today (overdue included, said so), never
+ * every open task; "N open in all" opens the whole list. Not connected: a word, not a count of what the shared view sees.
+ */
+export function asanaLabel(id: string, cards: ExecCard[]): { bigLabel?: string; count?: number; blurb?: string; allChip?: string } {
   if (id !== "asana") return {};
   const setup = cards.find((c) => c.key === "asana:connect");
-  return setup ? { bigLabel: setup.action.href ? "Connect" : "Soon" } : {};
+  if (setup) return { bigLabel: setup.action.href ? "Connect" : "Soon" };
+  const s = asanaSummary(cards.filter((c) => c.kind === "asana"));
+  return { count: s.big, blurb: s.label, ...(s.big === 0 ? { bigLabel: "0" } : {}), ...(s.all ? { allChip: `${s.all} open in all` } : {}) };
 }

@@ -48,7 +48,9 @@ const toLive = (clients: { id: string; name: string; slug: string }[]) => (t: Li
   const project = t.memberships?.find((m) => m.project?.name)?.project?.name ?? (t.parent?.name ? `Subtask of ${t.parent.name}` : null);
   // The project's section ("Ready for review"), which says where the work is; their own My tasks section ("Recently
   // assigned") only when the task is in no project (owner, Nov 24 2026)
-  const section = t.memberships?.find((m) => m.section?.name)?.section?.name ?? (t.memberships?.some((m) => m.project?.name) ? null : (t.assignee_section?.name ?? null));
+  const MY_TASKS = /^(recently assigned|do today|do next week|do later|untitled section)$/i;
+  const projectSection = t.memberships?.find((m) => m.project?.name && m.section?.name && !MY_TASKS.test(m.section.name) && m.section.name !== t.assignee_section?.name)?.section?.name ?? null;
+  const section = projectSection ?? (t.memberships?.some((m) => m.project?.name) ? null : (t.assignee_section?.name ?? null));
   const hay = `${project ?? ""} ${t.name}`.toLowerCase();
   const c = clients.find((x) => hay.includes(x.name.toLowerCase())) ?? null;
   return { gid: t.gid, name: t.name, due: t.due_on, project, section, client: c?.name ?? null, clientSlug: c?.slug ?? null, url: t.permalink_url ?? `https://app.asana.com/0/0/${t.gid}`, mySection: t.assignee_section?.name ?? null };
