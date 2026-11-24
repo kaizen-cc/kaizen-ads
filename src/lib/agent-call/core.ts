@@ -969,6 +969,15 @@ export const END_MARKER = "[[END_CALL]]";
 /** How every end marker starts (the plain goodbye's and the privacy hang-up's): the stream is cut from here on */
 const END_MARKER_START = "[[END_CALL";
 
+/** A reply of only this says nothing: the words weren't meant for the agent (side talk, a TV), so nothing is spoken or kept */
+export const QUIET_MARKER = "[[QUIET]]";
+
+/** Whether a whole reply was the quiet marker and nothing else worth saying */
+export const isQuietReply = (text: string) => text.includes(QUIET_MARKER) && !text.replace(QUIET_MARKER, "").replace(/[\s.…,]+/g, "");
+
+/** On a call several agents share: side talk gets no answer at all (the host deals with a mic left open) */
+export const QUIET_RULE = `Side talk: what you hear is transcribed from their microphone, so it picks up people nearby, a TV, and them talking to someone else. When what you hear isn't meant for you (a side conversation, fragments that don't follow from the call, someone else's voice, a short \"ok\" or \"cool\" after you've already wrapped up), write only ${QUIET_MARKER} and nothing else: nothing is said. Never comment on it (\"that sounds like side conversation\"), never answer what was said to someone else, and never repeat a goodbye or a summary you've already given.`;
+
 /** Ends a call that seemed to be picking up background chatter with no clear yes to "are you still there?" (logged) */
 export const PRIVACY_END_MARKER = "[[END_CALL:no_clear_yes]]";
 
@@ -994,6 +1003,7 @@ export const DISTRESS_RULE = `If they sound genuinely distressed or unsafe (not 
 export function endMarkerFilter() {
   let held = "";
   let ended = false;
+  let quiet = false;
   /** The marker and what came after it (enough to tell which marker it was) */
   let tail = "";
   return {
@@ -1002,7 +1012,12 @@ export function endMarkerFilter() {
         if (tail.length < 64) tail += delta;
         return "";
       }
-      const s = held + delta;
+      let s = held + delta;
+      // The quiet marker is taken out wherever it shows; a reply of only that says nothing
+      if (s.includes(QUIET_MARKER)) {
+        quiet = true;
+        s = s.split(QUIET_MARKER).join("");
+      }
       const at = s.indexOf(END_MARKER_START);
       if (at >= 0) {
         ended = true;
@@ -1011,11 +1026,13 @@ export function endMarkerFilter() {
         return s.slice(0, at);
       }
       let keep = 0;
-      for (let k = Math.min(END_MARKER_START.length - 1, s.length); k > 0; k--)
-        if (END_MARKER_START.startsWith(s.slice(s.length - k))) {
+      for (let k = Math.min(Math.max(END_MARKER_START.length, QUIET_MARKER.length) - 1, s.length); k > 0; k--) {
+        const end = s.slice(s.length - k);
+        if (END_MARKER_START.startsWith(end) || QUIET_MARKER.startsWith(end)) {
           keep = k;
           break;
         }
+      }
       held = s.slice(s.length - keep);
       return s.slice(0, s.length - keep);
     },
@@ -1028,6 +1045,10 @@ export function endMarkerFilter() {
     get ended() {
       return ended;
     },
+    /** The agent chose to say nothing (the words weren't meant for it) */
+    get quiet() {
+      return quiet;
+    },
     /** It ended on the privacy hang-up (background chatter, no clear yes) */
     get forPrivacy() {
       return ended && endedForPrivacy(tail);
@@ -1037,8 +1058,9 @@ export function endMarkerFilter() {
 
 /** A whole reply without the end marker, and whether it was there */
 export function stripEndMarker(text: string): { text: string; ended: boolean } {
-  const at = text.indexOf(END_MARKER_START);
-  return at < 0 ? { text, ended: false } : { text: text.slice(0, at).trimEnd(), ended: true };
+  const clean = text.split(QUIET_MARKER).join("");
+  const at = clean.indexOf(END_MARKER_START);
+  return at < 0 ? { text: clean, ended: false } : { text: clean.slice(0, at).trimEnd(), ended: true };
 }
 
 // ─── Recorded audio ─────────────────────────────────────────────────────────

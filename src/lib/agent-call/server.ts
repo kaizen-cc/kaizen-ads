@@ -582,7 +582,7 @@ export async function streamAnswer(input: {
         return { content: res.content as { type: string }[], stop };
       },
       // Said it's working on it and stopped: the work carries on in this turn instead of waiting for them to speak
-      unfinished: (content) => !marker.ended && !signal.aborted && soundsUnfinished(content.filter((b) => b.type === "text").map((b) => b.text ?? "").join(" ")),
+      unfinished: (content) => !marker.ended && !marker.quiet && !signal.aborted && soundsUnfinished(content.filter((b) => b.type === "text").map((b) => b.text ?? "").join(" ")),
       // While lookups run: the line the agent said, or (only when the tools are slow, about a second and a half) one
       // said for it, so the call never goes quiet. Once per turn, never the same line twice in a row, naming the
       // client only when this turn is about it. A line break ends it, so the answer that follows is its own sentence
