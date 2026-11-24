@@ -298,7 +298,8 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
   };
   const cctx: CardCtx = { me: ctx.me, db: ctx.db, admin: ctx.admin, callId: ctx.callId, said: ctx.said, emit: ctx.emit, label: "your assistant", thread };
   const cardTools: LoopTool[] = [...callCardTools(cctx, tctx, base), ...deliverableTools({ me: ctx.me, db: ctx.db, admin: ctx.admin, callId: ctx.callId, said: () => ctx.said, emit: ctx.emit, roleKey: ASSISTANT_KEY })];
-  const rest = gateTools([...base.filter((t) => !CARD_TOOLS.has(t.name)), ...askTools(tctx, { roleKey: ASSISTANT_KEY, label: "assistant", callId: ctx.callId, said: ctx.said })]).map((t) => {
+  // Kaizen AI's own "remember" (src/lib/kaizen-ai/my-tools.ts) is the assistant's "remember" below by name: the assistant keeps its own
+  const rest = gateTools([...base.filter((t) => !CARD_TOOLS.has(t.name) && t.name !== "remember"),...askTools(tctx, { roleKey: ASSISTANT_KEY, label: "assistant", callId: ctx.callId, said: ctx.said })]).map((t) => {
     const s = t.input_schema as { properties?: Record<string, unknown> };
     if (!s.properties || !("confirmed" in s.properties)) return t;
     // A gated tool: the person's own words on this turn must be a yes too
