@@ -61,6 +61,19 @@ Where things stand on 2026-10-31 and what comes next, in order. The target is th
 ### Tuesday, Nov 24 2026
 - **Everyone's own Asana in Kaizen OS.** "Next for me in Asana" must mirror each person's Asana My tasks (private tasks too), which needs each person to connect their own Asana; the code is live (ed74712f: Connect card, per-person sign-in, writes as them) but waits on the Asana app. The owner creates it: app.asana.com/0/my-apps, Create new app "Kaizen OS", OAuth redirect URL `https://app.kaizenmarketing.agency/api/asana/callback`, then adds `ASANA_CLIENT_ID` and `ASANA_CLIENT_SECRET` to Vercel (Production) and redeploys. Then the owner connects first to confirm his My tasks appear (private ones included) and a change from Kaizen OS lands in Asana as him, and the team is told to tap Connect Asana on their Overview.
 
+### Owner setup to do (added Nov 24 2026)
+- **Phone alerts: connect Twilio** (code live and dormant, 0ae568c4; full steps in `docs/PHONE-NOTIFICATIONS.md`).
+  1. Sign up at twilio.com with Kaizen's business details and upgrade with billing (a trial only calls verified numbers).
+  2. Phone Numbers › Buy a number: US local, Voice + SMS (~$1.15/mo). Nothing to configure on it.
+  3. Trust Hub: create the business Customer Profile, register SHAKEN/STIR Trusted Calling + Voice Integrity, and Branded Calls / CNAM as "Kaizen OS" (so calls don't show "Spam Likely").
+  4. Texts (only for the "press 1 for the link" text): Messaging › Regulatory compliance › A2P 10DLC: register the Brand (Standard, needs the EIN) and a Campaign ("Account notifications"; opt-in: "employees opt in themselves in Kaizen OS Settings with a consent checkbox"). Approval takes days to weeks; calls work meanwhile.
+  5. Voice (and Messaging) › Geo permissions: allow every country where a teammate's phone is.
+  6. Vercel › kaizen-ads › Environment Variables (Production): `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` (Sensitive; never pasted in a chat), `TWILIO_FROM_NUMBER` (+1…), then redeploy. If the Auth Token is ever rotated, update Vercel the same day.
+  7. Test: Settings › Phone alerts → your number, consent, switch on, Test call; it shows in Settings › Calls & usage. Then tell the team they can opt in.
+- **Shopify app: finish the App Store review.** Submitted Nov 24. Watch for Shopify's emails; after the Nov 24 review fixes (kaizen-os-4: embedded, scopes trimmed to orders/all orders/customers), update the listing's testing instructions (scopes line and "opens inside Shopify admin"), set capabilities to **Embedded**, pricing to **Free to install** with Shopify App Pricing off, and add the screencast (install on Kaizen Testing → approve → the app opens in admin connected). Once approved, connect the Shopify clients from Settings › Connections › Client stores. App config lives in `E:\Projects\Projects\kaizen-shopify-app\shopify.app.toml` (deploy with `npx.cmd @shopify/cli@latest app deploy`).
+- **Google Workspace (Gmail, Drive, Calendar) usage tiers and MCP requirement.** Google's Nov 24 email: Standard (free, rate-limited) vs Scaled tiers; AI agents must use Workspace MCP servers by Feb 1 2027; Scaled billing from Apr 1 2027. Find project `atomic-athlete-510921-h2` in the Kaizen Google Cloud account, check its usage in the Workspace API usage dashboard, and follow the console steps the Workspace MCP session reports (`docs/WORKSPACE-MCP.md`).
+- **"Jake H." YouTube channel:** confirm which creator was meant on the Nov 24 call (closest match: Jake Setterlun) so the agents subscribe to the right one.
+
 ### Client portal
 18. **The portal as the client's home**, not only creative approvals: the dashboard, reports, setup and creative in one experience, designed for the wow factor (in progress).
 
