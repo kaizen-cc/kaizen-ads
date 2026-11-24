@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CATCH_UP_MIN, dueRuns, mayUseRoutines, nyClock, pushLine, routineOf, ROUTINES, runsOn, validTime } from "@/lib/routines-core";
+import { CATCH_UP_MIN, dueRuns, hasContent, nyClock, pushLine, routineOf, ROUTINES, runsOn, validTime } from "@/lib/routines-core";
 
 // 2026-11-24 is a Tuesday; New York is UTC-5 in November
 const at = (ny: string) => new Date(`2026-11-24T${ny}:00-05:00`);
@@ -36,12 +36,22 @@ describe("per-person routines (Nov 24 2026)", () => {
     expect(routineOf("week_ahead")?.days).toBe("sun");
     expect(ROUTINES.length).toBe(10);
   });
-  it("times and who may use them", () => {
+  it("times, and a run with nothing to say is never sent", () => {
     expect(validTime("08:45")).toBe(true);
     expect(validTime("25:00")).toBe(false);
-    expect(mayUseRoutines({ isExec: true })).toBe(true);
-    expect(mayUseRoutines({ role: "head_of_email" })).toBe(true);
-    expect(mayUseRoutines({ role: "media_buyer" })).toBe(false);
+    expect(hasContent({ sections: [] })).toBe(false);
+    expect(hasContent({ sections: [{ lines: [] }] })).toBe(false);
+    expect(hasContent({ sections: [{ lines: [{}] }] })).toBe(true);
+    expect(hasContent({ sections: [], urgent: true })).toBe(true);
+  });
+  it("runs at the standard times in each person's own time zone", () => {
+    const r = { profileId: "p", kind: "morning", times: ["08:45"], days: "weekdays" as const, enabled: true };
+    // 08:46 in Los Angeles is 11:46 in New York: due for an LA person, long past the window for New York
+    const la = new Date("2026-11-24T08:46:00-08:00");
+    expect(dueRuns(r, la, "America/Los_Angeles")).toEqual(["p|morning|2026-11-24|08:45"]);
+    expect(dueRuns(r, la, "America/New_York")).toEqual([]);
+    // An unknown zone falls back to New York instead of failing
+    expect(nyClock(at("08:45"), "Not/AZone").minutes).toBe(8 * 60 + 45);
   });
   it("the bell's line is the report's first sentence", () => {
     expect(pushLine({ headline: "Call Chris before 10am. Then the rest.", sections: [] })).toBe("Call Chris before 10am.");

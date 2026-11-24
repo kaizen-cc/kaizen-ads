@@ -161,7 +161,7 @@ export function itemLine(i: { topic: string; key: string; title?: string }): Foc
 }
 
 /** Recap items that are always this person's own: their tickets and tasks, what they owe or said yes to */
-const OWN_PREFIXES = new Set(["mine", "owed", "owed2", "said", "said2", "callp"]);
+const OWN_PREFIXES = new Set(["mine", "owed", "owed2", "said", "said2", "callp", "recap"]);
 
 type Item = { topic: string; key: string; title?: string; clientId?: string | null };
 export type ItemContext = { onFire?: ReadonlySet<string>; clientLines?: ReadonlyMap<string, readonly FocusLine[]> };

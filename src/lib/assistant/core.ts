@@ -111,7 +111,7 @@ export function orderForToday<T extends DayItem>(items: readonly T[]): T[] {
 // ─── Screens and links ──────────────────────────────────────────────────────
 
 /** The places in the app the assistant may open during a call */
-const APP_PREFIXES = ["/pipeline", "/board", "/clients", "/kpis", "/reports", "/ai", "/ideas", "/lab", "/settings", "/feedback", "/assistant", "/requests", "/winners", "/market", "/notifications", "/fatigue", "/team", "/next", "/profile", "/watch", "/csuite", "/safety", "/copy", "/reviews", "/scorecard", "/economics", "/stepins", "/sales", "/routines"];
+const APP_PREFIXES = ["/pipeline", "/board", "/clients", "/kpis", "/reports", "/ai", "/ideas", "/lab", "/settings", "/feedback", "/assistant", "/requests", "/winners", "/market", "/notifications", "/fatigue", "/team", "/next", "/profile", "/watch", "/csuite", "/safety", "/copy", "/reviews", "/scorecard", "/economics", "/stepins", "/sales"];
 
 /**
  * The named places open_screen knows (each screen's own address, with its URL state where a place is a view inside a
@@ -246,11 +246,6 @@ export const SCREEN_PLACES: Record<string, string> = {
   "sales agent": "/settings?tab=agents&role=sales#talk",
   "sales calls": "/sales?stage=call_booked",
   "call booked": "/sales?stage=call_booked",
-  // Your routines (execs and leads): the recaps, sweeps and nightly agent the OS runs at your times, and what each found
-  routines: "/routines",
-  recaps: "/routines",
-  "my recaps": "/routines",
-  "morning recap": "/routines",
   market: "/market",
   winners: "/winners",
   fatigue: "/board?view=kpis&ads=1#tiring",

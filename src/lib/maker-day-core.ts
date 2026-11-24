@@ -37,7 +37,7 @@ export const inMakerPool = (role: string | null | undefined, format: string | nu
  * said). Everything else (accounts, allotments, briefs, ads, onboarding, email, social, late work across the team) is
  * dropped on the server, whatever gathered it.
  */
-const MAKER_KEYS = new Set(["mine", "radar", "owed", "owed2", "said", "said2", "callp"]);
+const MAKER_KEYS = new Set(["mine", "radar", "owed", "owed2", "said", "said2", "callp", "recap"]);
 export const makerItem = (key: string) => MAKER_KEYS.has(key.split(":")[0]);
 export const forMaker = <T extends { key: string }>(items: readonly T[]): T[] => items.filter((i) => makerItem(i.key));
 
@@ -56,7 +56,7 @@ export const COPY_STAGES = new Set(["copy", "copy_review"]);
  * Customer success keeps what they act on with the client (a client waiting on a reply, a promise from a call, a new
  * client's first steps, a client missing a contact) and never an account's performance (KPIs, scores, allotments).
  */
-const CS_KEYS = new Set(["mine", "radar", "owed", "owed2", "said", "said2", "callp", "promise", "onboarding", "intake", "bible", "contact", "unhappy"]);
+const CS_KEYS = new Set(["mine", "radar", "owed", "owed2", "said", "said2", "callp", "recap", "promise", "onboarding", "intake", "bible", "contact", "unhappy"]);
 export const csItem = (key: string) => CS_KEYS.has(key.split(":")[0]);
 const CS_NEXT = new Set(["ticket", "review", "task", "direction", "ask", "feedback", "promise", "intake", "client", "first_round", "bible", "call-learnings"]);
 export const csNextItem = (kind: string) => CS_NEXT.has(kind);

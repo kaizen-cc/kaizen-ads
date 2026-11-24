@@ -943,6 +943,46 @@ async function withAsks(db: SupabaseClient, me: Staff, drafts: Draft[]): Promise
  * Needs me item that opens the brief; for two days after the call it's a short debrief prompt instead (the call
  * review on the prospect). Only their own calls, whatever their role.
  */
+/**
+ * The latest recap the OS wrote for this person today (morning, afternoon, end of day, the clean sweep, the Friday or
+ * Sunday one: src/lib/routines.ts) leads their day: its first line is the one thing to do first, the rest in its story.
+ */
+async function withRecap(db: SupabaseClient, me: Staff, drafts: Draft[]): Promise<Draft[]> {
+  const { data } = await db
+    .from("routine_runs")
+    .select("id, kind, headline, report, finished_at")
+    .eq("profile_id", me.id)
+    .eq("status", "done")
+    .in("kind", ["morning", "afternoon", "eod", "clean_sweep", "week_recap", "week_ahead", "nightly"])
+    .gte("finished_at", new Date(Date.now() - 14 * 3_600_000).toISOString())
+    .order("finished_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const r = data as { id: string; kind: string; headline: string | null; report: { headline?: string; sections?: { title: string; lines: { text: string; href?: string | null }[] }[] } | null; finished_at: string } | null;
+  const sections = (r?.report?.sections ?? []).filter((s) => s.lines?.length);
+  if (!r || !r.headline || !sections.length) return drafts;
+  const { routineOf } = await import("@/lib/routines-core");
+  const firstLink = sections.flatMap((s) => s.lines).find((l) => l.href)?.href ?? null;
+  return [
+    {
+      key: `recap:${r.id}`,
+      topic: "mine",
+      score: 95,
+      client: routineOf(r.kind)?.label ?? "Your recap",
+      clientSlug: "",
+      clientId: null,
+      stat: { value: new Date(r.finished_at).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" }), label: routineOf(r.kind)?.label ?? "recap" },
+      title: r.headline,
+      story: sections.map((s) => `${s.title}: ${s.lines.map((l) => l.text).join("; ")}`).join("\n").slice(0, 1600),
+      why: "Your recap, written by Kaizen OS from your calendar, calls, messages and items",
+      evidence: [],
+      action: firstLink ? { label: "Open the first one", href: firstLink } : { label: "Open your Overview", href: "/pipeline" },
+      dismiss: "Read it",
+    },
+    ...drafts,
+  ];
+}
+
 async function withSalesBriefs(db: SupabaseClient, me: Staff, drafts: Draft[]): Promise<Draft[]> {
   const now = Date.now();
   const { data } = await db
@@ -1101,6 +1141,7 @@ export async function loadToday(db: SupabaseClient, me: Staff): Promise<Today> {
       .then((d) => withDesk(db, me, d).catch(() => d))
       .then((d) => withAsks(db, me, d).catch(() => d))
       .then((d) => withSalesBriefs(db, me, d).catch(() => d))
+      .then((d) => withRecap(db, me, d).catch(() => d))
       .then((d) => withContext(db, d).catch(() => d)),
     db.from("daily_items").select("key, status, snapshot, first_seen_at, snoozed_until").eq("profile_id", me.id),
     db.from("hidden_items").select("key").eq("profile_id", me.id),

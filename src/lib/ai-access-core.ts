@@ -59,7 +59,6 @@ export function mayOpen(href: string, me: AccessWho): Gate {
   // A sales call brief goes to whoever runs the call (the page checks it's theirs); the rest of Sales is execs' and leads'
   if (under("/sales/briefs")) return OK;
   if (under("/sales")) return me.isExec || me.isLead ? OK : no("Sales is for the executives and leaders.");
-  if (under("/routines")) return me.isExec || me.isLead || String(me.role ?? "").startsWith("head_of_") ? OK : no("Routines are for the executives and leaders.");
   if (under("/team/handoffs")) return mayTransferAny(me) ? OK : no("Handoffs are for the executives and the line heads.");
   if (/^\/team\/[0-9a-f-]{36}$/i.test(p)) return me.isExec ? OK : no("Someone's activity page is for the executives.");
   if (under("/board/email") && !seesEmailBoard(me)) return no("The Email Board is for the email team and the executives.");

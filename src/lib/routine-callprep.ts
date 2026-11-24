@@ -29,10 +29,13 @@ const BRIEF = {
 };
 
 /** Every call starting soon on the person's calendar, prepped once each (claimed by its event id) */
-export async function prepUpcomingCalls(admin: Admin, me: Me): Promise<number> {
+export async function prepUpcomingCalls(admin: Admin, me: Me, at?: string | null): Promise<number> {
   const { meetingsBetween } = await import("@/lib/routines");
   const now = Date.now();
-  const meetings = await meetingsBetween(me.email, new Date(now + PREP_FROM_MIN * 60_000).toISOString(), new Date(now + PREP_TO_MIN * 60_000).toISOString());
+  // Asked for a time ("prep me for my 2pm"): the call around then, today; else the ones starting in the next hour or so
+  const center = at ? Date.parse(at) : NaN;
+  const [from, to] = Number.isFinite(center) ? [center - 45 * 60_000, center + 45 * 60_000] : [now + PREP_FROM_MIN * 60_000, now + PREP_TO_MIN * 60_000];
+  const meetings = await meetingsBetween(me.email, new Date(from).toISOString(), new Date(to).toISOString());
   const outside = (meetings ?? []).filter((m) => m.external.length > 0);
   if (!outside.length) return 0;
   const [{ data: clients }, { data: contacts }] = await Promise.all([
@@ -51,7 +54,7 @@ export async function prepUpcomingCalls(admin: Admin, me: Me): Promise<number> {
   });
   let made = 0;
   for (const m of outside.slice(0, 4)) {
-    const key = `${me.id}|call_prep|event:${m.id}|${m.start.slice(0, 10)}`;
+    const key = `${me.id}|call_prep|event:${m.id}|${m.start.slice(0, 10)}${at ? `|asked:${Date.now()}` : ""}`;
     const { data: claimed, error } = await admin.from("routine_runs").insert({ profile_id: me.id, kind: "call_prep", run_key: key }).select("id").single();
     if (error || !claimed) continue;
     try {
@@ -65,11 +68,14 @@ export async function prepUpcomingCalls(admin: Admin, me: Me): Promise<number> {
           await admin.from("routine_runs").update({ status: "done", headline: report.headline, report, finished_at: new Date().toISOString() }).eq("id", claimed.id);
           continue;
         }
+        // No client and no Sales brief (a vendor, a partner, a prospect the Sales agent hasn't picked up): no prep
+        await admin.from("routine_runs").delete().eq("id", claimed.id);
+        continue;
       }
-      const report = client ? await clientBrief(admin, me, m, client) : await salesBrief(admin, me, m);
+      const report = await clientBrief(admin, me, m, client);
       await admin.from("routine_runs").update({ status: "done", headline: report.headline.slice(0, 400), report, finished_at: new Date().toISOString() }).eq("id", claimed.id);
       const at = new Date(m.start).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" });
-      await admin.from("notifications").upsert({ profile_id: me.id, kind: "recap", key: `routine:${claimed.id}`, title: `Call prep · ${m.title} at ${at}: ${report.headline.split(/(?<=[.!?])\s/)[0]}`.slice(0, 200), body: report.sections.map((s) => s.title).join(" · ").slice(0, 1000), href: `/routines?run=${claimed.id}`, priority: "normal" }, { onConflict: "profile_id,key", ignoreDuplicates: true });
+      await admin.from("notifications").upsert({ profile_id: me.id, kind: "recap", key: `routine:${claimed.id}`, title: `Call prep · ${m.title} at ${at}: ${report.headline.split(/(?<=[.!?])\s/)[0]}`.slice(0, 200), body: report.sections.map((s) => s.title).join(" · ").slice(0, 1000), href: "/today", priority: "normal" }, { onConflict: "profile_id,key", ignoreDuplicates: true });
       made++;
     } catch (e) {
       await admin.from("routine_runs").update({ status: "failed", error: (e instanceof Error ? e.message : String(e)).slice(0, 1000), finished_at: new Date().toISOString() }).eq("id", claimed.id);
@@ -109,24 +115,4 @@ async function clientBrief(admin: Admin, me: Me, m: M, client: { id: string; nam
       .join("\n\n"),
   });
   return { headline: out.headline, sections: out.sections.filter((s) => s.lines.length) };
-}
-
-async function salesBrief(admin: Admin, me: Me, m: M): Promise<RoutineReport> {
-  const domains = [...new Set(m.external.map((e) => e.split("@")[1]).filter(Boolean))];
-  const { data: prospects } = await admin.from("prospects").select("id, name, website, notes, status, brief, contacts").not("status", "in", "(won,lost)").limit(500);
-  const hit = (prospects ?? []).find((p) => domains.some((d) => String(p.website ?? "").includes(d!) || JSON.stringify(p.contacts ?? []).toLowerCase().includes(d!.toLowerCase())) || String(m.title).toLowerCase().includes(String(p.name).toLowerCase()));
-  const { data: mail } = domains.length ? await admin.from("context_items").select("occurred_at, author, title, body").eq("source", "gmail").or(domains.map((d) => `body.ilike.%${d}%`).join(",")).order("occurred_at", { ascending: false }).limit(10) : { data: [] };
-  const out = await askJson<RoutineReport>({
-    agent: "calls",
-    label: "routine sales call prep",
-    bare: true,
-    override: { model: "sonnet", effort: "low" },
-    maxTokens: 2000,
-    system: `You prep a ${me.role.replace(/_/g, " ")} at Kaizen, a paid ads, creative, email and social agency, for a call in about an hour with people outside Kaizen who aren't a client (a prospect, or a vendor or partner: say which if you can tell). Sections: "What we know" (from the prospect record and emails; say plainly when there's nothing), "Discovery questions" (3, specific to what's known), "Heads-up" only if there's no agenda or no video link. Short lines; never invent facts. ${PEOPLE_RULE}`,
-    schema: BRIEF,
-    prompt: `<meeting>${m.title} at ${m.start}; guests ${m.external.join(", ")}; ${m.agenda ? "has an agenda" : "no agenda"}; ${m.link ? "video link set" : "no video link"}</meeting>\n<prospect>${hit ? JSON.stringify({ name: hit.name, website: hit.website, status: hit.status, notes: hit.notes, brief: hit.brief }).slice(0, 4000) : "none on file"}</prospect>\n<emails>${(mail ?? []).map((e) => `[${String(e.occurred_at).slice(0, 10)}] ${e.title ?? ""}: ${String(e.body ?? "").replace(/\s+/g, " ").slice(0, 300)}`).join("\n")}</emails>`,
-  });
-  const sections = out.sections.filter((s) => s.lines.length);
-  if (hit) sections.push({ title: "In Sales", lines: [{ text: String(hit.name), href: `/sales/${hit.id}`, tag: null }] });
-  return { headline: out.headline, sections };
 }

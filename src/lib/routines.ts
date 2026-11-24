@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { PEOPLE_RULE } from "@/lib/people-matters";
-import { dueRuns, nyClock, pushLine, routineOf, ROUTINES, type Days, type RecapSection, type RoutineKind, type RoutineReport } from "@/lib/routines-core";
+import { dueRuns, hasContent, nyClock, pushLine, routineOf, ROUTINES, type RecapSection, type RoutineKind, type RoutineReport } from "@/lib/routines-core";
 
 // Per-person routines (owner, Nov 24 2026): Kaizen OS does what an exec's Claude scheduled runs did, inside the OS, for
 // anyone who turns them on (execs and leads), at their own times. Each run writes a report (the person's recaps page and
@@ -14,33 +14,56 @@ type Admin = SupabaseClient;
 type Person = { id: string; full_name: string; email: string; role: string; is_exec: boolean; is_lead: boolean };
 const DAY = 86_400_000;
 
-/** Every routine due right now, run once each, within the time budget */
+/** Every routine due right now for every active team member, in their own time zone, run once each, within the budget */
 export async function runDueRoutines(admin: Admin, opts: { budgetMs?: number; now?: Date } = {}) {
   const now = opts.now ?? new Date();
   const deadline = Date.now() + (opts.budgetMs ?? 240_000);
-  const { data: rows } = await admin.from("routines").select("profile_id, kind, enabled, times, days").eq("enabled", true).limit(500);
-  // Call prep runs off the calendar, not a time: each person's calls starting within the next hour or so, prepped once
-  let prepped = 0;
-  for (const r of (rows ?? []).filter((x) => x.kind === "call_prep")) {
-    if (Date.now() > deadline) break;
-    const { data: me } = await admin.from("profiles").select("id, full_name, email, role, is_exec, is_lead").eq("id", r.profile_id).maybeSingle();
-    if (me?.email) prepped += await (await import("@/lib/routine-callprep")).prepUpcomingCalls(admin, me as Person).catch(() => 0);
+  const [{ data: people }, { data: overrides }] = await Promise.all([
+    admin.from("profiles").select("id, full_name, email, role, is_exec, is_lead, timezone").eq("is_active", true).not("joined_at", "is", null).not("email", "is", null).limit(500),
+    // A person's own changes (asked of their assistant): other times, or a routine they turned off
+    admin.from("routines").select("profile_id, kind, enabled, times").limit(2000),
+  ]);
+  const team = ((people ?? []) as (Person & { timezone: string | null })[]).filter((p) => p.email);
+  const over = new Map((overrides ?? []).map((o) => [`${o.profile_id}|${o.kind}`, o]));
+  // Their time zone, read once from their Google Calendar setting (a few a run), New York until then
+  let tzRead = 0;
+  for (const p of team.filter((x) => !x.timezone).slice(0, 5)) {
+    const { timezoneOf } = await import("@/lib/assistant/calendar-server");
+    const tz = await timezoneOf(p.email).catch(() => "America/New_York");
+    await admin.from("profiles").update({ timezone: tz }).eq("id", p.id);
+    p.timezone = tz;
+    tzRead++;
   }
-  const due: { profileId: string; kind: RoutineKind; key: string }[] = [];
-  for (const r of rows ?? []) for (const key of dueRuns({ profileId: r.profile_id as string, kind: r.kind as string, times: (r.times as string[]) ?? [], days: r.days as Days, enabled: true }, now)) due.push({ profileId: r.profile_id as string, kind: r.kind as RoutineKind, key });
-  if (!due.length) return { due: 0, ran: 0, prepped };
-  const { data: ran } = await admin.from("routine_runs").select("run_key").in("run_key", due.map((d) => d.key));
+  const due: { person: Person; kind: RoutineKind; key: string }[] = [];
+  for (const p of team)
+    for (const d of ROUTINES) {
+      if (d.kind === "call_prep") continue;
+      const o = over.get(`${p.id}|${d.kind}`);
+      if (o && o.enabled === false) continue;
+      const times = (o?.times as string[] | undefined)?.length ? (o!.times as string[]) : d.times;
+      for (const key of dueRuns({ profileId: p.id, kind: d.kind, times, days: d.days, enabled: true }, now, p.timezone)) due.push({ person: p, kind: d.kind, key });
+    }
+  // Call prep runs off each person's calendar every quarter hour: their calls starting in the next hour or so, prepped once
+  let prepped = 0;
+  if (now.getUTCMinutes() % 15 < 5)
+    for (const p of team) {
+      if (Date.now() > deadline - 60_000) break;
+      if (over.get(`${p.id}|call_prep`)?.enabled === false) continue;
+      prepped += await (await import("@/lib/routine-callprep")).prepUpcomingCalls(admin, p).catch(() => 0);
+    }
+  if (!due.length) return { people: team.length, due: 0, ran: 0, prepped, tzRead };
+  const { data: ran } = await admin.from("routine_runs").select("run_key").in("run_key", due.map((d) => d.key).slice(0, 2000));
   const done = new Set((ran ?? []).map((r) => r.run_key as string));
   let n = 0;
   for (const d of due) {
     if (done.has(d.key) || Date.now() > deadline) continue;
-    await runRoutine(admin, d.profileId, d.kind, d.key).catch((e) => console.error("[routines]", d.key, e instanceof Error ? e.message : e));
+    await runRoutine(admin, d.person.id, d.kind, d.key).catch((e) => console.error("[routines]", d.key, e instanceof Error ? e.message : e));
     n++;
   }
-  return { due: due.length, ran: n, prepped };
+  return { people: team.length, due: due.length, ran: n, prepped, tzRead };
 }
 
-/** One run now (the schedule, or someone asking for it): claims its key, writes the report, rings the bell */
+/** One run now (the schedule, or the person asking their assistant): claims its key, keeps the report, rings the bell */
 export async function runRoutine(admin: Admin, profileId: string, kind: RoutineKind, key?: string): Promise<{ id: string | null; report: RoutineReport | null; error?: string }> {
   const runKeyNow = key ?? `${profileId}|${kind}|now|${new Date().toISOString()}`;
   const { data: claimed, error: claimErr } = await admin.from("routine_runs").insert({ profile_id: profileId, kind, run_key: runKeyNow }).select("id").single();
@@ -50,10 +73,11 @@ export async function runRoutine(admin: Admin, profileId: string, kind: RoutineK
   try {
     const report = await RUNNERS[kind](admin, me as Person);
     await admin.from("routine_runs").update({ status: "done", headline: report.headline.slice(0, 400), report, finished_at: new Date().toISOString() }).eq("id", claimed.id);
-    if (report.sections.some((s) => s.lines.length) || report.urgent) {
+    // Nothing to say: nothing rings. Otherwise its top line in the bell, opening their day (the recap leads it)
+    if (hasContent(report)) {
       const label = routineOf(kind)?.label ?? "Recap";
       await admin.from("notifications").upsert(
-        { profile_id: profileId, kind: "recap", key: `routine:${claimed.id}`, title: `${label}: ${pushLine(report)}`.slice(0, 200), body: report.sections.map((s) => `${s.title}: ${s.lines.length}`).join(" · ").slice(0, 1000), href: `/routines?run=${claimed.id}`, priority: report.urgent ? "critical" : "normal" },
+        { profile_id: profileId, kind: "recap", key: `routine:${claimed.id}`, title: `${label}: ${pushLine(report)}`.slice(0, 200), body: report.sections.map((s) => `${s.title}: ${s.lines.length}`).join(" · ").slice(0, 1000), href: "/today", priority: report.urgent ? "critical" : "normal" },
         { onConflict: "profile_id,key", ignoreDuplicates: true },
       );
     }
@@ -97,11 +121,12 @@ async function gather(admin: Admin, me: Person, from: string, to: string, ahead?
     import("@/lib/owed-replies").then((m) => m.loadOwedReplies(admin, { id: me.id, role: me.role, isExec: me.is_exec, isLead: me.is_lead }, false)).catch(() => null),
     import("@/lib/message-promises").then((m) => m.loadSaidPromises(admin, { id: me.id, role: me.role, isExec: me.is_exec, isLead: me.is_lead })).catch(() => null),
     import("@/lib/promise-routing").then((m) => m.loadMyCallPromises(admin, me.id)).catch(() => null),
-    admin.from("context_items").select("source, occurred_at, author, title, body, url, clients(name)").in("source", ["gmail", "slack_external"]).gte("occurred_at", from).lte("occurred_at", to).order("occurred_at", { ascending: false }).limit(60),
+    admin.from("context_items").select("source, occurred_at, author, title, body, url, client_id, clients(name)").in("source", ["gmail", "slack_external"]).gte("occurred_at", from).lte("occurred_at", to).order("occurred_at", { ascending: false }).limit(60),
     admin.from("client_assignments").select("client_id").eq("profile_id", me.id),
   ]);
   if (meetings == null) failed.push("Google Calendar (not connected or no calendar access)");
   const mine = new Set((seats ?? []).map((s) => s.client_id as string));
+  const wide = me.is_exec || me.is_lead || me.role.startsWith("head_of_");
   const email = me.email.toLowerCase();
   const myCalls = (calls ?? []).filter((c) => me.is_exec || String(c.host ?? "").toLowerCase() === email || ((c.attendees as string[] | null) ?? []).some((a) => String(a).toLowerCase() === email) || (c.client_id && mine.has(c.client_id as string)));
   return {
@@ -113,7 +138,7 @@ async function gather(admin: Admin, me: Person, from: string, to: string, ahead?
     owed: (owedMod ?? []).filter((o) => o.targetId === me.id).map((o) => ({ from: o.from, gist: o.gist, since: o.askedAt, client: o.client, link: o.url })),
     said: (saidMod ?? []).filter((p) => p.ownerId === me.id).map((p) => ({ what: p.what, due: p.dueAt, client: p.client, link: p.url })),
     callPromises: (callsMod ?? []).map((c) => ({ what: c.what, due: c.dueAt, client: c.client })),
-    comms: (comms ?? []).map((c) => ({ at: c.occurred_at as string, source: c.source as string, author: (c.author as string | null) ?? null, client: (c.clients as unknown as { name: string } | null)?.name ?? null, text: `${c.title ? `${c.title}: ` : ""}${String(c.body ?? "")}`.replace(/\s+/g, " ").slice(0, 300), link: (c.url as string | null) ?? null })),
+    comms: (comms ?? []).filter((c) => wide || (c.client_id && mine.has(c.client_id as string))).map((c) => ({ at: c.occurred_at as string, source: c.source as string, author: (c.author as string | null) ?? null, client: (c.clients as unknown as { name: string } | null)?.name ?? null, text: `${c.title ? `${c.title}: ` : ""}${String(c.body ?? "")}`.replace(/\s+/g, " ").slice(0, 300), link: (c.url as string | null) ?? null })),
   };
 }
 
@@ -142,6 +167,8 @@ const REPORT_SCHEMA = {
 const RULES = `Rules: never state what Kaizen charges a client (fees, retainers, invoices); ad spend and budgets are fine. Revenue-first: protect revenue at risk, then grow revenue, then decisions only they can make. Tag claims you inferred [likely] or [guessing] (tag field), facts from the data [certain]. One line each, plain words, with the link (href) when the data has one. Never invent a meeting, number, quote or link. Leave a section out when it has nothing. Something already done or already being handled by a teammate is not an open item: say it's handled or leave it out; never chase it.`;
 
 async function compose(me: Person, kind: RoutineKind, brief: string, data: unknown, failed: string[]): Promise<RoutineReport> {
+  const g = data as { meetings?: unknown[]; upcoming?: unknown[]; calls?: unknown[]; items?: unknown[]; owed?: unknown[]; said?: unknown[]; callPromises?: unknown[]; comms?: unknown[] };
+  if (![g.meetings, g.upcoming, g.calls, g.items, g.owed, g.said, g.callPromises, g.comms].some((x) => x?.length)) return { headline: "", sections: [] };
   const out = await askJson<RoutineReport>({
     agent: "calls",
     label: `routine ${kind}`,
@@ -255,13 +282,3 @@ const RUNNERS: Record<RoutineKind, (admin: Admin, me: Person) => Promise<Routine
     return { headline: n ? `${n} call${n === 1 ? "" : "s"} prepped: the briefs are below.` : "No client or sales calls in the next hour and a half to prep.", sections: [] };
   },
 };
-
-/** A person's routines, every kind, with the defaults filled in for the ones they haven't set */
-export async function routinesOf(db: SupabaseClient, profileId: string) {
-  const { data } = await db.from("routines").select("kind, enabled, times, days").eq("profile_id", profileId);
-  const set = new Map((data ?? []).map((r) => [r.kind as string, r]));
-  return ROUTINES.map((d) => {
-    const r = set.get(d.kind);
-    return { kind: d.kind, label: d.label, about: d.about, multi: Boolean(d.multi), enabled: Boolean(r?.enabled), times: ((r?.times as string[] | undefined) ?? d.times).slice(), days: ((r?.days as Days | undefined) ?? d.days) as Days };
-  });
-}

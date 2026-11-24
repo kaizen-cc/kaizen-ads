@@ -1,6 +1,7 @@
-// Per-person routines (owner, Nov 24 2026): what an exec's Claude scheduled runs did, done by Kaizen OS for anyone who
-// turns them on (execs and leads), at their own times. The pure rules: the kinds, their defaults, and when a run is due.
-// Tested in tests/routines.test.ts. Times are New York.
+// The routines (owner, Nov 24 2026): what an exec's Claude scheduled runs did, BAKED into Kaizen OS for everyone:
+// every active team member gets each one at the standard times in their own time zone, scoped to what their role has,
+// with no page and no settings (their assistant runs one on demand, and changes their times if they ask). The pure
+// rules: the kinds, their default times, and when a run is due. Tested in tests/routines.test.ts.
 
 export type RoutineKind = "debrief" | "morning" | "afternoon" | "eod" | "delegation" | "nightly" | "clean_sweep" | "week_recap" | "week_ahead" | "call_prep";
 export type Days = "weekdays" | "daily" | "fri" | "sun";
@@ -20,9 +21,15 @@ export const ROUTINES: { kind: RoutineKind; label: string; about: string; times:
 export const routineOf = (kind: string) => ROUTINES.find((r) => r.kind === kind) ?? null;
 export const ROUTINE_KINDS = ROUTINES.map((r) => r.kind) as readonly RoutineKind[];
 
-/** The New York date and minutes past midnight for an instant, and its weekday (0 Sunday) */
-export function nyClock(now: Date): { date: string; minutes: number; weekday: number } {
-  const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", weekday: "short", hourCycle: "h23" }).formatToParts(now).map((x) => [x.type, x.value]));
+/** The date and minutes past midnight for an instant in a time zone (New York by default), and its weekday (0 Sunday) */
+export function nyClock(now: Date, timeZone = "America/New_York"): { date: string; minutes: number; weekday: number } {
+  let tz = timeZone;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+  } catch {
+    tz = "America/New_York";
+  }
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", weekday: "short", hourCycle: "h23" }).formatToParts(now).map((x) => [x.type, x.value]));
   const weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(String(p.weekday));
   return { date: `${p.year}-${p.month}-${p.day}`, minutes: Number(p.hour) * 60 + Number(p.minute), weekday };
 }
@@ -50,9 +57,9 @@ export const CATCH_UP_MIN = 150;
  * The runs due now for one routine: each of its times today that has passed within the catch-up window, keyed so a run
  * happens once (profile · kind · date · time). The caller skips keys that already ran.
  */
-export function dueRuns(r: { profileId: string; kind: string; times: readonly string[]; days: Days; enabled: boolean }, now: Date): string[] {
+export function dueRuns(r: { profileId: string; kind: string; times: readonly string[]; days: Days; enabled: boolean }, now: Date, timeZone?: string | null): string[] {
   if (!r.enabled) return [];
-  const c = nyClock(now);
+  const c = nyClock(now, timeZone ?? undefined);
   if (!runsOn(r.days, c.weekday)) return [];
   const out: string[] = [];
   for (const t of r.times) {
@@ -66,8 +73,8 @@ export function dueRuns(r: { profileId: string; kind: string; times: readonly st
 
 export const runKey = (profileId: string, kind: string, date: string, slot: string) => `${profileId}|${kind}|${date}|${slot}`;
 
-/** Who may turn routines on: execs and leads (line heads included) */
-export const mayUseRoutines = (me: { isExec?: boolean | null; isLead?: boolean | null; role?: string | null }) => Boolean(me.isExec || me.isLead || String(me.role ?? "").startsWith("head_of_"));
+/** Whether a run has anything to say (a recap with nothing in it is never sent) */
+export const hasContent = (r: { sections: readonly { lines: readonly unknown[] }[]; urgent?: boolean }) => Boolean(r.urgent || r.sections.some((s) => s.lines.length));
 
 export type RecapLine = { text: string; href?: string | null; tag?: "certain" | "likely" | "guessing" | null };
 export type RecapSection = { title: string; lines: RecapLine[] };
