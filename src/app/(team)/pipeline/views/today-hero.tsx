@@ -88,7 +88,12 @@ function List({ title, buckets, more }: { title: string; buckets: (Bucket & { to
 }
 
 export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
-  const [snap, { data: prof }] = await Promise.all([todaySnapshot(db, me), db.from("profiles").select("overview_layout").eq("id", me.id).maybeSingle()]);
+  const [snap, { data: prof }, { count: updates }] = await Promise.all([
+    todaySnapshot(db, me),
+    db.from("profiles").select("overview_layout").eq("id", me.id).maybeSingle(),
+    // Real unread updates in the bell (notices whose thing closed are read on their own: sweep_closed_notices)
+    db.from("notifications").select("id", { count: "exact", head: true }).eq("profile_id", me.id).is("read_at", null).is("cleared_at", null),
+  ]);
   const { threadBadges } = await import("@/lib/item-comments");
   // Cards unless the person switched the list on (kept on their profile, so it follows them)
   const layout: "cards" | "list" = prof?.overview_layout === "list" ? "list" : "cards";
@@ -101,9 +106,9 @@ export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
   const rows = groups.flatMap((g) => g.buckets.map((b) => ({ ...b, topic: g.topic })));
   const first = rows.reduce<(typeof rows)[number] | null>((a, b) => (!a || b.items[0].score > a.items[0].score ? b : a), null);
   const top = first?.items[0];
-  // What's new since they last looked (never opened in their recap), so the button reads the same at 9am and at 3pm
-  const fresh = t.items.filter((i) => i.state === "new").length;
-  const cta = fresh ? `Review ${fresh} new notification${fresh === 1 ? "" : "s"}` : looks.total || t.resolved.length ? "Review notifications" : "Open";
+  // The button says what it opens, with the day's own number, never a different one (owner, Nov 24 2026: "Review 61 new
+  // notifications" beside a 6-thing day: the 61 were Asana tasks not due yet, never opened in the recap)
+  const cta = looks.total ? `Review ${looks.total} ${looks.total === 1 ? "thing" : "things"}` : t.resolved.length ? "See what's changed" : "Start your day";
   return (
     <section className="relative grid gap-5 overflow-hidden rounded-[24px] border border-line bg-deep p-5 md:p-7">
       <div aria-hidden className="pointer-events-none absolute -left-24 -top-32 h-[340px] w-[340px] rounded-full blur-[110px]" style={{ background: looks.byTier.critical ? "rgba(200,16,46,0.45)" : "rgba(90,110,255,0.3)" }} />
@@ -194,6 +199,12 @@ export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
           <Link href="/today" className="inline-flex h-12 w-full items-center justify-center gap-2 whitespace-nowrap rounded-full bg-fg px-6 sm:ml-auto sm:w-auto sm:flex-none text-[15px] font-semibold text-bg shadow-[0_10px_40px_-10px_rgba(255,255,255,0.4)] hover:bg-ink/90">
             {cta} <span aria-hidden>→</span>
           </Link>
+          {/* Real unread updates (FYIs in the bell): a quiet link, never the main button */}
+          {updates ? (
+            <Link href="/notifications" className="inline-flex min-h-11 items-center justify-center text-[13px] text-ink/60 underline decoration-ink/20 underline-offset-4 hover:text-fg sm:min-h-0">
+              {updates} {updates === 1 ? "update" : "updates"}
+            </Link>
+          ) : null}
         </div>
       </div>
 

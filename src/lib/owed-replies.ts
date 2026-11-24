@@ -821,7 +821,9 @@ export async function runOwedReplies(admin: Admin) {
   const ladder = await (await import("@/lib/escalation-ladder")).runLadder(admin).catch(fail);
   // Landing page, tracking setup and fix requests said anywhere become the Tracking Specialist's tasks
   const tracking = await (await import("@/lib/tracking-requests")).trackingRequests(admin).catch(fail);
-  return { scanned, ...tally, promises, grouped, following, ladder, tracking };
+  // Bell notices whose thing is now closed (answered, done, resolved, posted or skipped, an earlier day's) are read
+  const swept = await admin.rpc("sweep_closed_notices").then((r) => (r.error ? { error: r.error.message } : r.data), () => null);
+  return { scanned, ...tally, promises, grouped, following, ladder, tracking, swept };
 }
 
 // ─── Reading ────────────────────────────────────────────────────────────────
