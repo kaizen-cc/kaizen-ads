@@ -939,6 +939,49 @@ async function withAsks(db: SupabaseClient, me: Staff, drafts: Draft[]): Promise
 }
 
 /**
+ * Prospect searches this person started (src/lib/prospect-search.ts): one that finished with businesses found is a
+ * Needs me item to review them, until they open the results or act on every one (research, contact, archive…).
+ * Dedupe against reality: an item already about reviewing these prospects means no second one.
+ */
+async function withProspectSearches(db: SupabaseClient, me: Staff, drafts: Draft[]): Promise<Draft[]> {
+  const { data } = await db
+    .from("prospect_searches")
+    .select("id, profile, found, added, results, reviewed_at, finished_at")
+    .eq("profile_id", me.id)
+    .eq("status", "done")
+    .is("reviewed_at", null)
+    .gt("found", 0)
+    .gt("finished_at", new Date(Date.now() - 7 * 86_400_000).toISOString())
+    .order("finished_at", { ascending: false })
+    .limit(5);
+  if (!data?.length) return drafts;
+  const { reviewTitle, reviewed, searchHref } = await import("@/lib/prospect-search-core");
+  type R = import("@/lib/prospect-search-core").SearchResult;
+  const ids = [...new Set((data as { results: R[] }[]).flatMap((s) => s.results.map((r) => r.id).filter((x): x is string => Boolean(x))))];
+  const { data: ps } = ids.length ? await db.from("prospects").select("id, status, archived_at").in("id", ids) : { data: [] };
+  const stage = new Map(((ps ?? []) as { id: string; status: string; archived_at: string | null }[]).map((p) => [p.id, { status: p.status, archived: Boolean(p.archived_at) }]));
+  const out = [...drafts];
+  const titles = new Set(out.map((d) => d.title.toLowerCase()));
+  // Their own open items: one already about reviewing these prospects means this one isn't added (dedupe against reality)
+  const { data: asks } = await db.from("agent_asks").select("id, title, client_id, owner_id, status, created_at").eq("owner_id", me.id).eq("status", "open").limit(200);
+  const { decide } = await import("@/lib/reality-check-core");
+  const pool = ((asks ?? []) as { id: string; title: string; client_id: string | null; owner_id: string; created_at: string }[]).map((a) => ({ source: "item" as const, id: a.id, title: a.title, clientId: a.client_id, ownerId: a.owner_id, owner: null, open: true, href: "/pipeline", at: a.created_at }));
+  for (const s of data as { id: string; profile: string; found: number; added: number; results: R[]; reviewed_at: string | null; finished_at: string }[]) {
+    if (reviewed(s, (id) => stage.get(id) ?? null)) continue;
+    const title = reviewTitle(s.found, s.profile);
+    if (titles.has(title.toLowerCase()) || decide({ title, clientId: null, ownerId: me.id }, pool).state !== "new") continue;
+    const key = `prospectsearch:${s.id}`;
+    const href = searchHref(s.id, me.isExec);
+    const story = `${s.added} new in the pipeline${s.found - s.added > 0 ? `, ${s.found - s.added} already there` : ""}. Research the best fits and draft the outreach, or archive what doesn't fit.`;
+    const context = me.isExec ? [] : s.results.slice(0, 15).map((r) => ({ from: "Sales agent", at: null, text: `${r.name}${r.fit_score != null ? ` (fit ${r.fit_score})` : ""}${r.location ? `, ${r.location}` : ""}: ${r.fit_reason || r.signals}${r.website ? ` ${r.website}` : ""}`, ours: true }));
+    const action = { label: me.isExec ? "Review them" : "Open it", href };
+    const card = { key, tab: "needs" as const, kind: "mine" as const, client: null, clientId: null, clientSlug: null, title, detail: story, severity: "high" as const, due: null, action, ...(context.length ? { context } : {}) };
+    out.push({ key, topic: "needs", score: 68, client: "Sales", clientSlug: "", clientId: null, stat: { value: String(s.found), label: "found" }, title, story, why: "A prospect search you started finished", evidence: [], action, due: null, ...(context.length ? { context } : {}), ...(me.isExec ? { exec: card } : {}) });
+  }
+  return out;
+}
+
+/**
  * Sales call briefs (src/lib/sales-briefs.ts): each upcoming sales call this person runs, with its brief ready, is a
  * Needs me item that opens the brief; for two days after the call it's a short debrief prompt instead (the call
  * review on the prospect). Only their own calls, whatever their role.
@@ -1146,6 +1189,7 @@ export async function loadToday(db: SupabaseClient, me: Staff): Promise<Today> {
       .then((d) => withDesk(db, me, d).catch(() => d))
       .then((d) => withAsks(db, me, d).catch(() => d))
       .then((d) => withSalesBriefs(db, me, d).catch(() => d))
+      .then((d) => withProspectSearches(db, me, d).catch(() => d))
       .then((d) => withRecap(db, me, d).catch(() => d))
       .then((d) => withContext(db, d).catch(() => d)),
     db.from("daily_items").select("key, status, snapshot, first_seen_at, snoozed_until").eq("profile_id", me.id),

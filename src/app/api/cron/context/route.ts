@@ -440,7 +440,9 @@ export async function GET(request: Request) {
       const briefJobs = await (await import("@/lib/brief-jobs")).pickUpBriefJobs(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
       // …and finish Higgsfield images and videos nobody's page is waiting on (copied in, the person told)
       const mediaJobs = await (await import("@/lib/ai-media-jobs")).pickUpMediaJobs(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
-      return Response.json({ ...(await (await import("@/lib/launcher")).launchStep(admin)), briefJobs, mediaJobs });
+      // …and prospect searches a cut-off server left queued or half-run
+      const prospectSearches = await (await import("@/lib/prospect-search")).pickUpProspectSearches(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+      return Response.json({ ...(await (await import("@/lib/launcher")).launchStep(admin)), briefJobs, mediaJobs, prospectSearches });
     }
     if (step === "creative_drive") {
       // The queue first (new creative), then files already in Drive moved to where the layout says (avatar / angle / concept)

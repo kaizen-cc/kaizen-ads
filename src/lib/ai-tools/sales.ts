@@ -82,18 +82,49 @@ const research: AiTool = {
 const find: AiTool = {
   name: "find_prospects",
   description:
-    "Executives and leads: the Sales agent builds a prospect list: businesses matching a profile (industry, area, size signals, a condition like \"running no ads\"), found from public web sources, each with its site, location, the signals seen and a fit score 0-100, best first. New ones are added to Sales › Prospects as \"new\" (save: false to only show them). count: 3 to 15 (default 8). Takes one to two minutes: say so first.",
-  input_schema: { type: "object", properties: { profile: { type: "string", description: "e.g. med spas in Tampa running no ads" }, count: { type: "number" }, save: { type: "boolean" } }, required: ["profile"], additionalProperties: false },
+    "Executives and leads: starts a prospect search in the background: businesses matching a profile (industry, area, size signals, a condition like \"running no ads\"), found from public web sources, each site checked, scored 0-100 by fit, and new ones added to the pipeline as \"new\". It takes a few minutes and doesn't need them to wait: say you've started it and that they'll get a notification (and an Overview item) when it's done. count: how many to find, 3 to 25 (default 10). prospect_search_status checks on it.",
+  input_schema: { type: "object", properties: { profile: { type: "string", description: "e.g. med spas in Tampa running no ads" }, count: { type: "number" } }, required: ["profile"], additionalProperties: false },
   only: worksSales,
-  run: async (user: Staff, input, chat) => {
+  run: async (user: Staff, input) => {
     if (!worksSales(user)) return NOT_SALES;
     const v = viewing(user);
     if (v) return v;
-    const { buildProspectList } = await import("@/lib/sales-agent");
-    const r = await buildProspectList(await createClient(), createAdminClient(), user, { profile: str(input.profile) ?? "", count: num(input.count), save: input.save !== false });
-    if (!r.ok) return r;
-    chat?.card({ type: "list", title: `Prospects: ${str(input.profile)}`, items: r.prospects.map((p) => ({ title: `${p.name}${p.fit_score != null ? ` · ${p.fit_score}` : ""}`, detail: [p.location, p.signals].filter(Boolean).join(" · "), ...(p.id ? { href: pageOf(p.id) } : {}) })) });
-    return { ok: true, added: r.added, prospects: r.prospects, page: "/sales", next: "Offer to research the best fits (research_prospect)." };
+    const profile = str(input.profile);
+    if (!profile) return { ok: false, error: "What kind of business, and where? (e.g. med spas in Tampa running no ads)" };
+    const { queueProspectSearch, runProspectSearch } = await import("@/lib/prospect-search");
+    const admin = createAdminClient();
+    const q = await queueProspectSearch(admin, { profileId: user.id, profile, want: num(input.count), via: "assistant" });
+    if (!q.existing) {
+      const { after } = await import("next/server");
+      after(() => runProspectSearch(createAdminClient(), q.id).then(() => undefined));
+    }
+    const { searchHref } = await import("@/lib/prospect-search-core");
+    return { ok: true, started: !q.existing, already_running: q.existing, search_id: q.id, page: searchHref(q.id, user.isExec), say: `${q.existing ? "That search is already running" : "I've started the search"}. It takes a few minutes; I'll let you know when it's done, and it'll be on your Overview to review.` };
+  },
+};
+
+const searchStatus: AiTool = {
+  name: "prospect_search_status",
+  description: "Executives and leads: how a prospect search is going (their latest, or search_id): the stage (searching sources, checking sites, scoring fit, saving), the percentage, how many businesses found so far, and when done the businesses found with their fit. cancel: true stops it.",
+  input_schema: { type: "object", properties: { search_id: { type: "string" }, cancel: { type: "boolean" } }, additionalProperties: false },
+  only: worksSales,
+  run: async (user: Staff, input) => {
+    if (!worksSales(user)) return NOT_SALES;
+    const db = await createClient();
+    const { SEARCH_COLS, searchView } = await import("@/lib/prospect-search");
+    const { STAGE_LABEL, progressOf } = await import("@/lib/prospect-search-core");
+    const id = str(input.search_id);
+    let q = db.from("prospect_searches").select(SEARCH_COLS).eq("profile_id", user.id).order("created_at", { ascending: false }).limit(1);
+    if (id && /^[0-9a-f-]{36}$/i.test(id)) q = db.from("prospect_searches").select(SEARCH_COLS).eq("id", id).limit(1);
+    const { data } = await q.maybeSingle();
+    if (!data) return { ok: false, error: "No prospect search found. find_prospects starts one." };
+    const s = searchView(data as Record<string, unknown>);
+    if (input.cancel === true && (s.status === "queued" || s.status === "running")) {
+      await db.from("prospect_searches").update({ cancel: true }).eq("id", s.id);
+      return { ok: true, cancelling: true, profile: s.profile };
+    }
+    const pct = progressOf({ status: s.status as never, stage: s.stage, stageAt: s.stageAt, saved: s.progress });
+    return { ok: true, profile: s.profile, status: s.status, stage: s.stage ? STAGE_LABEL[s.stage] : null, percent: Math.max(pct, s.progress), found_so_far: s.found, added: s.added, ...(s.status === "done" ? { businesses: s.results.map((r) => ({ name: r.name, website: r.website, location: r.location, fit: r.fit_score, why: r.fit_reason, already_in_pipeline: r.already })) } : {}), ...(s.error ? { error: s.error } : {}) };
   },
 };
 
@@ -394,4 +425,4 @@ const unarchive: AiTool = {
   },
 };
 
-export const tools: AiTool[] = [webResearch, research, find, mine, details, save, pitch, review, won, myBriefs, saveToBrief, scanBriefs, archive, unarchive].map(execPagesOnly);
+export const tools: AiTool[] = [webResearch, research, find, mine, details, save, pitch, review, won, myBriefs, saveToBrief, scanBriefs, archive, unarchive, searchStatus].map(execPagesOnly);

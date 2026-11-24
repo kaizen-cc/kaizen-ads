@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { requireStaff, type Staff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -40,18 +41,48 @@ export async function researchAction(input: { name?: string; website?: string; l
   }
 }
 
-export async function findAction(input: { profile: string; count?: number }): Promise<Result<{ added: number; found: number }>> {
+/** Starts a prospect search in the background (it keeps going if they leave the page); returns its id to follow */
+export async function findAction(input: { profile: string; count?: number }): Promise<Result<{ id: string }>> {
   const g = await gate();
   if ("error" in g) return { ok: false, error: g.error };
+  const profile = input.profile.trim();
+  if (!profile) return { ok: false, error: "What kind of business, and where? (e.g. med spas in Tampa running no ads)" };
   try {
-    const { buildProspectList } = await import("@/lib/sales-agent");
-    const r = await buildProspectList(await createClient(), createAdminClient(), g.me, { profile: input.profile, count: input.count ?? null });
-    if (!r.ok) return r;
-    refresh();
-    return { ok: true, added: r.added, found: r.prospects.length };
+    const { queueProspectSearch, runProspectSearch } = await import("@/lib/prospect-search");
+    const q = await queueProspectSearch(createAdminClient(), { profileId: g.me.id, profile, want: input.count ?? null, via: "page" });
+    if (!q.existing) after(() => runProspectSearch(createAdminClient(), q.id).then(() => undefined));
+    return { ok: true, id: q.id };
   } catch (e) {
     return failed(e);
   }
+}
+
+/** A search's live state (the page polls it while it runs) */
+export async function searchStatusAction(id: string): Promise<Result<{ search: import("@/lib/prospect-search").SearchView }>> {
+  const g = await gate();
+  if ("error" in g) return { ok: false, error: g.error };
+  const { SEARCH_COLS, searchView } = await import("@/lib/prospect-search");
+  const { data } = await (await createClient()).from("prospect_searches").select(SEARCH_COLS).eq("id", id).maybeSingle();
+  if (!data) return { ok: false, error: "That search isn't there." };
+  return { ok: true, search: searchView(data as Record<string, unknown>) };
+}
+
+export async function cancelSearchAction(id: string): Promise<Result> {
+  const g = await gate();
+  if ("error" in g) return { ok: false, error: g.error };
+  const { error } = await (await createClient()).from("prospect_searches").update({ cancel: true }).eq("id", id).in("status", ["queued", "running"]);
+  return error ? { ok: false, error: error.message } : { ok: true };
+}
+
+/** They opened the results: the Overview item to review them is cleared (and its notice read) */
+export async function reviewedSearchAction(id: string): Promise<Result> {
+  const g = await gate();
+  if ("error" in g) return { ok: false, error: g.error };
+  const db = await createClient();
+  await db.from("prospect_searches").update({ reviewed_at: new Date().toISOString() }).eq("id", id).eq("status", "done").is("reviewed_at", null);
+  await db.from("notifications").update({ read_at: new Date().toISOString() }).eq("key", `prospect-search:${id}`).is("read_at", null);
+  revalidatePath("/sales");
+  return { ok: true };
 }
 
 export async function addAction(input: { name: string; website?: string; location?: string }): Promise<Result<{ id: string }>> {

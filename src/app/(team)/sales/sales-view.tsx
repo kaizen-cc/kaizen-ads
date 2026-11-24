@@ -156,7 +156,7 @@ export function StageSelect({ id, status, onDone }: { id: string; status: Prospe
   );
 }
 
-export function SalesView({ prospects, meId }: { prospects: ProspectRow[]; meId: string }) {
+export function SalesView({ prospects, meId, searches = null }: { prospects: ProspectRow[]; meId: string; searches?: React.ReactNode }) {
   const stage = useParam("stage");
   const all = useParam("all") === "1";
   const panel = useParam("new");
@@ -204,6 +204,8 @@ export function SalesView({ prospects, meId }: { prospects: ProspectRow[]; meId:
       {panel === "research" && <ResearchPanel />}
       {panel === "list" && <FindPanel />}
       {panel === "add" && <AddPanel />}
+
+      {searches}
 
       <section className="grid min-w-0 gap-4">
         <div className="flex flex-wrap items-center gap-2">
@@ -355,20 +357,20 @@ function ResearchPanel() {
 function FindPanel() {
   const router = useRouter();
   const [pending, start] = useTransition();
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
   return (
-    <Panel title="Find prospects" sub="Describe who to look for: the industry, the area, and any signal (no ads running, one location, high-ticket). The agent finds them on the public web, scores each by fit and adds them here as New.">
+    <Panel title="Find prospects" sub="Describe who to look for: the industry, the area, and any signal (no ads running, one location, high-ticket). It runs in the background: each business's site is checked, scored by fit and added here as New. You'll get a notification when it's done.">
       <form
-        className="grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]"
+        className="grid gap-3 md:grid-cols-[minmax(0,1fr)_140px]"
         onSubmit={(e) => {
           e.preventDefault();
           const f = new FormData(e.currentTarget);
           setMsg(null);
           start(async () => {
-            const r = await findAction({ profile: String(f.get("profile") ?? ""), count: Number(f.get("count") ?? 8) });
-            if (!r.ok) setMsg({ ok: false, text: r.error });
+            const r = await findAction({ profile: String(f.get("profile") ?? ""), count: Number(f.get("count") ?? 10) });
+            if (!r.ok) setMsg(r.error);
             else {
-              setMsg({ ok: true, text: r.found ? `Found ${r.found}; ${r.added} new added to the pipeline.` : "None found that match. Try a wider area or fewer conditions." });
+              replaceParams({ new: null, search: r.id });
               router.refresh();
             }
           });
@@ -377,8 +379,8 @@ function FindPanel() {
         <input name="profile" required placeholder="e.g. med spas in Tampa running no ads" className={field} autoComplete="off" />
         <label className="grid">
           <span className="sr-only">How many</span>
-          <select name="count" defaultValue="8" className={field}>
-            {[5, 8, 10, 15].map((n) => (
+          <select name="count" defaultValue="10" className={field}>
+            {[5, 10, 15, 25].map((n) => (
               <option key={n} value={n}>
                 {n} businesses
               </option>
@@ -386,8 +388,8 @@ function FindPanel() {
           </select>
         </label>
         <div className="grid gap-2 md:col-span-2 md:flex md:items-center">
-          <Submit pending={pending} label="Find them" busy="Searching… (a minute or two)" />
-          {msg && <p className={`text-[13px] ${msg.ok ? "text-ok" : "text-bad"}`}>{msg.text}</p>}
+          <Submit pending={pending} label="Start the search" busy="Starting…" />
+          {msg && <p className="text-[13px] text-bad">{msg}</p>}
         </div>
       </form>
       <p className="text-[12.5px] leading-relaxed text-faint">Public sources only. Nothing here browses or messages anyone on LinkedIn: the agent drafts, you send.</p>

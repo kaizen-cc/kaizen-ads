@@ -72,7 +72,11 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
       const r = await myNotifications();
       // Critical ones that arrived since the last look pop up (not on the first load)
       // Only one bell pops them up (the sidebar one; the phone header shows the same list)
-      if (seen.current && placement === "side" && r.popups) for (const n of r.items) if (!n.read && n.priority === "critical" && !seen.current.has(n.id)) toast({ tone: "bad", title: n.title, body: n.body ?? undefined, actions: n.href ? [{ label: "Open", href: n.href, primary: true }] : undefined, ms: 9000 });
+      if (seen.current && placement === "side" && r.popups)
+        for (const n of r.items)
+          if (!n.read && (n.priority === "critical" || n.kind === "prospect_search") && !seen.current.has(n.id))
+            // A prospect search they started finished: a friendly toast wherever they are, opening the results
+            toast({ tone: n.priority === "critical" ? "bad" : "ok", title: n.title, body: n.body ?? undefined, actions: n.href ? [{ label: "Open", href: n.href, primary: true }] : undefined, ms: 9000 });
       seen.current = new Set(r.items.map((n) => n.id));
       setItems(r.items);
       setUnread(r.unread);

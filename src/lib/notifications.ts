@@ -79,7 +79,7 @@ export const GROUPS: { key: GroupKey; label: string; about: string; managersOnly
 /** What a support position's bell leaves out */
 export const supportSkip = { skipKinds: NOT_FOR_SUPPORT, skipKeys: SUPPORT_SKIP_KEYS };
 
-export const KIND_GROUP: Record<string, GroupKey> = { assigned: "on_you", contradiction: "on_you", handoff: "on_you", reply: "on_you", client: "on_you", ticket: "work", promise: "clients", fatigue: "clients", bible: "clients", kpi: "clients", sprint: "clients", onboarding: "leadership", newclient: "leadership", connection: "leadership", recap: "recap", feedback: "work", connector: "on_you", direction: "on_you", agent: "on_you", fire: "leadership", comment: "on_you", nudge: "on_you" };
+export const KIND_GROUP: Record<string, GroupKey> = { assigned: "on_you", contradiction: "on_you", handoff: "on_you", reply: "on_you", client: "on_you", ticket: "work", promise: "clients", fatigue: "clients", bible: "clients", kpi: "clients", sprint: "clients", onboarding: "leadership", newclient: "leadership", connection: "leadership", recap: "recap", feedback: "work", connector: "on_you", direction: "on_you", agent: "on_you", fire: "leadership", comment: "on_you", nudge: "on_you", prospect_search: "on_you", sales_brief: "on_you" };
 
 export const DEFAULT_PREFS: NoticePrefs = {
   groups: {
