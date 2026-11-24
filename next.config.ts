@@ -1,8 +1,11 @@
 import type { NextConfig } from "next";
+import { dayLogicHash } from "./day-logic-hash.mjs";
 
 const nextConfig: NextConfig = {
   // The version each tab runs, baked in at build time: the UpdateBar compares it with what's live
-  env: { APP_VERSION: process.env.VERCEL_GIT_COMMIT_SHA ?? "dev" },
+  // DAY_LOGIC_HASH: the fingerprint of the code that builds everyone's day (./day-logic-hash.mjs); a saved day stamped
+  // with another one is rebuilt on its next look
+  env: { APP_VERSION: process.env.VERCEL_GIT_COMMIT_SHA ?? "dev", DAY_LOGIC_HASH: dayLogicHash().hash },
   // Knowledge PDFs are read on the server with pdfjs as it ships (its worker runs in the same process). The email report's
   // campaign cards draw the top of each email in a headless Chrome (src/lib/channel-reports/email-shots.ts): puppeteer
   // and Vercel's packed Chromium are loaded as they ship, never bundled

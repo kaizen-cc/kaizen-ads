@@ -94,11 +94,13 @@ export type Resolved = { key: string; topic: TopicKey; client: string; title: st
 export type Today = { items: TodayItem[]; resolved: Resolved[]; counts: Record<Tier, number>; looks: Looks; shape?: string };
 
 /**
- * The shape a saved day is built in. Bump DAY_SHAPE_VERSION whenever what an item or a block holds changes, so every
- * day saved before is built again on its next look (a read-only View as included), never shown stale.
+ * The shape a saved day is built in: rebuilt on its next look (a read-only View as included) whenever it differs, never
+ * shown stale. Automatic: DAY_LOGIC_HASH is the fingerprint of the code that builds a day, baked in at build time
+ * (day-logic-hash.mjs), so any deploy that changes it rebuilds everyone's saved day. DAY_SHAPE_VERSION is for a change
+ * outside those files (bump it by hand then).
  */
 export const DAY_SHAPE_VERSION = 5;
-export const dayShape = (me: { isExec: boolean }) => `${me.isExec ? "exec" : "blocks"}:${DAY_SHAPE_VERSION}`;
+export const dayShape = (me: { isExec: boolean }) => `${me.isExec ? "exec" : "blocks"}:${DAY_SHAPE_VERSION}:${process.env.DAY_LOGIC_HASH ?? "dev"}`;
 
 const tierOf = (score: number): Tier => (score >= 80 ? "critical" : score >= 60 ? "high" : "normal");
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" });
