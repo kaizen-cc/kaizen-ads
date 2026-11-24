@@ -1,9 +1,8 @@
 // Sales call briefs: the plain rules (no server imports; tested in tests/sales-briefs.test.ts). Which calendar
 // meetings are sales calls, who runs each one, when its brief is due, when it changed, and how its item reads.
-// The classification follows the calls run's order (docs/kyle-scheduled-runs.md, step 1): a current client first
-// (their contacts' emails or company domain, or their name in the title), then internal-only meetings, then vendors,
-// platform reps, candidates and partners; everything else external is a sales call. A Calendly "Discovery Call"
-// confirms one but never decides alone: clients book that link too.
+// Precision over recall (Nov 24 2026, after personal events were briefed): a meeting is a sales call only with positive
+// evidence, never by being external alone; a current client always comes first (clients book the Discovery Call link
+// too). See classifyEvent.
 
 export type BriefEvent = {
   id: string;
@@ -16,6 +15,11 @@ export type BriefEvent = {
   organizer?: { email?: string | null; displayName?: string | null; self?: boolean | null } | null;
   attendees?: { email?: string | null; displayName?: string | null; self?: boolean | null; responseStatus?: string | null; resource?: boolean | null }[] | null;
   htmlLink?: string | null;
+  /** Set on each occurrence of a recurring event */
+  recurringEventId?: string | null;
+  recurrence?: string[] | null;
+  /** default, outOfOffice, focusTime, workingLocation, birthday… */
+  eventType?: string | null;
   created?: string | null;
   updated?: string | null;
 };
@@ -51,8 +55,17 @@ export function kaizenOf(ev: BriefEvent, ownDomain = OWN_DOMAIN): string[] {
   return [...new Set([ev.organizer?.email, ...(ev.attendees ?? []).map((a) => a.email)].map(lower).filter((e) => e.endsWith(`@${ownDomain}`)))];
 }
 
-const VENDOR = /\b(?:meta|facebook|google|tiktok|klaviyo|shopify|hubspot|gohighlevel|ghl|linkedin|snap(?:chat)?|pinterest|amazon)\s+(?:rep|team|partner(?:ship)?s?|account manager|support|onboarding)\b|\b(?:interview|candidate|recruit\w*|hiring|applicant|accountant|bookkeep\w*|cpa review|payroll|legal|lawyer|attorney|insurance|vendor|podcast|referral partner|partnership call|investor|bank(?:ing)?|1:1|one on one|internal|standup|stand-up|all hands|team meeting|sync)\b/i;
-const SALES_HINT = /\b(?:discovery|intro(?:ductory)?|consult(?:ation)?|strategy session|free audit|marketing audit|growth call|sales call|demo|kaizen marketing|kaizen)\b/i;
+// Never a sales call, whoever's on it: people's own lives (kids' activities, birthdays, school breaks, appointments,
+// holidays, time off) and the team's own recurring work (weeklies, check-ins, syncs, follow-ups)
+const PERSONAL = /\b(?:tae ?kwon ?do|karate|jiu ?jitsu|soccer|football|baseball|basketball|softball|volleyball|swim(?:ming)?|gymnastics|dance|ballet|piano|guitar|tutor(?:ing)?|practice|recital|tournament|game day|b-?day|birthday|bday|party|wedding|baby shower|funeral|anniversary|break|holiday|vacation|pto|ooo|out of office|off work|day off|school|daycare|pre-?k|pickup|pick up|drop ?off|carpool|bus|field trip|thanksgiving|t-?giving|christmas|xmas|easter|halloween|new year|spring break|dentist|doctor|dr\.?|appointment|appt|haircut|vet|therapy|physio|chiro|gym|workout|yoga|pilates|run club|church|mass|date night|family|kids?|mom|dad|grandma|grandpa|flight|travel|hotel|dinner|lunch|brunch)\b/i;
+const INTERNAL = /\b(?:weekly|daily|bi-?weekly|monthly|standup|stand-up|sync|1:1|1-1|one on one|check-?in|catch ?up|huddle|all hands|team meeting|internal|retro|planning|review meeting|office hours|acompanhamento|reuni[aã]o|alinhamento|follow-?up with (?:the )?team)\b/i;
+const VENDOR = /\b(?:meta|facebook|google|tiktok|klaviyo|shopify|hubspot|gohighlevel|ghl|linkedin|snap(?:chat)?|pinterest|amazon)\s+(?:rep|team|partner(?:ship)?s?|account manager|support|onboarding)\b|\b(?:interview|candidate|recruit\w*|hiring|applicant|accountant|bookkeep\w*|cpa review|payroll|legal|lawyer|attorney|insurance|vendor|podcast|referral partner|partnership call|investor|bank(?:ing)?)\b/i;
+// Positive evidence it's a sales call: a booking tool made it, or the title says so
+const BOOKING = /\b(?:calendly|hubspot meetings|meetings\.hubspot|leadconnector|gohighlevel|msgsndr|acuity|savvycal|tidycal|youcanbook|oncehub|chili ?piper|cal\.com)\b|^\s*event name\s*:|\binvitee (?:time zone|email|name)\b/im;
+const SALES_TITLE = /\b(?:discovery|intro(?:ductory)? call|intro meeting|consult(?:ation)?|strategy (?:session|call)|growth (?:session|call)|free (?:audit|strategy)|marketing audit|sales call|demo|proposal (?:call|review|walkthrough)|pitch)\b|\bkaizen\s*(?:x|<>|\/|&|\+|and|with|meets)\s*\S|\S\s*(?:x|<>|\/|&|\+)\s*kaizen\b/i;
+// Mail that isn't a business's own: personal providers, schools, government
+const NOT_BUSINESS = /^(?:gmail|googlemail|yahoo|ymail|rocketmail|hotmail|outlook|icloud|aol|live|msn|me|mac|proton(?:mail)?|pm|gmx|zoho|comcast|att|verizon|sbcglobal|bellsouth|cox|charter|earthlink|mail|email|hey|fastmail|qq|163)\.|\.(?:edu|gov|mil)(?:\.[a-z]{2})?$|\.k12\.|(?:^|\.)(?:k12|isd|schools?|district|school)\b|(?:isd|cisd|usd|schools|academy|elementary)\.(?:org|net|us|com)$/;
+export const isBusinessDomain = (d: string) => Boolean(d) && !NOT_BUSINESS.test(d.toLowerCase());
 
 /** Which current client a meeting is with (their contact's email or company domain, else their name in the title) */
 export function clientOf(ev: BriefEvent, clients: readonly ClientRef[], ownDomain = OWN_DOMAIN): ClientRef | null {
@@ -69,19 +82,40 @@ export function clientOf(ev: BriefEvent, clients: readonly ClientRef[], ownDomai
   return named(title) ?? (/\b(?:company|business|brand)(?: name)?\s*[:?]/.test(desc) ? named(desc) : null);
 }
 
-/** What kind of meeting it is, and why (the calls run's order) */
+/**
+ * What kind of meeting it is, and why. Precision over recall: a sales call needs positive evidence (a booking tool
+ * made it, the title says discovery / intro / consultation / demo / "Kaizen x <Business>", or the person themself set
+ * it up with someone at a business's own email domain). Never: cancelled, all-day or out-of-office events, recurring
+ * events, people's own lives, the team's recurring work, events nobody outside Kaizen is on, and events the person is
+ * neither the organizer of nor invited to with their Kaizen address (a calendar they only subscribed to). Unsure: skip.
+ */
 export function classifyEvent(ev: BriefEvent, clients: readonly ClientRef[], ownDomain = OWN_DOMAIN): { kind: Kind; why: string; client?: ClientRef } {
   if (lower(ev.status) === "cancelled") return { kind: "skip", why: "cancelled" };
   if (!ev.start?.dateTime) return { kind: "skip", why: "all-day" };
+  if (ev.eventType && ev.eventType !== "default") return { kind: "skip", why: ev.eventType };
+  if (ev.recurringEventId || (ev.recurrence ?? []).length) return { kind: "skip", why: "recurring" };
   const me = (ev.attendees ?? []).find((a) => a.self);
   if (me && lower(me.responseStatus) === "declined") return { kind: "skip", why: "declined" };
+  // Theirs: they organized it with their Kaizen address, or they're on it as a Kaizen attendee
+  const ours = (e: unknown) => lower(e).endsWith(`@${ownDomain}`);
+  const organizes = Boolean(ev.organizer?.self) && ours(ev.organizer?.email);
+  const invited = (ev.attendees ?? []).some((a) => a.self && ours(a.email));
+  if (!organizes && !invited) return { kind: "skip", why: "not on it with a Kaizen address" };
+  const title = String(ev.summary ?? "");
+  const desc = String(ev.description ?? "");
+  if (PERSONAL.test(title)) return { kind: "skip", why: "personal" };
   const ext = externalsOf(ev, ownDomain);
+  if (!ext.length) return { kind: "internal", why: "nobody outside Kaizen" };
   const client = clientOf(ev, clients, ownDomain);
   if (client) return { kind: "client", why: `client: ${client.name}`, client };
-  if (!ext.length) return { kind: "internal", why: "nobody outside Kaizen" };
-  const title = String(ev.summary ?? "");
-  if (VENDOR.test(title) && !SALES_HINT.test(title)) return { kind: "other", why: "vendor, rep, candidate or partner" };
-  return { kind: "sales", why: SALES_HINT.test(`${title} ${String(ev.description ?? "").slice(0, 300)}`) ? "external, booked as a sales call" : "external, not a client" };
+  const booked = BOOKING.test(desc) || ext.some((g) => /@(?:calendly|hubspot|leadconnectorhq)\./.test(g.email));
+  const saysSales = SALES_TITLE.test(title);
+  if ((INTERNAL.test(title) || VENDOR.test(title)) && !saysSales && !booked) return { kind: "other", why: "internal, vendor, rep, candidate or partner" };
+  if (booked) return { kind: "sales", why: "booked through a scheduling link" };
+  if (saysSales) return { kind: "sales", why: "the title says it's a sales call" };
+  // They set it up with someone at a business's own domain (not personal mail, a school or government)
+  if (organizes && ext.some((g) => isBusinessDomain(g.email.split("@")[1] ?? ""))) return { kind: "sales", why: "set up with someone at a business" };
+  return { kind: "skip", why: "no sign it's a sales call" };
 }
 
 /** The brief is due 18 hours before the call; booked later than that, as soon as it's seen. Never once it's started. */

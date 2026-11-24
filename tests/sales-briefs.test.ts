@@ -167,3 +167,47 @@ describe("sales call briefs: access and stages", () => {
     expect(forwardStatus("proposal", "call_booked")).toBe("proposal");
   });
 });
+
+describe("sales call briefs: precision over recall (the Nov 24 false positives)", () => {
+  const mine = { email: "kyle@kaizenmarketing.agency", self: true };
+  const ev = (summary: string, extra: Partial<BriefEvent> = {}): BriefEvent => ({ id: summary, summary, description: "", start: at("2026-11-26T15:00:00Z"), end: at("2026-11-26T16:00:00Z"), organizer: mine, attendees: [{ ...mine, responseStatus: "accepted" }, { email: "someone@gmail.com" }], ...extra });
+  const work = [{ ...mine, responseStatus: "accepted" }, { email: "andre@ptwgroup.com" }];
+  const cases: [string, Partial<BriefEvent>][] = [
+    ["Tae Kwon Do 5:15", {}],
+    ["tae kwon do 10:20", {}],
+    ["Tae kwon do 5:50", {}],
+    ["Madison's bday 3 (Austin's)", {}],
+    ["Liv- Groovy Bus 2:30-3:30", {}],
+    ["Teravista Tgiving break", { attendees: [{ ...mine }, { email: "spouse@rubrik.com" }] }],
+    ["ptw weekly", { attendees: work, recurringEventId: "r1" }],
+    ["ptw andre weekly", { attendees: work, recurringEventId: "r2" }],
+    ["Velo Weekly", { attendees: work, recurringEventId: "r3" }],
+    ["Acompanhamento Milena", { attendees: work }],
+    // A calendar the person only subscribed to (not the organizer, not invited with their Kaizen address)
+    ["Nation CT", { organizer: { email: "family@gmail.com" }, attendees: [{ email: "family@gmail.com" }, { email: "coach@nationct.com" }] }],
+  ];
+  for (const [title, extra] of cases)
+    it(`"${title}" is not a sales call`, () => {
+      expect(classifyEvent(ev(title, extra), clients).kind).not.toBe("sales");
+    });
+  it("needs positive evidence: a guest at gmail alone is never enough", () => {
+    expect(classifyEvent(ev("Chat with Jo"), clients)).toMatchObject({ kind: "skip", why: "no sign it's a sales call" });
+    expect(classifyEvent(ev("Coffee", { attendees: [mine, { email: "kid@austinisd.org" }] }), clients).kind).not.toBe("sales");
+    expect(classifyEvent(ev("Coffee", { attendees: [mine, { email: "prof@ut.edu" }] }), clients).kind).not.toBe("sales");
+  });
+  it("these are: a booking link, a sales title, or one they set up with someone at a business", () => {
+    expect(classifyEvent(ev("Ana Ruiz and Kyle", { description: calendly }), clients)).toMatchObject({ kind: "sales", why: "booked through a scheduling link" });
+    expect(classifyEvent(ev("Discovery call: Ana"), clients)).toMatchObject({ kind: "sales" });
+    expect(classifyEvent(ev("Kaizen x Glow Med Spa"), clients)).toMatchObject({ kind: "sales" });
+    expect(classifyEvent(ev("Marketing chat", { attendees: [mine, { email: "ana@glowmedspa.com" }] }), clients)).toMatchObject({ kind: "sales", why: "set up with someone at a business" });
+    // Invited (not the organizer) to someone's meeting with no other sign: skipped
+    expect(classifyEvent(ev("Marketing chat", { organizer: { email: "ana@glowmedspa.com" }, attendees: [{ ...mine }, { email: "ana@glowmedspa.com" }] }), clients).kind).toBe("skip");
+  });
+  it("out of office, focus time and birthdays from Google are never calls", () => {
+    expect(classifyEvent(ev("Discovery call", { eventType: "outOfOffice" }), clients).kind).toBe("skip");
+    expect(classifyEvent(ev("Discovery call", { eventType: "birthday" }), clients).kind).toBe("skip");
+  });
+  it("a recurring sales-looking series is still skipped (sales calls are one-offs)", () => {
+    expect(classifyEvent(ev("Discovery call", { recurringEventId: "x" }), clients).kind).toBe("skip");
+  });
+});

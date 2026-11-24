@@ -325,6 +325,10 @@ export async function runSalesBriefs(admin: Admin, opts: { now?: Date; max?: num
   // Over: two hours after it started the brief is done (the item turns into the debrief prompt for two days)
   const { count: over } = await admin.from("sales_call_briefs").update({ status: "done", updated_at: new Date().toISOString() }, { count: "exact" }).eq("status", "ready").lt("starts_at", new Date(now.getTime() - 2 * 3_600_000).toISOString());
 
+  // Writing briefs can be paused (app_settings.sales_briefs.write = false): the calls are still found and kept, nothing
+  // is written or delivered until it's switched back on
+  if (!(await briefsWriting(admin))) return { calendars: read.size, unreadable: failed.length, failed: failed.slice(0, 5), salesCalls: calls.size, added, changed, cancelled, over: over ?? 0, made: [], errors: [], paused: true, calls: planned.sort((a, b) => a.startsAt.localeCompare(b.startsAt)) };
+
   // Due now: written in order of the call, a few a run (each is a minute or two)
   const { data: pending } = await admin.from("sales_call_briefs").select(BRIEF_COLS).eq("status", "pending").gt("starts_at", now.toISOString()).lte("starts_at", new Date(now.getTime() + BRIEF_LEAD_HOURS * 3_600_000).toISOString()).order("starts_at").limit(opts.max ?? 3);
   const made: string[] = [];
@@ -339,6 +343,12 @@ export async function runSalesBriefs(admin: Admin, opts: { now?: Date; max?: num
     }
   }
   return { calendars: read.size, unreadable: failed.length, failed: failed.slice(0, 5), salesCalls: calls.size, added, changed, cancelled, over: over ?? 0, made, errors };
+}
+
+/** Whether briefs are being written (off by app_settings.sales_briefs = { write: false }) */
+export async function briefsWriting(admin: Admin): Promise<boolean> {
+  const { data } = await admin.from("app_settings").select("value").eq("key", "sales_briefs").maybeSingle();
+  return (data?.value as { write?: boolean } | null)?.write !== false;
 }
 
 /** One brief the person may read (theirs, or any for an exec or lead), through their own session */

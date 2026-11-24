@@ -17,6 +17,8 @@ export async function refreshBriefAction(id: string): Promise<{ ok: true } | { o
   const mine = await getBrief(await createClient(), id);
   if (!mine || (mine.owner_id !== me.id && !worksSales(me))) return { ok: false, error: "That brief isn't yours." };
   const admin = createAdminClient();
+  const { briefsWriting } = await import("@/lib/sales-briefs");
+  if (!(await briefsWriting(admin))) return { ok: false, error: "Sales call briefs are paused right now." };
   const { data: row } = await admin.from("sales_call_briefs").select(BRIEF_COLS).eq("id", id).single();
   const { data: people } = await admin.from("profiles").select("id, full_name, email, is_exec, is_lead").eq("is_active", true);
   const team = ((people ?? []) as { id: string; full_name: string; email: string | null; is_exec: boolean | null; is_lead: boolean | null }[]).filter((p) => p.email).map((p) => ({ id: p.id, email: p.email!.toLowerCase(), name: p.full_name, sells: Boolean(p.is_exec || p.is_lead), exec: Boolean(p.is_exec) }));
