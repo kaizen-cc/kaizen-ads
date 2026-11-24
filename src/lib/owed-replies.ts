@@ -516,6 +516,30 @@ async function gmailAnswered(o: Row, teamEmails: Set<string>) {
   });
 }
 
+// ─── Checked on demand ──────────────────────────────────────────────────────
+
+/**
+ * One waiting message, looked at again right now (someone asked their assistant to sweep their comms): closed as
+ * answered when a reply or a teammate's acknowledgement shows in its source, the same way the scheduled pass closes it.
+ */
+export async function recheckOwed(admin: Admin, id: string): Promise<{ state: "done" | "nothing" | "closed" | "unknown"; evidence: string; link: string | null }> {
+  const { data: o } = await admin.from("owed_replies").select("*").eq("id", id).maybeSingle();
+  if (!o) return { state: "unknown", evidence: "It's gone", link: null };
+  if (!OPEN.includes(String(o.status))) return { state: "closed", evidence: String(o.dismiss_reason ?? "Already answered"), link: (o.url as string | null) ?? null };
+  const { data: people } = await admin.from("profiles").select("email, is_active");
+  const teamEmails = new Set((people ?? []).filter((p) => p.is_active && p.email).map((p) => String(p.email).toLowerCase()));
+  const who = o.source === "slack" && slackConfigured() ? await slackPeople(admin).catch(() => null) : null;
+  const context = new Map<string, string>();
+  const how = await isAnswered(o as Row, who, teamEmails, context, admin);
+  const said = context.get(id) ?? "";
+  if (!how) {
+    await admin.from("owed_replies").update({ checked_at: new Date().toISOString() }).eq("id", id);
+    return { state: "nothing", evidence: said ? `Latest in the thread: ${said.split("\n")[0].slice(0, 300)}` : "No reply in the thread yet", link: (o.url as string | null) ?? null };
+  }
+  await closeAnswered(admin, o as Row, new Date().toISOString(), how === "reacted" ? "reacted" : "replied");
+  return { state: "done", evidence: how === "reacted" ? "A teammate acknowledged it with a reaction" : said ? said.split("\n").slice(-1)[0].slice(0, 300) : "Answered in the thread", link: (o.url as string | null) ?? null };
+}
+
 // ─── Deciding ───────────────────────────────────────────────────────────────
 
 /** Whether it's been answered, looking at the source itself. Unknown (the source can't be read) counts as not. */

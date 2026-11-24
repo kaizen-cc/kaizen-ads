@@ -186,7 +186,9 @@ async function writeBack(admin: Admin, item: Checkable, note: string, at: string
 }
 
 /** One pass: the items due a check (new, ingested-for, or not checked for an hour), oldest first, within a budget */
-export async function runDoneChecks(admin: Admin, opts: { budget?: number; onlyKeys?: string[]; clientIds?: string[] } = {}): Promise<{ checked: number; closed: number; moving: number; byKind: Record<string, number>; examples: { key: string; note: string }[] }> {
+export type CheckResult = { key: string; kind: string; client: string; title: string; state: "done" | "moving" | "nothing"; quote: string; source: string | null; link: string | null; at: string | null };
+
+export async function runDoneChecks(admin: Admin, opts: { budget?: number; onlyKeys?: string[]; clientIds?: string[]; force?: boolean } = {}): Promise<{ checked: number; closed: number; moving: number; byKind: Record<string, number>; examples: { key: string; note: string }[]; results: CheckResult[] }> {
   const { closedNote } = await import("@/lib/done-check-core");
   let items = await openCheckables(admin);
   if (opts.onlyKeys) items = items.filter((i) => opts.onlyKeys!.includes(i.key));
@@ -200,11 +202,12 @@ export async function runDoneChecks(admin: Admin, opts: { budget?: number; onlyK
     .filter((i) => {
       const r = by.get(i.key);
       if (r?.closed_at && !r.reopened_at) return false;
-      return !r || r.due || !r.checked_at || Date.parse(r.checked_at as string) < hourAgo;
+      // Asked for now (someone's assistant): no waiting for the hourly turn
+      return opts.force || !r || r.due || !r.checked_at || Date.parse(r.checked_at as string) < hourAgo;
     })
     .sort((a, b) => order(a) - order(b) || String(by.get(a.key)?.checked_at ?? "").localeCompare(String(by.get(b.key)?.checked_at ?? "")))
     .slice(0, opts.budget ?? 60);
-  const tally = { checked: 0, closed: 0, moving: 0, byKind: {} as Record<string, number>, examples: [] as { key: string; note: string }[] };
+  const tally = { checked: 0, closed: 0, moving: 0, byKind: {} as Record<string, number>, examples: [] as { key: string; note: string }[], results: [] as CheckResult[] };
   // Read four at a time (each is one small model call)
   const results = new Map<string, Awaited<ReturnType<typeof classify>>>();
   for (let i = 0; i < due.length; i += 4) {
@@ -224,6 +227,7 @@ export async function runDoneChecks(admin: Admin, opts: { budget?: number; onlyK
     if (!res) continue;
     tally.checked++;
     const now = new Date().toISOString();
+    tally.results.push({ key: item.key, kind: item.kind, client: item.client, title: item.title, state: res.verdict.state === "done" && !res.ev ? "moving" : res.verdict.state, quote: res.verdict.quote, source: res.ev?.source ?? null, link: res.ev?.url ?? null, at: res.ev?.at ?? null });
     const base = { key: item.key, kind: item.kind, client_id: item.clientId, owner_id: item.ownerId, title: item.title.slice(0, 300), client_name: item.client, state: res.verdict.state, quote: res.verdict.quote.slice(0, 1000), source: res.ev?.source ?? null, link: res.ev?.url ?? null, said_at: res.ev?.at ?? null, checked_at: now, due: false };
     if (res.verdict.state === "done" && res.ev) {
       const note = closedNote(res.verdict.quote, res.ev.source, res.ev.at);

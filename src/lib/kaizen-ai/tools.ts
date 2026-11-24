@@ -1327,6 +1327,10 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
   const { dayTools, DAY_TOOLS } = await import("./day-tools");
   for (const t of dayTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
   for (const n of DAY_TOOLS) CHANNEL_EXTRA.add(n);
+  // The done-check on demand: "check if my replies, promises and tasks are done", "is X done yet" (every role, chat and calls)
+  const { doneCheckTools } = await import("./done-check-tools");
+  for (const t of doneCheckTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
+  for (const t of doneCheckTools(ctx)) CHANNEL_EXTRA.add(t.name);
   // Their own Asana: next tasks, and any change written straight back (src/lib/asana-live.ts)
   const { asanaLiveTools, ASANA_LIVE_TOOLS } = await import("./asana-live-tools");
   for (const t of asanaLiveTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);

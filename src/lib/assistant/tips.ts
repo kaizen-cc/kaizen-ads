@@ -14,6 +14,7 @@ export const TIPS: readonly Tip[] = [
   { key: "plate", tools: ["my_work", "my_day", "day_item_action", "clear_my_item"], text: "you can ask me \"what's on my plate?\" and I'll go through it critical first, and mark things done or snooze them for you?" },
   { key: "comments", tools: ["item_comments", "comment_on_item"], text: "you can have me leave a comment on any item, like \"waiting on the client's answer\"? Everyone it reaches sees it, and the reminders pause." },
   { key: "promises", tools: ["my_promises"], text: "I keep track of what you've promised clients? Ask me what you owe anyone and I'll list it with the dates." },
+  { key: "done-check", tools: ["check_if_done", "reopen_checked_item"], text: "Say \"check if my replies and promises are done\" and I'll read Slack, email and call notes right now, close what's finished and show you the proof." },
   { key: "memory", tools: ["remember", "forget", "set_style", "update_my_profile"], text: "you can tell me how you like your answers, short or detailed, or things to remember about you? I'll keep it in mind every time." },
   { key: "settings", tools: ["update_assistant_settings", "urgent_call_settings"], text: "I can check in with you at set times, like a midday or 3pm recap, and you can choose when I call you about urgent things? Just tell me." },
   { key: "screens", tools: ["open_screen", "show_link", "look_at_screen"], text: "you can ask me to open any screen in Kaizen OS, or ask about what you're looking at? I'll take you there or explain it." },
