@@ -820,7 +820,7 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
             const out = await t.run(input);
             for (const c of tctx.cards.slice(before)) {
               if (c.type !== "document") continue;
-              const document = { id: c.id, kind: c.kind, title: c.title, client: c.client, version: c.version, href: c.href, download: c.download, placeholders: c.placeholders };
+              const document = { id: c.id, kind: c.kind, title: c.title, client: c.client, version: c.version, href: c.href, download: c.download, placeholders: c.placeholders, ...(c.docx ? { docx: c.docx } : {}) };
               ctx.emit({ t: "card", card: { id: `doc-${c.id}`, title: c.title, detail: c.client ?? "", href: c.href, external: true, cta: "Open", document } });
             }
             return out;

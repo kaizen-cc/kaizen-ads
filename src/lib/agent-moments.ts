@@ -301,6 +301,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
   ],
   email_desk: [
     { title: "Answers the email team in the client chat, from the Klaviyo data, the email score, the latest audit and the sprint", where: "Client page · client chat", trigger: "click", when: "When someone on the email team asks about a client", labels: ["email desk"] },
+    { title: "Kaizen's Email SOW Generator: writes the Sprint Recap and Ongoing Management SOW (recap, numbers, deliverability, the scope priced from the email packages, path to the next tier, first 90 days) as a PDF and a Word file", where: "Assistant and Kaizen AI (an email SOW or pitch) · Client page · Email · Allotment and SOW · Draft SOW", trigger: "click", when: "When someone asks for an email SOW or pitch, or clicks Draft SOW", labels: ["email sow"] },
     { title: "Sorts each client comment on emails into copy (to the strategist) or design (to the designer)", where: "Email Board · Revisions", trigger: "auto", when: "When the client sends emails back with changes", labels: ["email board comment routing"] },
   ],
   social_audit: [

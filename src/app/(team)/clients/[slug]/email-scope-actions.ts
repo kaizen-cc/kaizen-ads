@@ -182,3 +182,23 @@ export async function setSuppliesContent(clientId: string, on: boolean): Promise
     return fail(e);
   }
 }
+
+/**
+ * The Email SOW Generator from the client page: a Sprint Recap and Ongoing Management SOW (PDF and Word file) from the
+ * client's own numbers, priced from the email packages. `brief` is what the person wants in it (the tier to pitch,
+ * an add-on, what was built); empty is fine.
+ */
+export async function draftEmailSow(clientId: string, brief: string): Promise<{ ok: true; id: string; href: string; download: string; docx: string; placeholders: string[] } | Fail> {
+  try {
+    const me = await requireStaff();
+    if (!adminConfigured()) throw new Error("Not set up.");
+    const { data: c } = await (await createClient()).from("clients").select("id, name").eq("id", clientId).maybeSingle();
+    if (!c) throw new Error("That client isn't one you work on.");
+    const admin = createAdminClient();
+    const { generateEmailSow } = await import("@/lib/email-sow/server");
+    const made = await generateEmailSow({ admin, me: { id: me.id, fullName: me.fullName }, client: { id: c!.id as string, name: c!.name as string }, brief: String(brief ?? "").slice(0, 6000) });
+    return { ok: true, id: made.id, href: made.href, download: made.download, docx: made.docx, placeholders: made.placeholders };
+  } catch (e) {
+    return fail(e);
+  }
+}

@@ -120,7 +120,7 @@ export type EmailDesignCard = {
   }[];
 };
 /** A Kaizen-branded PDF (create_document): open it, download it, or edit its text and draw it again */
-export type DocumentCard = { type: "document"; id: string; kind: "sow" | "proposal" | "handoff" | "one_pager"; title: string; client: string | null; version: number; href: string; download: string; placeholders: string[] };
+export type DocumentCard = { type: "document"; id: string; kind: "sow" | "proposal" | "handoff" | "one_pager"; title: string; client: string | null; version: number; href: string; download: string; placeholders: string[]; /** An email SOW's Word file */ docx?: string };
 
 /** Copy written for a deliverable (create_copy_doc) as a document card: read it, open it full screen to comment and approve */
 export type CopyDocCard = { type: "copy_doc"; detail: string; copy: import("@/lib/agent-call/core").CallCopyDoc };

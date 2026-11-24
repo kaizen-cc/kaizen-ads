@@ -26,7 +26,12 @@ export async function documentText(id: string): Promise<{ ok: true; text: DocTex
   const db = await createClient();
   const { data } = await db.from("kaizen_documents").select("content").eq("id", id).maybeSingle();
   if (!data) return { ok: false, error: "That document isn't one you can open." };
-  const d = data.content as DocContent;
+  const d = data.content as DocContent & { generator?: string; sow?: import("@/lib/email-sow/core").EmailSow };
+  if (d.generator === "email_sow" && d.sow) {
+    // An email SOW is edited as its whole text; the generator redraws it keeping the edits
+    const { sowText } = await import("@/lib/email-sow/core");
+    return { ok: true, text: { title: d.title ?? "", subtitle: d.subtitle ?? "", period: d.period ?? "", summary: "", sections: [{ heading: "The document", body: sowText(d.sow), bullets: "" }], inclusions: "", exclusions: "", nextSteps: "" } };
+  }
   return {
     ok: true,
     text: {
@@ -54,6 +59,18 @@ export async function redrawDocument(id: string, text: DocText): Promise<{ ok: t
     const { data: c } = await db.from("clients").select("id, name").eq("id", data.client_id as string).maybeSingle();
     if (!c) return { ok: false, error: "That client isn't one you can see." };
     client = { id: c.id as string, name: c.name as string };
+  }
+  if ((prior as { generator?: string }).generator === "email_sow") {
+    if (!client) return { ok: false, error: "That SOW has no client." };
+    try {
+      const { generateEmailSow } = await import("@/lib/email-sow/server");
+      const p = prior as unknown as { brief?: string; confirmed?: import("@/lib/email-sow/core").SowPrice[] };
+      const edited = text.sections.map((s) => s.body).join("\n\n");
+      const made = await generateEmailSow({ admin: createAdminClient(), me: { id: me.id, fullName: me.fullName }, client, id, confirmed: p.confirmed ?? [], brief: `${p.brief ?? ""}\n\nThe person edited the document's text by hand. Keep every edit exactly as they wrote it (wording, numbers, sections they removed or added):\n${edited}` });
+      return { ok: true, document: { id: made.id, kind: made.kind, title: made.title, client: made.client, version: made.version, href: made.href, download: made.download, placeholders: made.placeholders, docx: made.docx } };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : "It couldn't be drawn again. Try once more." };
+    }
   }
   const loose = {
     ...toLoose(prior),

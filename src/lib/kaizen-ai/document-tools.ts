@@ -19,6 +19,13 @@ export const DOCUMENT_TOOLS = ["package_details", "client_wins", "create_documen
 
 const ITEMS = { type: "array", items: { type: "string" } };
 
+/** What the assistant wrote for an email SOW, as the generator's brief: its draft content and what the person said */
+function sowBrief(input: Record<string, unknown>, said: string | undefined): string {
+  const keep = { ...input };
+  for (const k of ["client", "document_id", "confirmed_prices", "service"]) delete keep[k];
+  return [said ? `The person said: ${said}` : "", `The assistant's notes and draft for it: ${JSON.stringify(keep)}`].filter(Boolean).join("\n\n");
+}
+
 export function documentTools(ctx: ToolCtx): ChatTool[] {
   const card = (c: DocumentCard) => {
     ctx.cards.push(c);
@@ -102,7 +109,7 @@ export function documentTools(ctx: ToolCtx): ChatTool[] {
     },
     {
       name: "create_document",
-      description: `Makes a Kaizen-branded PDF (the look of Kaizen's reports: Kaizen's mark beside the client's logo, a period band, clean sections and tables) from content you write: sow (a Scope of Work), proposal, handoff (a handoff or recap of what we did and the wins) or one_pager. It's kept with the client's documents and shown as a card to open, download, or edit the text and draw again. Write the finished content in one call. For a Scope of Work, read package_details first and build deliverables, cadence, inclusions and exclusions from it; pricing lines only carry a price that's stored (package_details has every tier's) or one the person confirmed in this conversation (also list those in confirmed_prices, every time); leave price out otherwise: it's drawn as "${PRICE_PLACEHOLDER}". Read what they asked for: an SOW "to pitch" ongoing work is a pitch proposal (lead with the tier they'd start on, the milestones as the path to the next tier), not a record of a signed scope. For a handoff, read client_wins and the handoff doc first; put the headline numbers in stats and list them in data_figures. Plain words, no em dashes, roles not names. To change one you made, pass its document_id with the whole new content. To attach it to an email, give its document_id to draft_message (attach).`,
+      description: `Makes a Kaizen-branded PDF (the look of Kaizen's reports: Kaizen's mark beside the client's logo, a period band, clean sections and tables) from content you write: sow (a Scope of Work), proposal, handoff (a handoff or recap of what we did and the wins) or one_pager. It's kept with the client's documents and shown as a card to open, download, or edit the text and draw again. Write the finished content in one call. An email SOW or pitch (service email, kind sow or proposal) is written by Kaizen's Email SOW Generator in Kaizen's Sprint Recap and Ongoing Management SOW structure, from the client's own numbers: give it the starting tier, any add-on scope, what was built and anything the person said (in summary, sections or stats); it draws a PDF and a Word file. For any other Scope of Work, read package_details first and build deliverables, cadence, inclusions and exclusions from it; pricing lines only carry a price that's stored (package_details has every tier's) or one the person confirmed in this conversation (also list those in confirmed_prices, every time); leave price out otherwise: it's drawn as "${PRICE_PLACEHOLDER}". Read what they asked for: an SOW "to pitch" ongoing work is a pitch proposal (lead with the tier they'd start on, the milestones as the path to the next tier), not a record of a signed scope. For a handoff, read client_wins and the handoff doc first; put the headline numbers in stats and list them in data_figures. Plain words, no em dashes, roles not names. To change one you made, pass its document_id with the whole new content. To attach it to an email, give its document_id to draft_message (attach).`,
       input_schema: {
         type: "object",
         properties: {
@@ -141,6 +148,25 @@ export function documentTools(ctx: ToolCtx): ChatTool[] {
         const { makeDocument } = await import("@/lib/documents/server");
         const { confirmedPrices } = await import("@/lib/documents/core");
         const confirmed = confirmedPrices(input.confirmed_prices, ctx.said ?? "", Boolean(ctx.me.isExec));
+        const { isEmailSow } = await import("@/lib/email-sow/core");
+        if (isEmailSow(input.kind, input.service)) {
+          // Every email SOW and pitch comes from the Email SOW Generator, in Kaizen's Sprint Recap & SOW structure
+          if (!c) return { made: false, error: "An email SOW is for a client: say which client." };
+          const { generateEmailSow } = await import("@/lib/email-sow/server");
+          const sow = await generateEmailSow({ admin: ctx.admin, me: { id: ctx.me.id, fullName: ctx.me.fullName }, client: { id: c.id, name: c.name }, brief: sowBrief(input, ctx.said), confirmed, id });
+          card({ type: "document", id: sow.id, kind: sow.kind, title: sow.title, client: sow.client, version: sow.version, href: sow.href, download: sow.download, placeholders: sow.placeholders, docx: sow.docx });
+          return {
+            made: true,
+            document_id: sow.id,
+            version: sow.version,
+            open: sow.href,
+            word_file: sow.docx,
+            file: sow.fileName,
+            generator: "Kaizen's Email SOW Generator (Sprint Recap and Ongoing Management SOW structure; prices from the email packages and any confirmed in this conversation)",
+            ...(sow.placeholders.length ? { still_to_fill: sow.placeholders, note: "These spots are bracketed in the document because the data isn't known (say so in a line, ask for any you can't look up)." } : { note: "The card is on screen (Open, Download, Edit). Say what's in it in a line." }),
+            filed: `In ${c.name}'s documents`,
+          };
+        }
         const made = await makeDocument({ admin: ctx.admin, me: { id: ctx.me.id, fullName: ctx.me.fullName }, client: c ? { id: c.id, name: c.name } : null, loose: input, service: input.service, dataFigures: figures, id, confirmed });
         card({ type: "document", id: made.id, kind: made.kind, title: made.title, client: made.client, version: made.version, href: made.href, download: made.download, placeholders: made.placeholders });
         return {

@@ -41,11 +41,16 @@ export function DocumentCardView({ doc: start, onDismiss, wide = true }: { doc: 
           </button>
         )}
       </div>
-      {doc.placeholders.length > 0 && (
-        <p className="relative rounded-[10px] bg-warn-soft px-3 py-2 text-[12px] leading-snug text-fg">
-          <span className="font-medium">Price to confirm:</span> {doc.placeholders.join(", ")}. No price is stored for {doc.placeholders.length === 1 ? "it" : "them"}, so the PDF marks the spot instead of guessing.
-        </p>
-      )}
+      {doc.placeholders.length > 0 &&
+        (doc.placeholders.every((p) => p.startsWith("[")) ? (
+          <p className="relative rounded-[10px] bg-warn-soft px-3 py-2 text-[12px] leading-snug text-fg">
+            <span className="font-medium">Still to fill:</span> {doc.placeholders.join(", ")}. The document marks each spot in brackets instead of guessing.
+          </p>
+        ) : (
+          <p className="relative rounded-[10px] bg-warn-soft px-3 py-2 text-[12px] leading-snug text-fg">
+            <span className="font-medium">Price to confirm:</span> {doc.placeholders.join(", ")}. No price is stored for {doc.placeholders.length === 1 ? "it" : "them"}, so the PDF marks the spot instead of guessing.
+          </p>
+        ))}
       <div className="relative flex flex-wrap items-center gap-2">
         <a href={doc.href} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center rounded-full bg-brand px-4 text-[13px] font-medium text-white transition hover:bg-brand-hover active:scale-[0.98] md:min-h-9">
           Open
@@ -53,6 +58,11 @@ export function DocumentCardView({ doc: start, onDismiss, wide = true }: { doc: 
         <a href={doc.download} className="inline-flex min-h-11 items-center rounded-full border border-line px-4 text-[13px] text-muted transition-colors hover:border-faint hover:text-fg md:min-h-9">
           Download
         </a>
+        {doc.docx && (
+          <a href={doc.docx} className="inline-flex min-h-11 items-center rounded-full border border-line px-4 text-[13px] text-muted transition-colors hover:border-faint hover:text-fg md:min-h-9">
+            Word file
+          </a>
+        )}
         <button type="button" onClick={() => pushParams({ doc: doc.id })} className="inline-flex min-h-11 items-center rounded-full px-3 text-[13px] text-muted transition-colors hover:bg-surface-2 hover:text-fg md:min-h-9">
           Edit text
         </button>

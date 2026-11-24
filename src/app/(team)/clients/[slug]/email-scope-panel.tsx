@@ -5,6 +5,7 @@ import { emailAllotments } from "@/lib/email-request";
 import type { SowScope } from "@/lib/email-allotment-core";
 import { EmailScopeEditor } from "./email-scope-editor";
 import { SuppliesToggle } from "./supplies-toggle";
+import { SowGenerator } from "./sow-generator";
 
 /**
  * The client page's Allotment and SOW tab (Email): this cycle's email allotment (campaigns and flows, delivered and in
@@ -63,6 +64,7 @@ export async function EmailScopePanel({ clientId }: { clientId: string }) {
       log={(notes ?? []).map((n) => ({ note: n.note as string, via: n.via as string, at: n.created_at as string, by: (n.profiles as unknown as { full_name: string } | null)?.full_name ?? null }))}
       canEdit={seesEmailBoard(me) || me.isExec || me.isLead}
     />
+    {(seesEmailBoard(me) || me.isExec || me.isLead) && <SowGenerator clientId={clientId} />}
     </div>
   );
 }
