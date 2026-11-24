@@ -215,7 +215,10 @@ async function scanSlack(admin: Admin) {
         // the team in it) falls to the account's buyers. Teammates not in Kaizen OS aren't chased here.
         const inThread = m.thread_ts ? (threads.get(m.thread_ts) ?? []).filter((x) => Number(x.ts) < Number(m.ts) && x.user && x.user !== m.user && who.team.has(x.user)) : [];
         const threadPeople = [...new Set(inThread.map((x) => who.profileOf.get(x.user!)).filter((p): p is string => Boolean(p)))];
-        const targets = tagged.length ? tagged : fromTeam || !client?.external ? [] : inThread.length ? threadPeople : onAccount(client.id);
+        // Tagging only people who aren't on the team (the client's own colleagues): it's to them, not us (owner, Nov 24
+        // 2026: a client asking their developer to "redirect the sleep quiz" climbed to the execs as a reply we owed)
+        const taggedOthers = [...m.text.matchAll(MENTION)].some((x) => !who.team.has(x[1]));
+        const targets = tagged.length ? tagged : fromTeam || !client?.external || taggedOthers ? [] : inThread.length ? threadPeople : onAccount(client.id);
         for (const target of targets)
           rows.push({
             source: "slack",
@@ -416,7 +419,7 @@ async function scanGmail(admin: Admin) {
         // Written to them (not a copy), by a client contact or a teammate; mailing lists and tools don't count
         if (!from || header("list-id") || !(addresses(header("to")) as string[]).includes(mailbox)) continue;
         // A calendar invite or RSVP isn't a message to answer
-        if (isCalendarEmail(header("subject"), m.payload)) continue;
+        if (isCalendarEmail(header("subject"), m.payload, plainText(m.payload) ?? m.snippet ?? "")) continue;
         const mate = team.get(from);
         // A teammate's email is the team's (even if their address is on a client's contacts), but one forwarding or
         // quoting a client's email is about that client: filed to it from the addresses in what they forwarded
@@ -592,7 +595,7 @@ async function judge(items: Row[], context: Map<string, string>, names: Map<stri
       bare: true,
       maxTokens: 4000,
       system:
-        "You read messages sent to someone at Kaizen, a paid ads and creative agency, and decide if that person owes a reply or an action. needsReply is true when they're asked a question, asked to check, review, approve, send or do something, when someone shares work for their feedback (a landing page, a design, a doc), or when a client raises something with them. It's false for an FYI that needs nothing, a thank-you, praise or approval with no question in it (“looks great, thank you”, “approved”, “love it”), a sign-off, an @here or @channel announcement that asks nothing, something automated, or when what follows (a reply or an emoji reaction from the team, or the asker later saying the work is done, like \"we have implemented the updates\") already answers, acknowledges or completes it. When in doubt about a message that asks nothing, it's false. gist: what they're waiting on, in a few words a person would say (\"feedback on the landing page concept\", \"the March invoice question\"), no names, at most 70 characters.",
+        "You read messages sent to someone at Kaizen, a paid ads and creative agency, and decide if that person owes a reply or an action. needsReply is true when they're asked a question, asked to check, review, approve, send or do something, when someone shares work for their feedback (a landing page, a design, a doc), or when a client raises something with them. It's false for an FYI that needs nothing, a thank-you, praise or approval with no question in it (“looks great, thank you”, “approved”, “love it”), a sign-off, an @here or @channel announcement that asks nothing, a calendar invite, something automated, a message whose ask is addressed by name to someone else (\"[another name], can you please review\" sent to them is on that person, not them), or when what follows (a reply or an emoji reaction from the team, or the asker later saying the work is done, like \"we have implemented the updates\") already answers, acknowledges or completes it. When in doubt about a message that asks nothing, it's false. gist: what they're waiting on, in a few words a person would say (\"feedback on the landing page concept\", \"the March invoice question\"), no names, at most 70 characters.",
       schema: {
         type: "object",
         properties: { items: { type: "array", items: { type: "object", properties: { n: { type: "integer" }, needsReply: { type: "boolean" }, gist: { type: "string" } }, required: ["n", "needsReply", "gist"], additionalProperties: false } } },
@@ -859,7 +862,7 @@ export async function loadOwedReplies(db: SupabaseClient, me: { id: string; role
   const rows = await Promise.all((data ?? []).map(async (o) => ({ ...o, url: await openableLink((o.url as string | null) ?? null) })));
   return rows
     // Calendar invites and RSVPs read before they were filtered out at the inbox: nothing to reply to
-    .filter((o) => !(o.source === "gmail" && isCalendarEmail(o.subject as string | null)))
+    .filter((o) => !(o.source === "gmail" && isCalendarEmail(o.subject as string | null, null, o.body as string | null)))
     .filter((o) => {
       // A paused or archived client's messages aren't chased on the board
       const c = o.clients as unknown as { status?: string | null; archived_at?: string | null } | null;

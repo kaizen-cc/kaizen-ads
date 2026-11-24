@@ -943,8 +943,8 @@ async function withAsks(db: SupabaseClient, me: Staff, drafts: Draft[]): Promise
  * who and when, from the same channel or email thread); a promise carries the exact words asked and said.
  */
 async function withContext(db: SupabaseClient, drafts: Draft[]): Promise<Draft[]> {
-  const owedIds = [...new Set(drafts.map((d) => /^(owed2?|owed-lead):(.+)$/.exec(d.key)?.[2]).filter((x): x is string => Boolean(x)))].slice(0, 60);
-  const saidIds = [...new Set(drafts.map((d) => /^(said2?|said-lead):(.+)$/.exec(d.key)?.[2]).filter((x): x is string => Boolean(x)))].slice(0, 60);
+  const owedIds = [...new Set(drafts.map((d) => /^(?:lead:)?(owed2?|owed-lead):(.+)$/.exec(d.key)?.[2]).filter((x): x is string => Boolean(x)))].slice(0, 60);
+  const saidIds = [...new Set(drafts.map((d) => /^(?:lead:)?(said2?|said-lead):(.+)$/.exec(d.key)?.[2]).filter((x): x is string => Boolean(x)))].slice(0, 60);
   if (!owedIds.length && !saidIds.length) return drafts;
   const [{ data: owed }, { data: said }, { data: team }] = await Promise.all([
     owedIds.length ? db.from("owed_replies").select("id, client_id, source, channel_id, gmail_thread_id, asked_at, from_name, body, draft").in("id", owedIds) : Promise.resolve({ data: [] as Record<string, unknown>[] }),
@@ -981,7 +981,8 @@ async function withContext(db: SupabaseClient, drafts: Draft[]): Promise<Draft[]
       [p.ask ? { from: p.asked_by ?? "They", at: null, text: clip(p.ask, 600), ours: false } : null, { from: p.owner?.full_name ?? "We", at: p.said_at, text: clip(p.said, 900), ours: true }].filter((x): x is import("@/lib/exec-overview-core").ItemContextLine => Boolean(x)),
     );
   return drafts.map((d) => {
-    const id = /^(?:owed2?|owed-lead|said2?|said-lead):(.+)$/.exec(d.key)?.[1];
+    // A lead's linked item (lead:owed:<id>) carries the same conversation as the teammate's
+    const id = /^(?:lead:)?(?:owed2?|owed-lead|said2?|said-lead):(.+)$/.exec(d.key)?.[1];
     const lines = id ? ctx.get(id) : undefined;
     if (!lines?.length) return d;
     return { ...d, context: lines, ...(d.exec ? { exec: { ...d.exec, context: lines } } : {}) };

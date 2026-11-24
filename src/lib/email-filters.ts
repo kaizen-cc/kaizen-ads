@@ -21,9 +21,13 @@ export function hasCalendarPart(part: Part | null | undefined): boolean {
 }
 
 /** A calendar invite, update or RSVP, from its subject or (when there) its parts */
-export function isCalendarEmail(subject: string | null | undefined, payload?: Part | null) {
-  return CALENDAR_SUBJECT.test(subject ?? "") || hasCalendarPart(payload);
+export function isCalendarEmail(subject: string | null | undefined, payload?: Part | null, body?: string | null) {
+  return CALENDAR_SUBJECT.test(subject ?? "") || hasCalendarPart(payload) || CALENDAR_BODY.test(body ?? "");
 }
+
+// An invite whose subject is just the event's name (owner, Nov 24 2026: an internal meeting invite became a "reply owed"
+// and climbed to the execs): Google Calendar's body says so
+const CALENDAR_BODY = /Join with Google Meet|Invitation from Google Calendar|You are receiving this email because you are an attendee|Reply for [^\n]{1,80} and view more details/i;
 
 /** Every address on it is ours: mail between teammates, not with a client */
 export function isInternalOnly(addresses: readonly string[]) {

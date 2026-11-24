@@ -26,6 +26,7 @@ const row = (o: Partial<Rung3Row> & { id: string }): Rung3Row => ({
   client: "Acme",
   ownerId: "mel",
   owner: "Mel Crosson",
+  ownerLabel: "Email strategist",
   leadId: "lead-email",
   lead: "Dana Head",
   leadRole: "head_of_email",
@@ -42,8 +43,12 @@ describe("Escalated: one card per client", () => {
   it("gathers a client's stuck items into one card with who had it and for how long", () => {
     const cards = groupEscalated([row({ id: "1" }), row({ id: "2", what: "Email #13 Cyber Monday" }), row({ id: "3" })], [], now);
     expect(cards).toHaveLength(1);
-    expect(cards[0].title).toBe("Acme: 3 stuck");
-    expect(cards[0].detail).toContain("with Mel 5d → Head of Email 3d");
+    // Reads like the item: where, what, how long (owner, Nov 24 2026: "Jazem's work: 1 stuck" said nothing)
+    expect(cards[0].title).toBe("Acme · Email #12 Black Friday waiting 5 days, and 2 more stuck");
+    expect(cards[0].detail).toBe("Mel (Email strategist) had it 2 days, then Dana (Head of Email) 3 days, with nothing moving");
+    expect(cards[0].action.label).toBe("Nudge Dana");
+    expect(cards[0].hint).toMatch(/^Recommended: nudge Dana \(Head of Email\)/);
+    expect(cards[0].itemKey).toBeNull();
     expect(cards[0].nudgeIds).toEqual(["1", "2", "3"]);
     expect(cards[0].draft).toMatch(/^Hey Dana, Acme has 3 things stuck/);
   });
@@ -60,6 +65,13 @@ describe("Escalated: one card per client", () => {
     expect(cards.every((c) => c.severity === "fire")).toBe(true);
     expect(cards.find((c) => c.clientId === "c1")?.title).toBe("Acme is on fire: said they may cancel or leave");
     expect(cards.find((c) => c.clientId === "c2")?.action.href).toBe("/clients/beta");
+  });
+  it("one stuck item: the actual words, where they were said, and it can be reassigned", () => {
+    const [c] = groupEscalated([row({ id: "1", itemKey: "owed:9", what: "a reply to Zach Osness", quote: { from: "Zach Osness", at: hoursAgo(130), text: "Can you redirect the sleep quiz?" }, source: { label: "Slack #acme", href: "https://slack.com/archives/C1/p1" } })], [], now);
+    expect(c.title).toBe("Acme · reply to Zach Osness waiting 5 days");
+    expect(c.context?.[0]).toMatchObject({ from: "Zach Osness", text: "Can you redirect the sleep quiz?" });
+    expect(c.source).toEqual({ label: "Slack #acme", href: "https://slack.com/archives/C1/p1" });
+    expect(c.itemKey).toBe("owed:9");
   });
   it("says who had it", () => {
     expect(chainLabel({ owner: "Mel Crosson", since: hoursAgo(24 * 5), leadLabel: "Head of Email", reachedLead: hoursAgo(24 * 3) }, now)).toBe("with Mel 5d → Head of Email 3d");

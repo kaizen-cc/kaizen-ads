@@ -52,8 +52,12 @@ export type ExecCard = {
   subs?: SubItem[] | null;
   /** How a group card's title counts what's left ("5 reminders you saved...", "1 call safety review..."), redone as they close */
   subsTitle?: SubsTitle | null;
-  /** Where it came from (a task asked on a call or in a chat): said on its sheet, with the call's transcript when allowed */
+  /** Where it came from (a task asked on a call or in a chat; the Slack thread or email a stuck item was said in) */
   source?: { label: string; href?: string | null; transcriptCallId?: string | null } | null;
+  /** The recommended move, said plainly (Escalated: what Nudge does and to whom) */
+  hint?: string | null;
+  /** Escalated with one item: the item itself (its key on the owner's day), for Reassign */
+  itemKey?: string | null;
 };
 
 /** Address parameters that open something on the Overview (a sheet, a composer, a filtered list): a real destination */
@@ -185,6 +189,12 @@ export type Rung3Row = {
   reachedLead: string;
   line: string | null;
   href: string | null;
+  /** The owner's role ("Lead video editor") */
+  ownerLabel?: string | null;
+  /** The actual words: the message waiting on a reply, the promise made, the task's title (who, when, what) */
+  quote?: { from: string; at: string | null; text: string } | null;
+  /** Where it was said: "Slack #sierra-dreams", "Email: Re: Next steps", with the link (opens in a new tab) */
+  source?: { label: string; href: string | null } | null;
 };
 
 export type FireRow = { clientId: string; client: string; clientSlug?: string | null; why: string; href: string | null; line?: string | null; at?: string | null };
@@ -198,6 +208,23 @@ const TEAM_OF: Record<string, string> = { creative: "Creative", email: "Email", 
 export function chainLabel(r: Pick<Rung3Row, "owner" | "since" | "leadLabel" | "reachedLead">, now = new Date()): string {
   return `with ${first(r.owner)} ${daysSince(r.since, now)}d → ${r.leadLabel} ${daysSince(r.reachedLead, now)}d`;
 }
+
+const days = (n: number) => `${n} ${n === 1 ? "day" : "days"}`;
+
+/** What it is, in plain words: "reply to Zach Osness", "the meta weekly report (period ended Oct 25)" */
+export const plainWhat = (what: string) => what.replace(/^(a|an)\s+/i, "").trim();
+
+/**
+ * Who has it and how it climbed, in full (owner, Nov 24 2026: an exec couldn't tell what a stuck item was or who had
+ * it): "Jazem (Lead video editor) had it 26 days, then Jesus (Head of Creative) 3 days, with nothing moving".
+ */
+export function ladderStory(r: Pick<Rung3Row, "owner" | "ownerLabel" | "since" | "lead" | "leadLabel" | "reachedLead">, now = new Date()): string {
+  const owner = `${first(r.owner)}${r.ownerLabel ? ` (${r.ownerLabel})` : ""}`;
+  return `${owner} had it ${days(Math.max(0, daysSince(r.since, now) - daysSince(r.reachedLead, now)))}, then ${first(r.lead)} (${r.leadLabel}) ${days(daysSince(r.reachedLead, now))}, with nothing moving`;
+}
+
+/** The recommended move, said plainly: what Nudge does and to whom */
+export const nudgeHint = (lead: string, leadLabel: string) => `Recommended: nudge ${first(lead)} (${leadLabel}). Nudge shows a drafted message to edit, then sends it to them in Kaizen OS (their Overview and bell). Or take it yourself, or reassign it (under More).`;
 
 /** The exec's message to the lead: short, about the stuck work and the people on it */
 export function leadNudgeDraft(o: { lead: string; client?: string | null; n: number; owners: string[]; days: number }): string {
@@ -230,9 +257,10 @@ export function groupEscalated(rows: readonly Rung3Row[], fires: readonly FireRo
       client: null,
       clientId: null,
       title: `${team} team: ${list.length} stuck, ${topN} with ${first(topOwner)}`,
-      detail: `${oldest.leadLabel} (${first(oldest.lead)}) has had them up to ${daysSince(oldest.reachedLead, now)}d`,
+      detail: `${first(oldest.lead)} (${oldest.leadLabel}) has had them up to ${days(daysSince(oldest.reachedLead, now))}; the oldest: ${oldest.client ?? "internal"} · ${plainWhat(oldest.what)}`,
       severity: "critical",
-      action: { label: "Nudge the lead", href: null },
+      action: { label: `Nudge ${first(oldest.lead)}`, href: null },
+      hint: nudgeHint(oldest.lead, oldest.leadLabel),
       nudgeIds: list.map((r) => r.id),
       lead: { id: leadId, name: oldest.lead, role: oldest.leadRole },
       draft: leadNudgeDraft({ lead: oldest.lead, n: list.length, owners: list.map((r) => r.owner), days: daysSince(oldest.reachedLead, now) }),
@@ -249,7 +277,15 @@ export function groupEscalated(rows: readonly Rung3Row[], fires: readonly FireRo
     const oldest = [...list].sort((a, b) => Date.parse(a.since) - Date.parse(b.since))[0];
     const fire = oldest.clientId ? fireOf.get(oldest.clientId) : undefined;
     if (fire) fireOf.delete(fire.clientId);
-    const name = oldest.client ?? `${first(oldest.owner)}'s work`;
+    const name = oldest.client ?? "Internal";
+    const waited = daysSince(oldest.since, now);
+    // Read like the item: "Sierra Dreams · reply to Zach Osness waiting 10 days" (several: the oldest, and how many more)
+    const headline = list.length === 1 ? `${name} · ${plainWhat(oldest.what)} waiting ${days(waited)}` : `${name} · ${plainWhat(oldest.what)} waiting ${days(waited)}, and ${list.length - 1} more stuck`;
+    // The actual words behind each (up to 3), oldest first, so nobody has to go looking to know what it is
+    const context = [...list]
+      .sort((a, b) => Date.parse(a.since) - Date.parse(b.since))
+      .slice(0, 3)
+      .map((r) => (r.quote ? { from: r.quote.from, at: r.quote.at, text: `${list.length > 1 ? `${plainWhat(r.what)}: ` : ""}${r.quote.text}`, ours: false } : { from: first(r.owner), at: r.since, text: plainWhat(r.what), ours: true }));
     cards.push({
       key: `esc:${k}`,
       tab: "escalated",
@@ -257,10 +293,14 @@ export function groupEscalated(rows: readonly Rung3Row[], fires: readonly FireRo
       client: oldest.client,
       clientId: oldest.clientId,
       clientSlug: oldest.clientSlug ?? null,
-      title: fire ? `${name} is on fire: ${fire.why}` : `${name}: ${list.length} stuck`,
-      detail: fire ? `${list.length} stuck too · ${chainLabel(oldest, now)}` : `${list.length === 1 ? oldest.what : `${oldest.what} and ${list.length - 1} more`} · ${chainLabel(oldest, now)}; the lead hasn't moved it`,
+      title: fire ? `${name} is on fire: ${fire.why}` : headline,
+      detail: fire ? `${list.length} stuck too · ${ladderStory(oldest, now)}` : ladderStory(oldest, now),
       severity: fire ? "fire" : "critical",
-      action: { label: fire ? "Open it" : "Nudge the lead", href: fire ? (fire.href ?? oldest.href) : oldest.href },
+      action: { label: fire ? "Open it" : `Nudge ${first(oldest.lead)}`, href: fire ? (fire.href ?? oldest.href) : oldest.href },
+      context,
+      source: oldest.source ?? (oldest.href ? { label: "Open the source", href: oldest.href } : null),
+      hint: fire ? null : nudgeHint(oldest.lead, oldest.leadLabel),
+      itemKey: list.length === 1 ? oldest.itemKey : null,
       nudgeIds: list.map((r) => r.id),
       lead: { id: oldest.leadId, name: oldest.lead, role: oldest.leadRole },
       draft: leadNudgeDraft({ lead: oldest.lead, client: oldest.client, n: list.length, owners: list.map((r) => r.owner), days: daysSince(oldest.reachedLead, now) }),

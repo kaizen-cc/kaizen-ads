@@ -181,19 +181,33 @@ export async function asanaCards(db: SupabaseClient, me: { id: string; email: st
 
 // ─── Escalated ───────────────────────────────────────────────────────────────
 
-type NudgeRow = { id: string; item_key: string; client_id: string | null; client_name: string | null; owner_id: string; lead_id: string; what: string; href: string | null; since: string; created_at: string; line: string | null; owner: { full_name: string } | null; lead: { full_name: string; role: string } | null; client: { slug: string | null } | null };
+type NudgeRow = { id: string; item_key: string; client_id: string | null; client_name: string | null; owner_id: string; lead_id: string; what: string; href: string | null; since: string; created_at: string; line: string | null; owner: { full_name: string; role: string | null } | null; lead: { full_name: string; role: string } | null; client: { slug: string | null } | null };
 
 async function rung3Rows(admin: SupabaseClient, focus: readonly string[]): Promise<Rung3Row[]> {
   const { data } = await admin
     .from("ladder_nudges")
-    .select("id, item_key, client_id, client_name, owner_id, lead_id, what, href, since, created_at, line, owner:profiles!ladder_nudges_owner_id_fkey(full_name), lead:profiles!ladder_nudges_lead_id_fkey(full_name, role), client:clients(slug)")
+    .select("id, item_key, client_id, client_name, owner_id, lead_id, what, href, since, created_at, line, owner:profiles!ladder_nudges_owner_id_fkey(full_name, role), lead:profiles!ladder_nudges_lead_id_fkey(full_name, role), client:clients(slug)")
     .not("exec_at", "is", null)
     .is("taken_by", null)
     .in("status", ["open", "sent"])
     .limit(500);
   const { roleLabel } = await import("@/lib/roles");
-  return ((data ?? []) as unknown as NudgeRow[])
-    .filter((r) => execHears(r.line, focus))
+  const rows = ((data ?? []) as unknown as NudgeRow[]).filter((r) => execHears(r.line, focus));
+  // The actual words behind each (owner, Nov 24 2026): the message waiting on a reply, the promise made
+  const idsOf = (p: RegExp) => [...new Set(rows.map((r) => p.exec(r.item_key)?.[1]).filter((x): x is string => Boolean(x)))].slice(0, 200);
+  const owedIds = idsOf(/^owed2?:(.+)$/);
+  const saidIds = idsOf(/^said2?:(.+)$/);
+  const [{ data: owed }, { data: said }] = await Promise.all([
+    owedIds.length ? admin.from("owed_replies").select("id, source, from_name, body, gist, subject, channel_name, asked_at, url").in("id", owedIds) : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+    saidIds.length ? admin.from("message_promises").select("id, asked_by, ask, said, said_at, url, channel_name, source").in("id", saidIds) : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+  ]);
+  const clip = (t: unknown, n = 500) => String(t ?? "").replace(/\s+/g, " ").trim().slice(0, n);
+  const words = new Map<string, { quote: Rung3Row["quote"]; source: Rung3Row["source"] }>();
+  for (const o of (owed ?? []) as { id: string; source: string; from_name: string; body: string | null; gist: string | null; subject: string | null; channel_name: string | null; asked_at: string; url: string | null }[])
+    words.set(o.id, { quote: { from: o.from_name, at: o.asked_at, text: clip(o.body || o.gist) }, source: { label: o.source === "gmail" ? `Email${o.subject ? `: ${clip(o.subject, 70)}` : ""}` : `Slack${o.channel_name ? ` #${o.channel_name}` : ""}`, href: o.url } });
+  for (const p of (said ?? []) as { id: string; asked_by: string | null; ask: string | null; said: string | null; said_at: string | null; url: string | null; channel_name: string | null; source: string | null }[])
+    words.set(p.id, { quote: { from: p.asked_by ? `${p.asked_by} asked` : "Promised", at: p.said_at, text: clip([p.ask ? `"${clip(p.ask, 240)}"` : null, p.said ? `We said: "${clip(p.said, 240)}"` : null].filter(Boolean).join(" ")) }, source: { label: p.source === "gmail" ? "Email" : `Slack${p.channel_name ? ` #${p.channel_name}` : ""}`, href: p.url } });
+  return rows
     .map((r) => ({
       id: r.id,
       itemKey: r.item_key,
@@ -211,6 +225,9 @@ async function rung3Rows(admin: SupabaseClient, focus: readonly string[]): Promi
       reachedLead: r.created_at,
       line: r.line,
       href: r.href,
+      ownerLabel: r.owner?.role ? roleLabel(r.owner.role as Parameters<typeof roleLabel>[0]) : null,
+      quote: words.get(r.item_key.split(":").slice(1).join(":"))?.quote ?? null,
+      source: words.get(r.item_key.split(":").slice(1).join(":"))?.source ?? (r.href ? { label: /^https?:/.test(r.href) ? "Open the source" : "Open it in Kaizen OS", href: r.href } : null),
     }));
 }
 

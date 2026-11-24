@@ -10,6 +10,8 @@ import { useVisualViewport } from "@/lib/use-visual-viewport";
 import { asanaLabel, BLURB, TONE, chips, type Tone } from "./exec-blocks";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { nudgeLead, takeItOver } from "../../exec-actions";
+import { delegateOptions } from "../../delegate-actions";
+import { transferQuickItem } from "../../item-actions";
 import { openAsanaTask } from "@/components/asana-task-sheet";
 import { DraftActions } from "./emails-ready";
 import { ItemContext } from "@/components/item-context";
@@ -278,13 +280,19 @@ function Card({ card, sheet = false }: { card: ExecCard; sheet?: boolean }) {
           {card.client && card.kind !== "fire" && card.kind !== "stuck" && <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-faint">{card.client}</p>}
           <h3 className={`text-[15.5px] font-medium leading-snug ${card.severity === "fire" ? "text-bad" : "text-fg"}`}>{card.title}</h3>
           <p className="mt-1 text-[13.5px] leading-relaxed text-muted">{card.detail}</p>
-          {sheet && card.source && (
+          {(sheet || escalated) && card.source && (
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[13px] text-muted">
-              {card.source.label !== card.detail && <span>{card.source.label}</span>}
-              {card.source.href && (
-                <Link href={card.source.href} className="text-fg underline underline-offset-2">
-                  Open the conversation
+              {/* Where it was said: Slack, Gmail, Asana open in a new tab; a page of Kaizen OS in this one */}
+              {card.source.href && /^https?:/.test(card.source.href) ? (
+                <a href={card.source.href} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center text-fg underline underline-offset-2 sm:min-h-0">
+                  {card.source.label} ↗
+                </a>
+              ) : card.source.href ? (
+                <Link href={card.source.href} className="inline-flex min-h-11 items-center text-fg underline underline-offset-2 sm:min-h-0">
+                  {escalated ? card.source.label : "Open the conversation"}
                 </Link>
+              ) : (
+                card.source.label !== card.detail && <span>{card.source.label}</span>
               )}
               {card.source.transcriptCallId && <TranscriptButton callId={card.source.transcriptCallId} label="The call's transcript" className="min-h-11 rounded-full border border-line px-3 text-[13px] text-fg hover:bg-surface-2 sm:min-h-8 sm:text-[12px]" />}
             </div>
@@ -302,6 +310,8 @@ function Card({ card, sheet = false }: { card: ExecCard; sheet?: boolean }) {
         </div>
         {card.stat && card.kind !== "asana" && <span className="tabular shrink-0 rounded-full bg-bad-soft px-2.5 py-1 text-[12px] text-bad">{card.stat}</span>}
       </div>
+      {/* The recommended move, said plainly (what Nudge does and to whom) */}
+      {!readOnly && card.hint && <p className="mt-3 text-[12.5px] leading-relaxed text-muted">{card.hint}</p>}
       {!readOnly && (
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
           {card.emailDraft ? (
@@ -310,7 +320,7 @@ function Card({ card, sheet = false }: { card: ExecCard; sheet?: boolean }) {
             <AsanaOpen gid={card.key.slice("asana:".length)} url={card.stat ?? null} />
           ) : escalated && card.lead && card.draft ? (
             <button type="button" onClick={() => setComposing((v) => !v)} aria-expanded={composing} className="inline-flex min-h-11 items-center rounded-full bg-brand px-4 text-[13px] font-medium text-white hover:bg-brand/90 sm:min-h-8 sm:text-[12px]">
-              {composing ? "Close" : "Nudge the lead"}
+              {composing ? "Close" : card.action.label || "Nudge the lead"}
             </button>
           ) : (
             hasAction &&
@@ -374,12 +384,67 @@ function Extras({ card, onTaken }: { card: ExecCard; onTaken: () => void }) {
           {pending ? "Taking it..." : "Take it"}
         </button>
       ) : null}
+      {card.tab === "escalated" && card.itemKey ? <Reassign card={card} pill={pill} /> : null}
       {card.clientSlug && (
         <Link href={`/clients/${card.clientSlug}`} className={pill}>
           Client page
         </Link>
       )}
       {error && <span className="text-[12px] text-bad">{error}</span>}
+    </>
+  );
+}
+
+/**
+ * Escalated with one item: give the item itself to someone else (it leaves the owner's day, shows on theirs, the ladder
+ * starts over from them). Written after the Undo window like every clear (src/lib/undo.ts).
+ */
+function Reassign({ card, pill }: { card: ExecCard; pill: string }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [people, setPeople] = useState<{ id: string; name: string; role: string; onClient: boolean }[] | null>(null);
+  const [to, setTo] = useState("");
+  const toggle = () => {
+    setOpen(!open);
+    if (!people) delegateOptions(card.clientId).then(setPeople).catch(() => setPeople([]));
+  };
+  const go = () => {
+    const name = people?.find((p) => p.id === to)?.name ?? "them";
+    setOpen(false);
+    deferClear({
+      keys: [card.key],
+      label: `Reassigned to ${name}`,
+      commit: async () => {
+        const r = await transferQuickItem({ key: card.itemKey ?? card.key, snap: { topic: "needs", client: card.client ?? "", title: card.title, clientId: card.clientId, href: card.action.href }, to });
+        if (r.ok) router.refresh();
+        return r;
+      },
+    });
+  };
+  return (
+    <>
+      <button type="button" onClick={toggle} aria-expanded={open} className={pill}>
+        Reassign
+      </button>
+      {open && (
+        <div className="order-last mt-1 grid w-full basis-full gap-2 rounded-2xl border border-ink/15 bg-deep p-3 sm:max-w-sm">
+          <label className="grid gap-1 text-[12px] text-ink/60">
+            Give it to (it leaves their day and starts fresh with the new owner)
+            <select value={to} onChange={(e) => setTo(e.target.value)} className="h-11 rounded-brand border border-ink/15 bg-transparent px-2 text-[16px] text-fg sm:h-9 sm:text-[13px]">
+              <option value="">{people ? "Pick a teammate" : "Loading..."}</option>
+              {(people ?? []).map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                  {p.onClient ? " (on this client)" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button type="button" disabled={!to} onClick={go} className="h-11 rounded-full bg-fg px-4 text-[13px] font-medium text-bg disabled:opacity-50 sm:h-9">
+            Reassign
+          </button>
+        </div>
+      )}
     </>
   );
 }
