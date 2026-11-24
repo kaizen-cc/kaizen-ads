@@ -31,6 +31,15 @@ export const maxDuration = 300;
 
 type HiddenRow = { key: string; how: string; label: string | null; href: string | null; hidden_at: string };
 
+/** Their own Slack and Asana not connected (or the wrong account): a critical item at the top, gone once connected */
+async function ConnectOverviewItem({ me }: { me: Staff }) {
+  if (me.viewAs) return null;
+  const [{ connectionGaps }, { createAdminClient, adminConfigured }, { ConnectItem }] = await Promise.all([import("@/lib/connect-required"), import("@/lib/supabase/admin"), import("@/components/connect-required")]);
+  if (!adminConfigured()) return null;
+  const gaps = await connectionGaps(createAdminClient(), me.id).catch(() => null);
+  return gaps ? <ConnectItem gaps={gaps} /> : null;
+}
+
 /** An exec's Overview: the recap's cards in their tabs, opening on the most critical */
 async function ExecOverview({ db, me, base }: { db: SupabaseClient; me: Staff; base: { greeting: string; firstName: string; today: string } }) {
   const [{ ExecBlocks }, core, snap] = await Promise.all([import("./views/exec-home"), import("@/lib/exec-overview-core"), todaySnapshot(db, me)]);
@@ -47,6 +56,9 @@ async function ExecOverview({ db, me, base }: { db: SupabaseClient; me: Staff; b
   return (
     <div className="mx-auto grid max-w-6xl gap-6 md:gap-8">
       <PageHeader today={base.today} title={`${base.greeting}, ${base.firstName}`} subtitle={line} />
+      <Suspense fallback={null}>
+        <ConnectOverviewItem me={me} />
+      </Suspense>
       <Suspense fallback={<TodayHeroSkeleton />}>
         <TodayHero db={db} me={me} />
       </Suspense>
@@ -150,6 +162,11 @@ export default async function Home({ searchParams }: PageProps<"/pipeline">) {
   };
   const view = (o: { own?: { id: string; label: string; blurb: string; node: React.ReactNode; count?: number }[] } = {}) => (
     <>
+      <Suspense fallback={null}>
+        <div className="mx-auto w-full max-w-6xl empty:hidden">
+          <ConnectOverviewItem me={me} />
+        </div>
+      </Suspense>
       {/* Once a day the person's clients are read again for emails to draft (shown as items in Needs me) */}
       <Suspense fallback={null}>
         <MyDesk db={db} me={me} />

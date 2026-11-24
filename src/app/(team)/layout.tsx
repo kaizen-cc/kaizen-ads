@@ -9,6 +9,7 @@ import { FeedbackBubble } from "@/components/feedback-bubble";
 import { DirectionSheet } from "@/components/direction-sheet";
 import { CommentsSheet } from "@/components/item-comments";
 import { AsanaTaskSheet } from "@/components/asana-task-sheet";
+import { ConnectGate } from "@/components/connect-required";
 import { Suspense } from "react";
 import { after } from "next/server";
 import { PeopleProvider } from "@/components/people-provider";
@@ -22,6 +23,15 @@ import { CreativeFormatsProvider } from "@/components/creative-formats-provider"
 import { can } from "@/lib/chat-permissions";
 import { createClient } from "@/lib/supabase/server";
 import type { Theme } from "./theme-actions";
+
+/** Their gaps when the first-run Connect screen should show (something missing, not snoozed today), else null */
+async function connectGate(profileId: string) {
+  const [{ cookies }, { connectionGaps }, core] = await Promise.all([import("next/headers"), import("@/lib/connect-required"), import("@/lib/connect-required-core")]);
+  const snooze = (await cookies()).get(core.SNOOZE_COOKIE)?.value ?? null;
+  if (core.snoozedToday(snooze, new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }))) return null;
+  const gaps = await connectionGaps(createAdminClient(), profileId).catch(() => null);
+  return gaps && core.missingOf(gaps).length ? gaps : null;
+}
 
 export default async function TeamLayout({ children }: LayoutProps<"/">) {
   const me = await requireStaff();
@@ -39,6 +49,8 @@ export default async function TeamLayout({ children }: LayoutProps<"/">) {
   // (never while the owner views as them: nothing is changed for a real person)
   if (mine && !mine.profile_seeded_at && adminConfigured() && !me.viewAs) after(() => seedProfileFromSlack(createAdminClient(), me.id).catch(() => undefined));
   const shown = shownName({ display_name: mine?.display_name as string | null | undefined, full_name: me.fullName });
+  // First run: their own Slack and Asana before the rest of the OS, unless "Remind me tomorrow" was pressed today
+  const connectGaps = me.viewAs || !adminConfigured() ? null : await connectGate(me.id);
   return (
     <UploadProvider>
       <PeopleProvider people={(people ?? []).map((p) => ({ name: p.full_name as string, id: p.id as string, url: (p.avatar_url as string | null) ?? null, display: p.full_name as string }))}>
@@ -64,6 +76,7 @@ export default async function TeamLayout({ children }: LayoutProps<"/">) {
       <Suspense fallback={null}>
         <CommentsSheet />
       </Suspense>
+      {connectGaps && <ConnectGate gaps={connectGaps} name={shown.split(" ")[0]} />}
       {/* An Asana task, opened over any page and changed straight in Asana (?task=<gid>) */}
       <Suspense fallback={null}>
         <AsanaTaskSheet />

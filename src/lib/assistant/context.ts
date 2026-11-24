@@ -119,6 +119,9 @@ export async function myContext(db: SupabaseClient, admin: SupabaseClient, me: S
     myWork(db, me),
     settle(import("@/lib/connectors/server").then(({ connectedKeys }) => connectedKeys(me.id)), [] as string[]),
   ]);
+  // Their own Slack and Asana (owner, Nov 24 2026): until both are connected it leads every rundown of their day
+  const gaps = me.viewAs ? null : await settle(import("@/lib/connect-required").then(({ connectionGaps }) => connectionGaps(admin, me.id)), null);
+  const missing = gaps ? (await import("@/lib/connect-required-core")).missingOf(gaps) : [];
   // The urgent heads-up they just answered: the call opened with it, so "yes" opens it and "later" keeps it on top
   const answered = await settle(
     Promise.resolve(db.from("assistant_heads_ups").select("items, href").eq("profile_id", me.id).eq("status", "answered").gte("ended_at", new Date(Date.now() - 30 * 60_000).toISOString()).order("ended_at", { ascending: false }).limit(1).maybeSingle()).then((r) => r.data as { items: { title: string; href: string | null }[]; href: string | null } | null),
@@ -143,6 +146,9 @@ export async function myContext(db: SupabaseClient, admin: SupabaseClient, me: S
     `<clients count="${byClient.size}">\n${[...byClient].slice(0, 60).map(([c, r]) => `- ${c}: ${r.join(", ")}`).join("\n") || "(no seats on clients)"}\n</clients>`,
     `<their_day critical="${critical.length}" total="${day.length}">\nIn order: critical first, then simple to complex.\n${day.slice(0, 30).map(line).join("\n") || "(nothing on them right now)"}${day.length > 30 ? `\n…and ${day.length - 30} more (use my_work)` : ""}${day.length < items.length ? `\nOutside their focus: ${items.length - day.length} more under Everything else (my_work with only: everything_else), only if they ask.` : ""}\n</their_day>`,
     `<connectors>${connectors.length ? `Connected: ${connectors.join(", ")}.` : "None connected."}</connectors>`,
+    ...(missing.length && gaps
+      ? [`<connect_first>Their own ${missing.map((n) => `${n === "slack" ? "Slack" : "Asana"} (${gaps[n] === "wrong" ? "signed in to the wrong account: Switch" : gaps[n] === "reconnect" ? "needs reconnecting" : "not connected"})`).join(" and ")}. Until it's done, put it first in any rundown of their day, in one line, and offer to bring up Connect; when they say yes or ask ("connect my Asana"), run connect_account for each. It's also the critical item at the top of their Overview.</connect_first>`]
+      : []),
     ...(answered
       ? [
           `<heads_up>You rang them about this and opened the call with it:\n${(answered.items ?? []).map((i) => `- ${clip(i.title, 200)}${i.href ? ` [open: ${i.href}]` : ""}`).join("\n")}\nIf they want to go there now, open it with open_screen (href). If they'll look later, use keep_for_later. Either way, carry on with whatever they ask next.</heads_up>`,

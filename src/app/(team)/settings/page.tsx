@@ -8,6 +8,7 @@ import { Connections } from "./connections";
 import { GoogleAdsCard, KlaviyoSyncCard, SocialSyncCard, summarizeGoogle, summarizeKlaviyo, summarizeSocial, type PlatformSummary } from "./platform-cards";
 import { ConnectorsTab, MyConnectionsTab } from "./connectors-tab";
 import { RateCard, type Rate } from "./rate-card";
+import { TeamConnections } from "./team-connections";
 import { ClientStores } from "./client-stores";
 import { DEFAULT_URL_TAGS, metaWriteSetting } from "@/lib/meta-write";
 import Link from "next/link";
@@ -1094,6 +1095,7 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
         <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6">
           {me.isExec && <ReportCc />}
           {me.isExec && <ExecFocus me={me.id} />}
+          {me.isExec && <TeamConnections />}
           <Team />
         </div>
       )}

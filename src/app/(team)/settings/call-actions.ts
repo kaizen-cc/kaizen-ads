@@ -105,14 +105,16 @@ export async function startCall(roleKey: string, opts: { talk?: TalkMode; headsU
   // The assistant: a hello that remembers them (a birthday, how the trip went), unless the line just dropped
   if (roleKey === ASSISTANT_KEY && mode !== "continue") {
     const [memory, { data: tips }] = await Promise.all([loadMemory(admin, me.id), admin.from("assistant_tips").select("tip, seen_at, used_at, tipped_at").eq("profile_id", me.id)]);
-    // A broken personal connection (their Slack connected for posting only, or expired): said once, instead of a tip
+    // Their own Slack and Asana not connected (or the wrong account, or missing a scope): raised first, every day until
+    // done (owner, Nov 24 2026), once a day so a call-back doesn't repeat it; "connect my Asana" runs connect_account
     let connLine: string | null = null;
     if (!me.viewAs) {
-      const [{ slackConnection }, { helloConnectionLine }] = await Promise.all([import("@/lib/personal-connections"), import("@/lib/personal-connections-core")]);
-      const slack = await slackConnection(me.id).catch(() => null);
-      const line = slack ? helloConnectionLine("slack", slack.state) : null;
-      if (line && slack) {
-        const { error: told } = await admin.from("connection_notices").insert({ profile_id: me.id, service: "slack", state: slack.state });
+      const [{ connectionGaps }, { helloLine }] = await Promise.all([import("@/lib/connect-required"), import("@/lib/connect-required-core")]);
+      const gaps = await connectionGaps(admin, me.id).catch(() => null);
+      const line = gaps ? helloLine(gaps) : null;
+      if (line) {
+        const day = localDayIn(opts.tz);
+        const { error: told } = await admin.from("connection_notices").insert({ profile_id: me.id, service: "required", state: day });
         if (!told) connLine = line;
       }
     }
