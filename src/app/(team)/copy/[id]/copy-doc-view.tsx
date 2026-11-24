@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { asanaConnectHref } from "@/lib/asana-connect";
 import { copyEmailHeading, copyGroupName, type CopyComment } from "@/lib/copy-docs/core";
 import type { CopyDoc } from "@/lib/copy-docs/server";
 import { approveCopy, askForChange, commentOnLine, copyVersion, editLine, requestCopy, resolveComment } from "../actions";
@@ -42,6 +43,8 @@ export function CopyDocView({
   const [open, setOpen] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
+  /** Approve's or Create in Asana's error, shown by the buttons (with the fix: Connect Asana, or the client page) */
+  const [stepError, setStepError] = useState<StepError | null>(null);
   const [requests, setRequests] = useState(firstRequests);
   const [followerNote, setFollowerNote] = useState<string | null>(null);
   const [busy, setBusy] = useState<null | "revise" | "approve" | "request">(null);
@@ -74,18 +77,21 @@ export function CopyDocView({
   };
   const approve = async () => {
     setBusy("approve");
-    setError(null);
+    setStepError(null);
     const r = await approveCopy(doc.id);
     setBusy(null);
-    if (!r.ok) return setError(r.error);
+    if (!r.ok) return setStepError({ text: r.error, href: r.fixHref, label: "Fix it on the client page" });
     setDoc((d) => ({ ...d, status: "approved", docUrl: r.docUrl }));
   };
   const request = async () => {
     setBusy("request");
-    setError(null);
+    setStepError(null);
     const r = await requestCopy(doc.id, "asana");
     setBusy(null);
-    if (!r.ok) return setError(r.error);
+    if (!r.ok) {
+      if ("connect" in r && r.connect) return setStepError({ text: r.error, href: asanaConnectHref(`${window.location.pathname}${window.location.search}`), label: "Connect Asana" });
+      return setStepError({ text: r.error, href: "fixHref" in r ? r.fixHref : undefined, label: "Fix it on the client page" });
+    }
     setRequests(r.tasks);
     setFollowerNote(r.followerMissing);
     setDoc((d) => ({ ...d, status: "requested" }));
@@ -116,7 +122,7 @@ export function CopyDocView({
           )}
           {unresolved > 0 && <span className="rounded-full bg-warn-soft px-2.5 py-1 text-[11.5px] text-fg">{unresolved} open comment{unresolved === 1 ? "" : "s"}</span>}
         </div>
-        <NextSteps doc={doc} busy={busy} requests={requests} followerNote={followerNote} onApprove={approve} onRequest={request} />
+        <NextSteps doc={doc} busy={busy} requests={requests} followerNote={followerNote} error={stepError} onApprove={approve} onRequest={request} />
       </header>
 
       {(b.goal || b.audience || b.sendAt || b.offer || b.rules.length > 0) && (
@@ -226,15 +232,35 @@ function StatusPill({ status }: { status: CopyDoc["status"] }) {
   return <span className={`rounded-full px-2.5 py-1 text-[11.5px] font-medium ${s.c}`}>{s.t}</span>;
 }
 
-function NextSteps({ doc, busy, requests, followerNote, onApprove, onRequest }: { doc: CopyDoc; busy: string | null; requests: { name: string; url: string }[]; followerNote: string | null; onApprove: () => void; onRequest: () => void }) {
+type StepError = { text: string; href?: string; label: string };
+
+/** Why Approve or Create in Asana didn't go through, right under the buttons, with the fix when there is one */
+function StepErrorNote({ error }: { error: StepError | null }) {
+  if (!error) return null;
+  return (
+    <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[14px] bg-bad-soft px-4 py-3 text-[13.5px] text-bad">
+      <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{error.text}</span>
+      {error.href && (
+        <a href={error.href} className="inline-flex min-h-11 shrink-0 items-center rounded-full bg-brand px-4 text-[13px] font-medium text-white hover:bg-brand-hover md:min-h-9">
+          {error.label}
+        </a>
+      )}
+    </div>
+  );
+}
+
+function NextSteps({ doc, busy, requests, followerNote, error, onApprove, onRequest }: { doc: CopyDoc; busy: string | null; requests: { name: string; url: string }[]; followerNote: string | null; error: StepError | null; onApprove: () => void; onRequest: () => void }) {
   const btn = "inline-flex min-h-11 items-center rounded-full px-4 text-[13.5px] font-medium transition active:scale-[0.98] disabled:opacity-50 md:min-h-10";
   if (doc.status === "draft")
     return (
-      <div className="relative flex flex-wrap gap-2 pt-2">
-        <button type="button" onClick={onApprove} disabled={busy !== null} className={`${btn} bg-brand text-white hover:bg-brand-hover`}>
-          {busy === "approve" ? "Saving to their Drive…" : "Approve"}
-        </button>
-        <span className="self-center text-[12px] text-faint">Approving saves it as a Google Doc in their Drive, under Email Marketing.</span>
+      <div className="relative grid gap-2 pt-2">
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={onApprove} disabled={busy !== null} className={`${btn} bg-brand text-white hover:bg-brand-hover`}>
+            {busy === "approve" ? "Saving to their Drive…" : "Approve"}
+          </button>
+          <span className="self-center text-[12px] text-faint">Approving saves it as a Google Doc in their Drive, under Email Marketing.</span>
+        </div>
+        <StepErrorNote error={error} />
       </div>
     );
   return (
@@ -268,6 +294,7 @@ function NextSteps({ doc, busy, requests, followerNote, onApprove, onRequest }: 
           ))}
         </ul>
       )}
+      <StepErrorNote error={error} />
       {followerNote && <p className="text-[12px] text-muted">{followerNote}</p>}
     </div>
   );

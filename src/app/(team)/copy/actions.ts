@@ -122,7 +122,7 @@ export async function approveCopy(id: string): Promise<{ ok: true; docUrl: strin
 }
 
 /** The request from the document view: a click on Create in Asana is the yes */
-export async function requestCopy(id: string, where: "asana" | "kaizen"): Promise<{ ok: true; tasks: { name: string; url: string }[]; followerMissing: string | null } | Fail> {
+export async function requestCopy(id: string, where: "asana" | "kaizen"): Promise<{ ok: true; tasks: { name: string; url: string }[]; followerMissing: string | null } | (Fail & { fixHref?: string; connect?: boolean })> {
   if (where === "kaizen") return { ok: false, error: "Kaizen OS requests are coming soon. Create it in Asana for now." };
   try {
     const { me, db, admin } = await who();

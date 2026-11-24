@@ -271,6 +271,11 @@ export function deliverableTools(ctx: DeliverableCtx): LoopTool[] {
           }
           if (!canRequest(run.state)) return { created: false, note: "Not yet: the person and the lead both approve the latest version, then the lead asks. Read next from deliverable status." };
           const r = await createRequests(ctx.admin, ctx.db, asMe(ctx.me), run, { urgency: typeof input.priority === "string" ? (input.priority as "urgent") : undefined, hqLink: typeof input.hq_folder === "string" ? input.hq_folder : null, onStep: (step, i, n) => ctx.emit?.({ t: "progress", progress: { step, done: [], pct: Math.round((100 * i) / n) } }) });
+          if (!r.ok && r.connect) {
+            const { asanaConnectHref } = await import("@/lib/asana-connect");
+            card({ title: "Connect your Asana", detail: "The requests go in as you", href: asanaConnectHref(run.state.docId ? `/copy/${run.state.docId}` : "/pipeline"), external: false, cta: "Connect Asana" });
+            return { created: false, error: r.error, note: "Nothing was made. The Connect card is on screen: once they've connected, ask again and create it." };
+          }
           if (!r.ok) return { created: false, error: r.error, ...(r.askForLink ? { note: ASK_HQ } : {}) };
           await patchRun(ctx.admin, run, { requests: r.tasks });
           if (r.doc) card({ title: "The copy (Google Doc)", detail: `${run.state.client?.name ?? ""} · ${cfg.doc.folder}`, href: r.doc, external: true, cta: "Open the Doc" });
