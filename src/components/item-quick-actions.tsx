@@ -5,11 +5,13 @@ import { useEffect, useRef, useState, useTransition, type ReactNode } from "reac
 import { delegateOptions } from "@/app/(team)/delegate-actions";
 import { delegateQuickItem, doneQuickItem, dueQuickItem, snoozeQuickItem, takeOverQuickItem, transferQuickItem, type QuickSnap } from "@/app/(team)/item-actions";
 import { CommentButton } from "./item-comments";
+import { deferClear } from "@/lib/undo";
 
 // The quick actions on every Overview and Today item, kept simple (Nov 22 2026: too many choices per item): only Done and
 // Later show; everything else (Hand off, Comment, and whatever the item adds, like the client page or "Not for me") sits
 // behind one "⋯ More" that opens in the flow under the buttons, never floating, so a card that clips can't cut it off.
-// Each action takes the item off this person's screen at once (onGone) and the server's word follows.
+// Each action takes the item off this person's screen at once (onGone); the write waits out the Undo toast's window
+// (src/lib/undo.ts), and Undo brings it back (onBack) with nothing written.
 
 export type QuickItem = { key: string; snap: QuickSnap; href?: string | null; dueAt?: string | null; comments?: number; waiting?: boolean };
 type Which = "done" | "snooze" | "delegate" | "comment";
@@ -19,6 +21,7 @@ const pill = "inline-flex min-h-11 items-center justify-center gap-1.5 rounded-f
 export function ItemQuickActions({
   item,
   onGone,
+  onBack,
   hide = [],
   compact = false,
   tone = "auto",
@@ -28,6 +31,8 @@ export function ItemQuickActions({
 }: {
   item: QuickItem;
   onGone?: (how: Which, note?: string) => void;
+  /** Undone from the toast: put back whatever the caller hid itself */
+  onBack?: () => void;
   hide?: Which[];
   compact?: boolean;
   tone?: "auto" | "dark";
@@ -39,15 +44,25 @@ export function ItemQuickActions({
   inline?: boolean;
 }) {
   const router = useRouter();
-  const [pending, start] = useTransition();
+  // Nothing waits on the server here any more: a clear is written after the Undo window
+  const pending = false;
   const [more, setMore] = useState(false);
   const [open, setOpen] = useState(false);
-  const run = (how: Which, fn: () => Promise<unknown>, note?: string) =>
-    start(async () => {
-      onGone?.(how, note);
-      await fn();
-      router.refresh();
+  // Off the screen now, written once the Undo window closes
+  const clear = (how: Which, label: string, fn: () => Promise<unknown>, note?: string) => {
+    onGone?.(how, note);
+    deferClear({
+      keys: [item.key],
+      label,
+      commit: async () => {
+        const r = await fn();
+        router.refresh();
+        return r;
+      },
+      onUndo: onBack,
     });
+  };
+  const run = (how: Which, fn: () => Promise<unknown>, note?: string) => clear(how, how === "done" ? "Marked done" : how === "snooze" ? "Back tomorrow" : (note ?? "Cleared"), fn, note);
   const dark = tone === "dark";
   const quiet = dark ? "border border-white/25 text-white/85 hover:bg-white/10" : "border border-ink/15 text-ink/75 hover:border-ink/35 hover:text-fg";
   // A thread already going (or waiting on the client) is worth seeing without opening More
@@ -76,8 +91,8 @@ export function ItemQuickActions({
       </button>
       {more && (
         <div className={`order-last mt-1 flex w-full basis-full flex-wrap items-center gap-1.5 rounded-2xl p-2 ${dark ? "bg-white/[0.06]" : "bg-ink/[0.04]"}`}>
-          <TaskControls item={item} tone={tone} onGone={(note) => onGone?.("delegate", note)} />
-          {!hide.includes("delegate") && <DelegatePicker item={item} open={open} setOpen={setOpen} tone={tone} onDone={(to) => onGone?.("delegate", `Handed to ${to}`)} />}
+          <TaskControls item={item} tone={tone} clear={(note, fn) => clear("delegate", note, fn, note)} />
+          {!hide.includes("delegate") && <DelegatePicker item={item} open={open} setOpen={setOpen} tone={tone} clear={(note, fn) => clear("delegate", note, fn, note)} />}
           {!hide.includes("comment") && <CommentButton tone={tone} target={{ key: item.key, clientId: item.snap.clientId, title: [item.snap.client, item.snap.title].filter(Boolean).join(": "), href: item.href ?? null, dueAt: item.dueAt ?? null }} count={item.comments ?? 0} waiting={item.waiting ?? false} />}
           {extra}
         </div>
@@ -87,26 +102,23 @@ export function ItemQuickActions({
 }
 
 /** Delegate: pick a teammate (the client's seat holders first), an optional note and due date */
-function DelegatePicker({ item, open, setOpen, onDone, tone = "auto" }: { item: QuickItem; open: boolean; setOpen: (o: boolean) => void; onDone: (to: string) => void; tone?: "auto" | "dark" }) {
-  const router = useRouter();
+function DelegatePicker({ item, open, setOpen, clear, tone = "auto" }: { item: QuickItem; open: boolean; setOpen: (o: boolean) => void; clear: (note: string, fn: () => Promise<unknown>) => void; tone?: "auto" | "dark" }) {
   const [people, setPeople] = useState<{ id: string; name: string; role: string; onClient: boolean }[] | null>(null);
   const [to, setTo] = useState("");
   const [note, setNote] = useState("");
   const [due, setDue] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [pending, start] = useTransition();
+  const error: string | null = null;
+  const pending = false;
   const toggle = () => {
     setOpen(!open);
     if (!people) delegateOptions(item.snap.clientId).then(setPeople).catch(() => setPeople([]));
   };
-  const send = () =>
-    start(async () => {
-      const r = await delegateQuickItem({ key: item.key, snap: item.snap, to, note, due, href: item.href ?? null });
-      if (!r.ok) return setError(r.error);
-      setOpen(false);
-      onDone(r.to);
-      router.refresh();
-    });
+  // Handed over once the Undo window closes (the teammate hears then, never for an undone one)
+  const send = () => {
+    const name = people?.find((p) => p.id === to)?.name ?? "them";
+    setOpen(false);
+    clear(`Handed to ${name}`, () => delegateQuickItem({ key: item.key, snap: item.snap, to, note, due, href: item.href ?? null }));
+  };
   // The form sits in the flow under the buttons (never floating), so a card or detail panel that clips its overflow grows
   // or scrolls to fit it instead of cutting it off; it's brought into view when it opens
   const form = useRef<HTMLDivElement>(null);
@@ -159,7 +171,7 @@ const LINKED = /^(lead|esc|step|pulse|system|approve|asana|mine:asana|draft|todo
  * theirs, logged) and Change due date (the ladder's clock counts from it). A lead's linked item instead offers Take it
  * over (the teammate's item becomes theirs).
  */
-function TaskControls({ item, tone = "auto", onGone }: { item: QuickItem; tone?: "auto" | "dark"; onGone: (note: string) => void }) {
+function TaskControls({ item, tone = "auto", clear }: { item: QuickItem; tone?: "auto" | "dark"; clear: (note: string, fn: () => Promise<unknown>) => void }) {
   const router = useRouter();
   const [open, setOpen] = useState<"transfer" | "due" | null>(null);
   const [people, setPeople] = useState<{ id: string; name: string; role: string; onClient: boolean }[] | null>(null);
@@ -176,14 +188,7 @@ function TaskControls({ item, tone = "auto", onGone }: { item: QuickItem; tone?:
         <button
           type="button"
           disabled={pending}
-          onClick={() =>
-            start(async () => {
-              const r = await takeOverQuickItem(item.key);
-              if (!r.ok) return setError(r.error);
-              onGone("Taken over: it's yours now");
-              router.refresh();
-            })
-          }
+          onClick={() => clear("Taken over: it's yours now", () => takeOverQuickItem(item.key))}
           className={quiet}
         >
           {pending ? "Taking it over..." : "Take it over"}
@@ -233,9 +238,10 @@ function TaskControls({ item, tone = "auto", onGone }: { item: QuickItem; tone?:
             onClick={() =>
               start(async () => {
                 if (open === "transfer") {
-                  const r = await transferQuickItem({ key: item.key, snap, to });
-                  if (!r.ok) return setError(r.error);
-                  onGone(`Transferred to ${r.to}`);
+                  // Moved once the Undo window closes (the new owner hears then)
+                  const name = people?.find((p) => p.id === to)?.name ?? "them";
+                  setOpen(null);
+                  return clear(`Transferred to ${name}`, () => transferQuickItem({ key: item.key, snap, to }));
                 } else {
                   const r = await dueQuickItem({ key: item.key, snap, due });
                   if (!r.ok) return setError(r.error);

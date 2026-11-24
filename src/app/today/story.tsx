@@ -14,6 +14,7 @@ import { DoneBurst } from "@/components/done-burst";
 import { ItemContext } from "@/components/item-context";
 import { SubItems } from "@/components/sub-items";
 import { useClosed } from "@/lib/closed-items";
+import { deferClear } from "@/lib/undo";
 import { subsLeft } from "@/lib/exec-overview-core";
 import { ItemQuickActions } from "@/components/item-quick-actions";
 import { ScorecardView } from "@/components/production";
@@ -121,16 +122,39 @@ export function Story({
     const to = Math.max(0, Math.min(cards.length - 1, at + n));
     if (to !== at) setAt(to);
   };
-  const choose = async (i: TodayItem, status: "saved" | "done" | "dismissed") => {
-    // At once on screen (Save for later on something already saved puts it back to plain seen), then the server's word
-    const optimistic: Mark = status === "saved" && mine[i.key] === "saved" ? "seen" : status;
+  // At once on screen (Save for later on something already saved puts it back to plain seen); written once the Undo
+  // window closes (src/lib/undo.ts), and Undo puts each back as it was with nothing written
+  const choose = (i: TodayItem, status: "saved" | "done" | "dismissed", label?: string) => {
+    const prev = mine[i.key];
+    const optimistic: Mark = status === "saved" && prev === "saved" ? "seen" : status;
     setMine((m) => ({ ...m, [i.key]: optimistic }));
     if (demo) return;
-    const next = await setItem(i.key, status, snap(i));
-    if (next && next !== optimistic) setMine((m) => ({ ...m, [i.key]: next as Mark }));
+    deferClear({
+      keys: status === "saved" ? [] : [i.key],
+      label: label ?? (status === "done" ? "Marked done" : status === "dismissed" ? "Set aside" : optimistic === "seen" ? "Back on your list" : "Saved for later"),
+      commit: async () => {
+        const next = await setItem(i.key, status, snap(i));
+        if (next && next !== optimistic) setMine((m) => ({ ...m, [i.key]: next as Mark }));
+        return next;
+      },
+      onUndo: () => setMine((m) => ({ ...m, [i.key]: (prev ?? "seen") as Mark })),
+    });
   };
-  const saveAll = async (list: TodayItem[]) => {
-    for (const i of list) if (mine[i.key] !== "saved") await choose(i, "saved");
+  // Save all for later: one Undo for the lot
+  const saveAll = (list: TodayItem[]) => {
+    const todo = list.filter((i) => mine[i.key] !== "saved");
+    if (!todo.length) return;
+    const prev = Object.fromEntries(todo.map((i) => [i.key, mine[i.key]]));
+    setMine((m) => ({ ...m, ...Object.fromEntries(todo.map((i) => [i.key, "saved" as Mark])) }));
+    if (demo) return;
+    deferClear({
+      keys: [],
+      label: `${todo.length} saved for later`,
+      commit: async () => {
+        for (const i of todo) await setItem(i.key, "saved", snap(i));
+      },
+      onUndo: () => setMine((m) => ({ ...m, ...Object.fromEntries(todo.map((i) => [i.key, (prev[i.key] ?? "seen") as Mark])) })),
+    });
   };
   const jump = (topic: TopicKey) => {
     pushParams({ topic, card: null, pick: null, dive: null });

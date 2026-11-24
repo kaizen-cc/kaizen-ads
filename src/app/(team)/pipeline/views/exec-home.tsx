@@ -15,6 +15,7 @@ import { DraftActions } from "./emails-ready";
 import { ItemContext } from "@/components/item-context";
 import { SubItems } from "@/components/sub-items";
 import { closeLocally, useClosed } from "@/lib/closed-items";
+import { deferClear } from "@/lib/undo";
 
 // The executive Overview's blocks (owner, Nov 23 2026), under the Wrapped hero: Needs me, Escalated, Accounts, Pulse
 // and (the owner) System, each a designed block with its own color, a big number, one line and its sub-chips. A tap
@@ -258,14 +259,11 @@ function ItemSheet({ card }: { card: ExecCard }) {
 }
 
 function Card({ card, sheet = false }: { card: ExecCard; sheet?: boolean }) {
-  const [gone, setGoneState] = useState(false);
-  // Gone here counts at once in the block's number too
-  const setGone = (v: boolean) => {
-    setGoneState(v);
-    if (v) closeLocally(card.key);
-  };
+  // Gone when it's closed on this page (src/lib/closed-items.ts): counts drop with it, and Undo brings it back in place
+  const closed = useClosed();
+  const setGone = (v: boolean) => v && closeLocally(card.key);
   const [composing, setComposing] = useState(false);
-  if (gone) return null;
+  if (closed.has(card.key)) return null;
   const readOnly = card.tab === "pulse";
   const escalated = card.tab === "escalated";
   // Its main action: a real destination, else its own sheet (opened in place here; nothing when it's the sheet already)
@@ -348,7 +346,7 @@ function Card({ card, sheet = false }: { card: ExecCard; sheet?: boolean }) {
 /** Under More: take it over (Escalated), the client's page */
 function Extras({ card, onTaken }: { card: ExecCard; onTaken: () => void }) {
   const router = useRouter();
-  const [pending, start] = useTransition();
+  const pending = false;
   const [error, setError] = useState<string | null>(null);
   const pill = "inline-flex min-h-11 items-center rounded-full border border-ink/15 px-3.5 text-[13px] text-ink/75 hover:border-ink/35 hover:text-fg sm:min-h-8 sm:px-3 sm:text-[12px]";
   return (
@@ -357,14 +355,20 @@ function Extras({ card, onTaken }: { card: ExecCard; onTaken: () => void }) {
         <button
           type="button"
           disabled={pending}
-          onClick={() =>
-            start(async () => {
-              const r = await takeItOver(card.nudgeIds ?? []);
-              if (!r.ok) return setError(r.error);
-              onTaken();
-              router.refresh();
-            })
-          }
+          onClick={() => {
+            // Taken once the Undo window closes (src/lib/undo.ts)
+            onTaken();
+            deferClear({
+              keys: [card.key],
+              label: "Taken: it's yours now",
+              commit: async () => {
+                const r = await takeItOver(card.nudgeIds ?? []);
+                if (r.ok) router.refresh();
+                return r;
+              },
+              onError: setError,
+            });
+          }}
           className={pill}
         >
           {pending ? "Taking it..." : "Take it"}

@@ -97,6 +97,7 @@ export function TodayList({ sections, badges = {} }: { sections: ListSection[]; 
                               compact
                               item={{ key: i.key, href: hrefOf(i), dueAt: i.due ?? null, comments: badges[i.key]?.comments, waiting: badges[i.key]?.waiting, snap: { topic: i.topic, client: i.client, title: i.title, clientId: i.clientId } }}
                               onGone={(how, note) => setGone((g) => ({ ...g, [i.key]: note ?? (how === "done" ? "Done" : "Cleared") }))}
+                              onBack={() => setGone((g) => Object.fromEntries(Object.entries(g).filter(([k]) => k !== i.key)))}
                             />
                           </span>
                           <span role="cell" className={`text-[12px] ${due?.late ? "text-[#ff4d5e]" : "text-ink/60"}`}>

@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
-import { reminderDone, type SubItem } from "@/lib/exec-overview-core";
+import { useState } from "react";
+import type { SubItem } from "@/lib/exec-overview-core";
 import { closeSubItem } from "@/app/today/actions";
-import { closeLocally, reopenLocally, useClosed } from "@/lib/closed-items";
+import { useClosed } from "@/lib/closed-items";
+import { deferClear } from "@/lib/undo";
 import { pushParams, useParam } from "@/lib/url-state";
 
 // A group card's own items, each reviewed on its own (owner, Nov 24 2026: "4 call safety reviews" should open to each
@@ -18,7 +19,6 @@ export function SubItems({ id, subs, dark = false, noun = "items" }: { id: strin
   const open = useParam("sub") === id;
   const closed = useClosed();
   const [error, setError] = useState<string | null>(null);
-  const [, start] = useTransition();
   const left = subs.filter((s) => !closed.has(s.key) && !closed.has(s.key.split("#")[0]));
   if (!left.length) return null;
   const c = dark
@@ -26,20 +26,20 @@ export function SubItems({ id, subs, dark = false, noun = "items" }: { id: strin
     : { row: "border-line bg-ink/[0.02]", group: "text-ink/60", title: "text-fg", meta: "text-muted", detail: "text-ink/80", btn: "border-ink/15 text-ink/75 hover:border-ink/35 hover:text-fg", done: "border-ok/40 text-ok hover:bg-ok-soft", toggle: "border-ink/15 text-ink/75 hover:border-ink/35 hover:text-fg" };
   const close = (key: string, how: "done" | "dismissed") => {
     setError(null);
-    // Counted at once; the reminder goes too when this was its last open line
+    // Off now (the reminder too when this was its last open line), written once the Undo window closes; Undo brings
+    // both back with nothing written (src/lib/undo.ts)
     const askId = /^ask:([^#]+)#/.exec(key)?.[1];
-    closeLocally(key);
-    const parent = askId && reminderDone(subs, closed, askId) ? `ask:${askId}` : null;
-    if (parent) closeLocally(parent);
-    // Every sub item closed: the card itself is done
-    start(async () => {
-      const r = await closeSubItem(key, how);
-      if (!r.ok) {
-        reopenLocally(key);
-        if (parent) reopenLocally(parent);
-        return setError(r.error);
-      }
-      router.refresh();
+    const lines = askId ? subs.filter((s) => s.key.startsWith(`ask:${askId}#`)) : [];
+    const last = lines.length > 0 && lines.every((s) => s.key === key || closed.has(s.key));
+    deferClear({
+      keys: last && askId ? [key, `ask:${askId}`] : [key],
+      label: last ? "Done, and its reminder with it" : how === "done" ? "Marked done" : "Dismissed",
+      commit: async () => {
+        const r = await closeSubItem(key, how);
+        if (r.ok) router.refresh();
+        return r;
+      },
+      onError: setError,
     });
   };
   // Lines of one reminder under its title (shown above its first line)

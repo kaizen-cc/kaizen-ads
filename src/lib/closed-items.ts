@@ -39,3 +39,6 @@ export function useClosed(): { has: (k: string) => boolean } {
   );
   return closed;
 }
+
+/** Outside React (tests, the undo queue): whether it's closed on this page */
+export const isClosedLocally = (key: string) => closed.has(key);

@@ -14,6 +14,7 @@ import { Toaster } from "@/components/toasts";
 import { BriefJobsRoot } from "@/components/brief-jobs";
 import { CreativeFormatsProvider } from "@/components/creative-formats-provider";
 import { formatList } from "@/lib/creative-formats";
+import { UndoToast } from "@/components/undo-toast";
 
 export const metadata: Metadata = { title: "Today" };
 export const maxDuration = 120;
@@ -35,6 +36,8 @@ export default async function TodayPage() {
       {/* A brief started from the recap is written in the background: its notices show here too */}
       <Toaster />
       <BriefJobsRoot />
+      {/* Undo for anything cleared in the recap (src/lib/undo.ts) */}
+      <UndoToast />
       {/* Outside the team layout: the formats this person works in, for any quick preview opened from the recap */}
       <CreativeFormatsProvider formats={formatList(me)}>
       <Story

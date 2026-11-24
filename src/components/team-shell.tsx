@@ -16,6 +16,7 @@ import { PersonAvatar } from "@/components/person-avatar";
 import { ViewAsBar, ViewAsControl } from "@/components/view-as";
 import { channelNavOk, isSupportRole, SUPPORT_HIDDEN } from "@/lib/roles";
 import { useAgentCall } from "./agent-call-provider";
+import { UndoToast } from "./undo-toast";
 
 type Tier = "exec" | "lead" | "member";
 // buyer: media-buying tools the creative team doesn't use (hidden for them); reports: only executives and media buyers;
@@ -327,6 +328,8 @@ export function TeamShell({ name, fullName, meId, roles, tier, creative = null, 
     <div className="relative min-h-screen md:grid md:grid-cols-[240px_1fr]">
       <BriefJobsRoot />
       <MediaJobsRoot />
+      {/* Undo for anything cleared off the Overview (src/lib/undo.ts) */}
+      <UndoToast />
       <ViewAsBar label={viewAs?.label ?? null} name={viewAs?.name ?? null} />
       {/* A faint brand glow behind the top of every page (first, so everything after it paints above) */}
       <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-80 bg-[radial-gradient(60%_100%_at_15%_0%,rgba(178,30,44,0.16),transparent_70%)] md:left-[240px]" />
