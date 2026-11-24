@@ -7,7 +7,7 @@ import { mayTransferAny } from "./seat-transfer-core";
 // database (which clients they can see, whose thread it is). Every tool that reads with the server's rights must go
 // through one of them first.
 
-export type AccessWho = { id?: string; role: string | null | undefined; isExec?: boolean | null; isLead?: boolean | null };
+export type AccessWho = { id?: string; role: string | null | undefined; isExec?: boolean | null; isLead?: boolean | null; canViewAs?: boolean | null; viewAs?: unknown };
 export type Gate = { ok: true } | { ok: false; why: string };
 const OK: Gate = { ok: true };
 const no = (why: string): Gate => ({ ok: false, why });
@@ -65,6 +65,7 @@ export function mayOpen(href: string, me: AccessWho): Gate {
     const tab = q.get("tab") ?? "";
     if (SETTINGS_EXEC.has(tab) && !me.isExec) return no("That part of Settings is for the executives.");
     if (SETTINGS_LEAD.has(tab) && !me.isExec && !me.isLead) return no("That part of Settings is for the executives and leaders.");
+    if (tab === "calls" && (!me.canViewAs || me.viewAs)) return no("Calls & usage is for the owner only.");
   }
   return OK;
 }

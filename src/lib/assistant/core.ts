@@ -116,6 +116,9 @@ const APP_PREFIXES = ["/pipeline", "/board", "/clients", "/kpis", "/reports", "/
  */
 export const SCREEN_PLACES: Record<string, string> = {
   "client stores": "/settings?tab=connections&section=stores",
+  // The owner only: every call and chat with the agents (flagged first), and who uses them most and what it costs
+  "calls and usage": "/settings?tab=calls",
+  "ai usage": "/settings?tab=calls&view=usage",
   overview: "/pipeline",
   // The Overview as a list (the person's own layout; the overview_layout tool switches it)
   "overview list": "/pipeline",

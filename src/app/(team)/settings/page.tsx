@@ -48,6 +48,8 @@ import { STAGES } from "@/lib/stages";
 import { LastRun, ProgressBar, RetryOne, SyncNowButton, type Progress, type RunState } from "./sync-buttons";
 import type { SyncJob } from "./sync-actions";
 import { SyncShell } from "./sync-shell";
+import { CallsUsage } from "./calls-usage";
+import { ownerOnly } from "@/lib/calls-usage";
 
 // Inspecting a big ad account reads a few thousand rows; Sync now runs a whole job in the background
 export const maxDuration = 800;
@@ -61,6 +63,8 @@ const TABS = [
   ["errors", "Errors"],
   ["deleted", "Deleted"],
   ["rates", "Rate card"],
+  // The owner only (can_view_as, never while viewing as someone): every call and chat, and who uses the agents most
+  ["calls", "Calls & usage"],
 ] as const;
 // Leads see the team and the deleted log; execs see everything. The heads of Meta, Google and Creative also see
 // AI agents, with only their own line's agent in it (canTrainAgent). Everyone sees Your connections (their own
@@ -1028,7 +1032,7 @@ async function Deleted() {
 export default async function Settings({ searchParams }: PageProps<"/settings">) {
   const me = await requireStaff();
   const trains = trainableRoles(me).length > 0;
-  const tabs = me.isExec ? TABS : TABS.filter(([k]) => (isExecOrLead(me) && LEAD_TABS.includes(k)) || (trains && HEAD_TABS.includes(k)) || EVERYONE_TABS.includes(k));
+  const tabs = (me.isExec ? TABS : TABS.filter(([k]) => (isExecOrLead(me) && LEAD_TABS.includes(k)) || (trains && HEAD_TABS.includes(k)) || EVERYONE_TABS.includes(k))).filter(([k]) => k !== "calls" || ownerOnly(me));
   if (!tabs.length) redirect("/pipeline");
   const sp = await searchParams;
   // The old tabs land in their section (links and bookmarks from before they were one)
@@ -1132,6 +1136,7 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
       {tab === "errors" && <Errors all={sp.show === "all"} />}
       {tab === "deleted" && <Deleted />}
       {tab === "rates" && <Rates />}
+      {tab === "calls" && <CallsUsage me={me} sp={sp} />}
     </div>
   );
 }
