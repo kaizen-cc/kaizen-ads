@@ -658,6 +658,7 @@ export async function syncClientMeta(admin: SupabaseClient, clientId: string, ad
     const daily = await syncDaily(admin, clientId, account);
     await syncReach(admin, clientId, account);
     await snapshot(admin, clientId, account);
+    await (await import("@/lib/ad-library/catalog")).syncAdCatalog(admin, clientId, account).catch((e) => console.error("[meta] ad catalog", e instanceof Error ? e.message : e));
     return daily;
   });
 }
@@ -671,14 +672,16 @@ export async function collectMeta(admin: SupabaseClient, budgetMs = 700_000, t?:
   const deadline = Date.now() + budgetMs;
   const access = await linkAdAccounts(admin);
   const [{ data: all }, { data: snaps }] = await Promise.all([
-    admin.from("clients").select("id, name, meta_ad_account_id, creative_package").is("archived_at", null).in("status", LIVE).not("meta_ad_account_id", "is", null),
+    admin.from("clients").select("id, name, meta_ad_account_id, creative_package, meta_synced_at").is("archived_at", null).in("status", LIVE).not("meta_ad_account_id", "is", null),
     admin.from("meta_snapshots").select("client_id, fetched_at").order("fetched_at", { ascending: false }).limit(2000),
   ]);
   const last = new Map<string, string>();
   for (const s of snaps ?? []) if (!last.has(s.client_id)) last.set(s.client_id, s.fetched_at);
-  const clients = (all ?? []).sort(
-    (a, b) => Number(b.creative_package) - Number(a.creative_package) || (last.get(a.id) ?? "").localeCompare(last.get(b.id) ?? ""),
-  );
+  // Whoever was synced longest ago goes first (never synced: first of all); a creative client only wins a tie. Putting
+  // every creative client first starved the rest once the creative clients alone filled a run (Nov 24 2026: 25
+  // spending accounts with no ad-level days since late October).
+  const synced_at = (c: { id: string; meta_synced_at?: string | null }) => c.meta_synced_at ?? last.get(c.id) ?? "";
+  const clients = (all ?? []).sort((a, b) => synced_at(a).localeCompare(synced_at(b)) || Number(b.creative_package) - Number(a.creative_package));
   const synced: Record<string, unknown>[] = [];
   const errors: string[] = [];
   // Each client's account, then four steps after (fatigue, refresh briefs, winners, Hall of Fame)
@@ -691,11 +694,15 @@ export async function collectMeta(admin: SupabaseClient, budgetMs = 700_000, t?:
     }
     t?.on(c.name);
     const account = c.meta_ad_account_id!.replace(/^act_/, "");
+    // Its turn is taken, whatever happens next: the next run starts with whoever has waited longest
+    await admin.from("clients").update({ meta_synced_at: new Date().toISOString() }).eq("id", c.id);
     try {
       const { daily, reach, snap } = await withMetaAccount(account, async () => {
         const daily = await syncDaily(admin, c.id, account);
         const reach = await syncReach(admin, c.id, account);
         const snap = await snapshot(admin, c.id, account);
+        // Every ad's status and creative, for the client page's Ads tab (only changed rows are written)
+        await (await import("@/lib/ad-library/catalog")).syncAdCatalog(admin, c.id, account).catch((e) => console.error("[meta] ad catalog", c.name, e instanceof Error ? e.message : e));
         return { daily, reach, snap };
       });
       synced.push({ client: c.name, ...daily, reachWindows: reach, snapshot: Boolean(snap) });
@@ -1157,3 +1164,46 @@ export async function accountHealth(adAccountId: string) {
   return { account, campaigns: campaigns?.data ?? null, ads: ads?.data ?? null };
 }
 export type AccountHealth = Awaited<ReturnType<typeof accountHealth>>;
+
+export type CatalogAd = {
+  id: string;
+  name: string;
+  effective_status?: string;
+  created_time?: string;
+  campaign?: { id: string; name?: string };
+  adset?: { id: string; name?: string; learning_stage_info?: { status?: string } };
+  creative?: {
+    object_type?: string;
+    thumbnail_url?: string;
+    image_url?: string;
+    title?: string;
+    body?: string;
+    video_id?: string;
+    asset_feed_spec?: { titles?: { text: string }[]; bodies?: { text: string }[]; videos?: { video_id?: string }[] };
+    object_story_spec?: { link_data?: { name?: string; message?: string; child_attachments?: { name?: string }[] }; video_data?: { title?: string; message?: string } };
+  };
+};
+
+/**
+ * Every ad in an account that's live, paused or held (read only, paged, up to 3,000): its status, its ad set's learning
+ * phase, and the creative's type, picture and copy. For the client page's Ads tab, synced with the daily numbers.
+ */
+export async function adCatalog(adAccountId: string): Promise<CatalogAd[]> {
+  const act = `act_${adAccountId.replace(/^act_/, "")}`;
+  const out: CatalogAd[] = [];
+  let after: string | null = null;
+  for (let page = 0; page < 15; page++) {
+    const body: { data: CatalogAd[]; paging?: { cursors?: { after?: string }; next?: string } } = await graph(`${act}/ads`, {
+      fields: "name,effective_status,created_time,campaign{id,name},adset{id,name,learning_stage_info},creative{object_type,thumbnail_url,image_url,title,body,video_id,asset_feed_spec{titles,bodies,videos},object_story_spec{link_data{name,message,child_attachments{name}},video_data{title,message}}}",
+      filtering: JSON.stringify([{ field: "effective_status", operator: "IN", value: ["ACTIVE", "PAUSED", "CAMPAIGN_PAUSED", "ADSET_PAUSED", "WITH_ISSUES", "DISAPPROVED", "PENDING_REVIEW", "IN_PROCESS", "PREAPPROVED"] }]),
+      thumbnail_width: "400",
+      thumbnail_height: "400",
+      limit: "200",
+      ...(after ? { after } : {}),
+    });
+    out.push(...(body.data ?? []));
+    after = body.paging?.next ? (body.paging?.cursors?.after ?? null) : null;
+    if (!after) break;
+  }
+  return out;
+}

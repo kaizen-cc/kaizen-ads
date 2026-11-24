@@ -101,6 +101,7 @@ import type { Deploy } from "@/lib/google-deploy";
 import { untilLabel } from "@/lib/allotment";
 import { isLive } from "@/lib/live";
 import { ClientDirection } from "@/components/direction-parts";
+import { AdLibrary } from "./ad-library";
 import type { ChangeLine } from "@/lib/direction-changes";
 import type { ChangeLineId } from "@/lib/direction-core";
 
@@ -1032,10 +1033,15 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                       id: "ads",
                       label: "Ads",
                       count: tired || null,
-                      hint: "Ads wearing out and ready for a refresh",
+                      hint: "Every ad running: spend, results vs target, CTR, CPM, frequency, and the ones wearing out",
                       content: (
                         <div className="grid gap-6">
-                          {live && fatigue && fatigue.length > 0 ? <FatigueWatch rows={fatigue} showClient={false} /> : <p className="text-sm text-faint">No ads wearing out right now.</p>}
+                          {demo ? <p className="text-sm text-faint">No ads in the demo.</p> : <AdLibrary clientId={client.id} platform="meta" />}
+                          {live && fatigue && fatigue.length > 0 && (
+                            <Section title="Ready for a refresh" description="The ads wearing out, with the refresh brief written ahead.">
+                              <FatigueWatch rows={fatigue} showClient={false} />
+                            </Section>
+                          )}
                         </div>
                       ),
                     },
@@ -1083,6 +1089,12 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                       label: "Campaigns",
                       hint: "Every campaign: spend, results, cost and impression share",
                       content: googleCampaigns ? <CampaignsPanel p={googleCampaigns} /> : <p className="text-sm text-faint">No Google campaign data yet.</p>,
+                    },
+                    {
+                      id: "ads",
+                      label: "Ads",
+                      hint: "Every ad running: spend, conversions vs target, CTR, CPM",
+                      content: demo ? <p className="text-sm text-faint">No ads in the demo.</p> : <AdLibrary clientId={client.id} platform="google" />,
                     },
                     {
                       id: "copy", action: true,
@@ -1139,6 +1151,12 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                           {tiktok?.data ? <TikTokPanel t={tiktok.data} /> : <p className="text-sm text-faint">No TikTok numbers yet: their ad account isn&apos;t linked, or the first pull hasn&apos;t run.</p>}
                         </div>
                       ),
+                    },
+                    {
+                      id: "ads",
+                      label: "Ads",
+                      hint: "Every ad running: spend, results vs target, CTR, CPM, frequency",
+                      content: demo ? <p className="text-sm text-faint">No ads in the demo.</p> : <AdLibrary clientId={client.id} platform="tiktok" />,
                     },
                   ],
                 },

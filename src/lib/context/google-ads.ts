@@ -762,3 +762,52 @@ export async function syncGoogleCopy(admin: SupabaseClient, clientId: string, ac
   }
   return rows.length;
 }
+
+/**
+ * Every ad that ran in a Google Ads account over a window, read live (nothing is stored): its type, status, campaign
+ * and ad group, approval, the first headline, and its cost, clicks, impressions and conversions. For the client page's
+ * Ads tab.
+ */
+export async function googleAdsRunning(account: string, from: string, to: string) {
+  const rows = await search(
+    digits(account),
+    `SELECT ad_group_ad.ad.id, ad_group_ad.ad.name, ad_group_ad.ad.type, ad_group_ad.status, ad_group_ad.policy_summary.approval_status, ad_group_ad.ad.responsive_search_ad.headlines, ad_group_ad.ad.responsive_display_ad.headlines, campaign.id, campaign.name, campaign.status, ad_group.id, ad_group.name, metrics.cost_micros, metrics.clicks, metrics.impressions, metrics.conversions, metrics.conversions_value FROM ad_group_ad WHERE segments.date BETWEEN '${from}' AND '${to}' AND ad_group_ad.status != 'REMOVED'`,
+  );
+  type R = {
+    adGroupAd?: { status?: string; policySummary?: { approvalStatus?: string }; ad?: { id?: string; name?: string; type?: string; responsiveSearchAd?: { headlines?: { text?: string }[] }; responsiveDisplayAd?: { headlines?: { text?: string }[] } } };
+    campaign?: { id?: string; name?: string; status?: string };
+    adGroup?: { id?: string; name?: string };
+    metrics?: { costMicros?: string; clicks?: string; impressions?: string; conversions?: number; conversionsValue?: number };
+  };
+  const by = new Map<string, { id: string; name: string; type: string; status: string; approval: string; headline: string | null; campaignId: string | null; campaign: string | null; campaignStatus: string; adGroupId: string | null; adGroup: string | null; cost: number; clicks: number; impressions: number; conversions: number; value: number }>();
+  for (const r of rows as R[]) {
+    const ad = r.adGroupAd?.ad ?? {};
+    const id = String(ad.id ?? "");
+    if (!id) continue;
+    const cur = by.get(id) ?? {
+      id,
+      name: ad.name ?? "",
+      type: ad.type ?? "",
+      status: r.adGroupAd?.status ?? "",
+      approval: r.adGroupAd?.policySummary?.approvalStatus ?? "",
+      headline: ad.responsiveSearchAd?.headlines?.[0]?.text ?? ad.responsiveDisplayAd?.headlines?.[0]?.text ?? null,
+      campaignId: r.campaign?.id ?? null,
+      campaign: r.campaign?.name ?? null,
+      campaignStatus: r.campaign?.status ?? "",
+      adGroupId: r.adGroup?.id ?? null,
+      adGroup: r.adGroup?.name ?? null,
+      cost: 0,
+      clicks: 0,
+      impressions: 0,
+      conversions: 0,
+      value: 0,
+    };
+    cur.cost += Number(r.metrics?.costMicros ?? 0) / 1_000_000;
+    cur.clicks += Number(r.metrics?.clicks ?? 0);
+    cur.impressions += Number(r.metrics?.impressions ?? 0);
+    cur.conversions += Number(r.metrics?.conversions ?? 0);
+    cur.value += Number(r.metrics?.conversionsValue ?? 0);
+    by.set(id, cur);
+  }
+  return [...by.values()];
+}
