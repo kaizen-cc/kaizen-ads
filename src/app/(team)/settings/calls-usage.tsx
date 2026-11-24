@@ -190,7 +190,7 @@ async function CallView({ id, back }: { id: string; back: string }) {
               <p className="text-[13px] font-medium">{a.label}</p>
               <ul className="mt-1 grid gap-1 text-[13.5px] text-muted">
                 {a.did.map((d, i) => (
-                  <li key={i}>· {d}</li>
+                  <li key={i}>· {asLine(d)}</li>
                 ))}
               </ul>
             </div>
@@ -206,13 +206,23 @@ async function CallView({ id, back }: { id: string; back: string }) {
   );
 }
 
-function List({ title, items }: { title: string; items: string[] }) {
+/** A call note line as text: older calls store follow-ups as { what, due, client } objects, newer ones as plain text */
+function asLine(x: unknown): string {
+  if (x == null) return "";
+  if (typeof x !== "object") return String(x);
+  const o = x as Record<string, unknown>;
+  const what = String(o.what ?? o.title ?? o.text ?? o.body ?? "").trim();
+  const extra = [o.client, o.due ? `due ${o.due}` : null, o.owner ?? o.who].filter((v) => v != null && String(v).trim()).map(String);
+  return [what || JSON.stringify(o), extra.length ? `(${extra.join(", ")})` : ""].filter(Boolean).join(" ");
+}
+
+function List({ title, items }: { title: string; items: readonly unknown[] }) {
   return (
     <div>
       <p className="text-[13px] font-medium">{title}</p>
       <ul className="mt-1 grid gap-1 text-[13.5px] text-muted">
         {items.map((d, i) => (
-          <li key={i}>· {d}</li>
+          <li key={i}>· {asLine(d)}</li>
         ))}
       </ul>
     </div>
