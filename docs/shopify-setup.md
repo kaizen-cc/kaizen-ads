@@ -17,7 +17,7 @@ Kaizen is a Partner collaborator on clients' stores. For each store, the team do
    client to add them under Settings › Users › our collaborator account.
 2. Open the store from Shopify Partners › Stores, then go to **Settings › Apps and sales channels › Develop apps › Create an
    app**, named `Kaizen OS`.
-3. Under **Configure Admin API scopes**, tick `read_orders`, `read_all_orders`, `read_products` and `read_customers`. Then
+3. Under **Configure Admin API scopes**, tick `read_orders`, `read_all_orders` and `read_customers`. Then
    Save › **Install app** › reveal the **Admin API access token** (`shpat_…`, shown once).
 4. In Kaizen OS, open the client page › Whole business › **Store revenue**, enter the store address, paste the token, then
    **Check and connect**. The token is checked right away, then encrypted with `TOKEN_ENCRYPTION_KEY`.
@@ -31,7 +31,7 @@ confirm whether it does. If a store won't let us make one, use route 2.
 ## Route 2 (fallback, works today): the store owner's own app
 
 The store owner (not a collaborator: Shopify's Dev Dashboard needs organization access) does this:
-1. Go to dev.shopify.com › Apps › Create app, named `Kaizen OS`, with the same four scopes, and install it on their store.
+1. Go to dev.shopify.com › Apps › Create app, named `Kaizen OS`, with the same three scopes, and install it on their store.
 2. Send us its **client ID and client secret**.
 
 On the Store revenue card, choose **The store owner makes it**. Kaizen OS gets 24-hour tokens from Shopify's
@@ -49,7 +49,7 @@ This route is for stores where we have no collaborator access. The client can al
    - Not embedded
    - Redirect URL: `https://app.kaizenmarketing.agency/api/shopify/callback` (also add the `ads.` one while
      `NEXT_PUBLIC_SITE_URL` points there)
-   - Scopes: `read_orders,read_all_orders,read_products,read_customers`
+   - Scopes: `read_orders,read_all_orders,read_customers`
    - Webhooks API version: `2026-07`
    - Webhooks: `app/uninstalled` plus the compliance topics `customers/data_request`, `customers/redact` and `shop/redact`,
      all to `https://app.kaizenmarketing.agency/api/shopify/webhooks`

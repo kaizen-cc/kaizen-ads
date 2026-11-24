@@ -163,3 +163,13 @@ export const exchangeCode = (shop: string, code: string) => tokenCall(shop, { co
 /** A store's own app (made in their Dev Dashboard): a 24-hour token from its client ID and secret, fetched again when it runs out */
 export const clientCredentials = async (shop: string, clientId: string, clientSecret: string): Promise<ShopTokens> => ({ ...(await tokenCall(shop, { client_id: clientId, client_secret: clientSecret, grant_type: "client_credentials" })), client_id: clientId, client_secret: clientSecret });
 export const refreshTokens = (shop: string, refresh: string) => tokenCall(shop, { grant_type: "refresh_token", refresh_token: refresh });
+
+/** An embedded load's session token swapped for the store's offline token (expiring, with a refresh token) */
+export const tokenExchange = (shop: string, idToken: string) =>
+  tokenCall(shop, {
+    grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+    subject_token: idToken,
+    subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
+    requested_token_type: "urn:shopify:params:oauth:token-type:offline-access-token",
+    expiring: "1",
+  });

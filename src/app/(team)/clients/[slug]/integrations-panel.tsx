@@ -18,7 +18,7 @@ const HOW: Record<IntegrationKind, { account: string; secret: string; secret2?: 
     secret: "Admin API access token, or the app's client ID",
     secret2: "Client secret (only with a client ID)",
     steps: [
-      "Through our collaborator access (needs Manage and install apps and channels + Enable development): Settings › Apps and sales channels › Develop apps › Create an app named Kaizen OS, scopes read_orders, read_all_orders, read_products, read_customers, install, and paste the Admin API access token (leave the secret empty).",
+      "Through our collaborator access (needs Manage and install apps and channels + Enable development): Settings › Apps and sales channels › Develop apps › Create an app named Kaizen OS, scopes read_orders, read_all_orders, read_customers, install, and paste the Admin API access token (leave the secret empty).",
       "Or the store owner makes the app in their own Shopify Dev Dashboard with the same scopes, installs it, and sends its client ID (first box) and secret (second box).",
       "The Store revenue card above walks through both.",
     ],

@@ -38,11 +38,27 @@ export function installUrl(shopInput: string, clientId: string, from: "team" | "
   return authorizeUrl(shop, state, redirectUri());
 }
 
-/** A plain page for the merchant (in Shopify's flow, outside Kaizen OS), in their light or dark theme */
-export function shopifyPage(title: string, text: string, status = 400) {
+/** The merchant's own store in a few numbers, for the app's page in Shopify admin */
+export type StoreGlance = { last30: { revenue: number; orders: number }; days: number; historyFrom: string | null; currency: string | null };
+
+/**
+ * The app's page for the merchant (the App URL, in Shopify's flow): what's connected and, once read, their store's last
+ * 30 days. With a store known it loads Shopify App Bridge and may be framed by that store's admin, so it works embedded.
+ */
+export function shopifyPage(title: string, text: string, status = 400, opts: { shop?: string | null; glance?: StoreGlance | null } = {}) {
   const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+  const key = process.env.SHOPIFY_API_KEY ?? "";
+  const embed = Boolean(opts.shop && key);
+  const g = opts.glance;
+  const money = (n: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: g?.currency || "USD", maximumFractionDigits: 0 }).format(n);
+  const glance = g
+    ? `<div class="grid"><div class="tile"><span>Store revenue, last 30 days</span><b>${esc(money(g.last30.revenue))}</b></div><div class="tile"><span>Orders, last 30 days</span><b>${g.last30.orders.toLocaleString("en-US")}</b></div><div class="tile"><span>Days of history read</span><b>${g.days.toLocaleString("en-US")}</b></div></div>${g.historyFrom ? `<p class="faint">History from ${esc(g.historyFrom)}. Refreshed every hour. Read only: nothing in your store changes.</p>` : ""}`
+    : "";
+  const head = embed ? `<meta name="shopify-api-key" content="${esc(key)}"><script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>` : "";
+  const headers: Record<string, string> = { "content-type": "text/html; charset=utf-8" };
+  if (embed) headers["content-security-policy"] = `frame-ancestors https://${opts.shop} https://admin.shopify.com;`;
   return new Response(
-    `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>${esc(title)} · Kaizen OS</title><style>body{font:16px/1.55 system-ui,sans-serif;max-width:520px;margin:12vh auto;padding:0 20px;background:Canvas;color:CanvasText}h1{font-size:22px}a{color:inherit}</style><body><h1>${esc(title)}</h1><p>${esc(text)}</p><p style="opacity:.6;font-size:14px">Questions: <a href="mailto:santi@kaizenmarketing.agency">santi@kaizenmarketing.agency</a> · <a href="${esc(siteUrl())}/privacy#shopify">Privacy</a></p></body>`,
-    { status, headers: { "content-type": "text/html; charset=utf-8" } },
+    `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark">${head}<title>${esc(title)} · Kaizen OS</title><style>body{font:16px/1.55 system-ui,sans-serif;max-width:640px;margin:8vh auto;padding:0 20px;background:Canvas;color:CanvasText}h1{font-size:22px}a{color:inherit}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:20px 0}.tile{border:1px solid color-mix(in srgb,CanvasText 15%,transparent);border-radius:12px;padding:14px}.tile span{display:block;font-size:12px;opacity:.65;text-transform:uppercase;letter-spacing:.06em}.tile b{display:block;font-size:24px;margin-top:4px;font-weight:600}.faint{opacity:.6;font-size:14px}</style><body><h1>${esc(title)}</h1><p>${esc(text)}</p>${glance}<p class="faint">Questions: <a href="mailto:santi@kaizenmarketing.agency">santi@kaizenmarketing.agency</a> · <a href="${esc(siteUrl())}/privacy#shopify" target="_blank" rel="noreferrer">Privacy</a></p></body>`,
+    { status, headers },
   );
 }

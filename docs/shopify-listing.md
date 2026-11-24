@@ -11,7 +11,7 @@ here are Shopify's usual ones; the form shows the live count.
 1. **App setup (already in the draft app).** In Versions, check that the release has:
    - App URL `https://app.kaizenmarketing.agency/api/shopify/install`
    - redirect `https://app.kaizenmarketing.agency/api/shopify/callback`
-   - scopes `read_orders,read_all_orders,read_products,read_customers`
+   - scopes `read_orders,read_all_orders,read_customers`
    - not embedded
    - webhooks API version `2026-07`
    - `app/uninstalled`, `customers/data_request`, `customers/redact` and `shop/redact`, all to
@@ -77,7 +77,7 @@ Daily totals only: no customer names, emails or addresses stored
 **FAQ** (optional)
 ```
 Q: Can Kaizen change anything in my store?
-A: No. The app only has read access to orders, products and customer order counts.
+A: No. The app only has read access to orders and each order's customer ID and order count.
 
 Q: What happens if I uninstall?
 A: The access token is deleted immediately, and everything read from your store is deleted when Shopify sends its deletion request 48 hours later.
@@ -106,7 +106,7 @@ Blur or crop client names if the store isn't a demo.
 Kaizen OS is the internal platform of Kaizen Marketing, an advertising agency. Merchants install it so the agency can read their store's sales (read only) and report them next to their ad spend. It has no merchant-facing settings.
 
 To test:
-1. Install the app on your development store from the install link. The app starts OAuth immediately and asks for read-only access (orders, all orders, products, customers).
+1. Install the app on your development store from the install link. The app starts OAuth immediately and asks for read-only access (orders, all orders, customers).
 2. After approving, you land on a "Kaizen OS is connected" page. The store is now connected; within 10 minutes Kaizen OS reads the store's order history (back to the first order) and keeps daily totals, refreshed hourly.
 3. Opening the app again from Apps shows the same connected status.
 4. Uninstall: the app/uninstalled webhook deletes the access token immediately; shop/redact (48 hours later) deletes all data read from the store. customers/data_request and customers/redact are acknowledged (we store no per-customer data).
@@ -144,10 +144,35 @@ To count new versus returning customers for the merchant's own reports, we read 
 
 ---
 
+## Self-review against the App Store requirements (Nov 24, 2026)
+
+**Status values:** **Pass** = Kaizen OS meets it; **Fixed** = changed in code; **Owner** = the owner has to do something; **Risk** = review may push back.
+
+| Requirement | Status | Note |
+| --- | --- | --- |
+| 2.3.2 Authenticate immediately on install | Pass | Shopify-managed install (`use_legacy_install_flow = false`). Embedded: the session token is exchanged for the store's token on first load. Not embedded: the App URL starts OAuth for an unknown store. |
+| 2.3.3 Redirect to the app UI after install | Pass | Install lands on the app page: what's connected, and the store's last 30 days once read. |
+| 2.3.4 Reinstall works | Pass | Uninstall deletes the token. A reinstall exchanges or OAuths again and relinks to the client the store had before. |
+| 2.3.1 No manual myshopify.com entry in Shopify's install flow | Pass | Only Kaizen's own team page asks for a store address; Shopify's flow never does. |
+| No merchant login or account before use | Pass | The app page needs no Kaizen login. |
+| Webhook HMAC → 401; compliance webhooks → 2xx | Pass | `/api/shopify/webhooks`: bad signature 401, every topic 200. `shop/redact` erases everything read from the store. |
+| 3.1.1 TLS | Pass | Vercel HTTPS. |
+| 3.1.2 Expiring offline tokens | Pass | `expiring=1` on the code and token exchanges; refreshed automatically. |
+| 2.2.4 GraphQL Admin API only | Pass | Every call is GraphQL (`2026-07`). |
+| 3.2 Only the scopes the app uses | Fixed + **Owner** | Kaizen OS now asks for `read_orders,read_all_orders,read_customers`. In `kaizen-shopify-app/shopify.app.toml`, set `scopes = "read_all_orders,read_customers,read_orders"` (drop `read_products` and `read_analytics`), then `shopify app deploy`. |
+| 2.2 / 2.2.2 Embedded admin experience | Fixed + **Owner** | The App URL now serves an App Bridge page that the store's admin may frame (CSP `frame-ancestors`), with the session-token check and token exchange. In the toml, set `embedded = true`, then deploy. The page then opens inside Shopify admin. |
+| 2.1.3 Works through a UI | Pass | The page in Shopify admin shows connection status and the store's 30-day revenue, orders and history read. |
+| Pricing | **Owner** | Free app: choose **Free to install**. If Shopify App Pricing is on with a $0 plan, switch the app to free / manual pricing. The plan-selection redirect only applies to apps that charge, and Kaizen OS has no billing code. |
+| Protected customer data (Level 1) | **Owner** | Submit the request with the answers above. |
+| 4.3.3 No stats or claims in the listing | Pass | Screenshots regenerated without comparisons, and the listing copy has none. |
+| 4.5.3 Demo screencast (required) | **Owner** | Record about 1 minute: install on the dev store › approve › the app page in admin shows connected › the store's numbers. English. |
+| 4.5.4 / 4.5.5 Test credentials, no 2FA | **Owner** | The app page needs no login. If reviewers ask to see Kaizen OS itself, give them a client-portal test login with no 2FA. |
+| 4.5.6 Emergency developer contact | **Owner** | Fill it in (name, email, phone). |
+| 1.1.14 Apps connecting merchants to agencies | **Risk** | Kaizen OS reports a merchant's own sales to the agency they already hired; it doesn't match merchants with agencies. If review raises it, say so, or fall back to custom distribution / per-store apps (route 1 and route 2 on the client page work without the public app). |
+
 ## Watch-outs before submitting
-- **Embedded apps:** Kaizen OS is a non-embedded app; its UI lives in Kaizen OS, outside Shopify admin. Shopify can ask apps with
-  an admin UI to be embedded with App Bridge. If the review asks for that, the fix is a small embedded status page. Say so,
-  and that change can be built.
+- **Embedded apps:** the app page now works embedded (App Bridge, session token, token exchange). Set `embedded = true`
+  in the toml before submitting.
 - **Reviewer access:** the reviewer instructions offer a temporary login. Have a client-portal login ready, linked to a
   demo client, before you submit.
 - **Install from Shopify's side:** a store that installs from the link without starting in Kaizen OS is linked

@@ -7,8 +7,8 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 /** Shopify's Admin GraphQL version every call uses (supported a year from its release) */
 export const SHOPIFY_API_VERSION = "2026-07";
-/** Read only. read_all_orders lifts Shopify's 60-day limit, so the history before Kaizen can be read. */
-export const SHOPIFY_SCOPES = "read_orders,read_all_orders,read_products,read_customers";
+/** Read only, and only what's read: orders (read_all_orders lifts Shopify's 60-day limit) and each order's customer id and order count. */
+export const SHOPIFY_SCOPES = "read_orders,read_all_orders,read_customers";
 /** Where Shopify sends the merchant back after they approve (must be listed in the app's allowed redirection URLs) */
 export const SHOPIFY_REDIRECT_PATH = "/api/shopify/callback";
 
@@ -369,4 +369,29 @@ export function shopifyFromHtml(html: string): { shopify: boolean; shop: string 
   const shop = h.match(/Shopify\.shop\s*=\s*["']([a-z0-9][a-z0-9-]*\.myshopify\.com)["']/i)?.[1]?.toLowerCase() ?? h.match(/["']myshopifyDomain["']\s*:\s*["']([a-z0-9][a-z0-9-]*\.myshopify\.com)["']/i)?.[1]?.toLowerCase() ?? null;
   const shopify = Boolean(shop) || /cdn\.shopify\.com|Shopify\.theme|shopify-digital-wallet|\/cdn\/shop\//i.test(h);
   return { shopify, shop };
+}
+
+// ─── Embedded loads: Shopify's session token ───────────────────────────────
+
+/**
+ * The id_token Shopify passes an embedded app (a JWT signed with the app secret): valid signature, for this app, not
+ * expired. Returns the store it's for, or null.
+ */
+export function verifyIdToken(token: string | null | undefined, secret: string, apiKey: string, now = Date.now()): { shop: string } | null {
+  if (!token || !secret || !apiKey) return null;
+  const [h, p, sig] = token.split(".");
+  if (!h || !p || !sig) return null;
+  if (!safeEqual(createHmac("sha256", secret).update(`${h}.${p}`).digest("base64url"), sig)) return null;
+  try {
+    const header = JSON.parse(Buffer.from(h, "base64url").toString("utf8")) as { alg?: string };
+    const c = JSON.parse(Buffer.from(p, "base64url").toString("utf8")) as { aud?: string; dest?: string; exp?: number; nbf?: number };
+    if (header.alg !== "HS256" || c.aud !== apiKey) return null;
+    const t = Math.floor(now / 1000);
+    if (typeof c.exp === "number" && c.exp < t - 5) return null;
+    if (typeof c.nbf === "number" && c.nbf > t + 5) return null;
+    const shop = shopDomain(String(c.dest ?? "").replace(/^https?:\/\//, ""));
+    return shop ? { shop } : null;
+  } catch {
+    return null;
+  }
 }

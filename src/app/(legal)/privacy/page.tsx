@@ -56,7 +56,7 @@ export default function Privacy() {
       </p>
       <ul className="grid gap-1.5">
         <li>
-          <strong>What we read:</strong> orders (date, amounts, discounts, refunds, taxes, shipping, sales channel, test and cancelled status), the source of the visit that led to each order (UTM tags, referrer, landing page), products, and for each order&rsquo;s customer only an internal ID, when they became a customer and how many orders they&rsquo;ve placed. We do not read or store customers&rsquo; names, email addresses, phone numbers or addresses.
+          <strong>What we read:</strong> orders (date, amounts, discounts, refunds, taxes, shipping, sales channel, test and cancelled status), the source of the visit that led to each order (UTM tags, referrer, landing page), and for each order&rsquo;s customer only an internal ID, when they became a customer and how many orders they&rsquo;ve placed. We do not read or store customers&rsquo; names, email addresses, phone numbers or addresses.
         </li>
         <li>
           <strong>Why:</strong> only to report the merchant&rsquo;s own results to the merchant and to the Kaizen team working on their account: store revenue, orders, average order value, new versus returning customers, and revenue against their ad spend (MER), including before and after they started working with us. It is never used for any other merchant, for advertising profiles, or for automated decisions about people.

@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { beforeAfter, channelOf, dayRanges, isFirstOrder, mer, monthly, nextBackfillWindow, ordersToDays, readState, shopDomain, shopifyFromHtml, signState, sourceOf, totalsFor, validQueryHmac, validWebhookHmac, windowRows, type ShopOrder, type StoreDay } from "@/lib/shopify/core";
+import { beforeAfter, channelOf, verifyIdToken, dayRanges, isFirstOrder, mer, monthly, nextBackfillWindow, ordersToDays, readState, shopDomain, shopifyFromHtml, signState, sourceOf, totalsFor, validQueryHmac, validWebhookHmac, windowRows, type ShopOrder, type StoreDay } from "@/lib/shopify/core";
 
 const m = (n: number) => ({ shopMoney: { amount: String(n) } });
 const order = (o: Partial<ShopOrder> & { id: string; createdAt: string }): ShopOrder => ({ subtotalPriceSet: m(100), totalPriceSet: m(110), totalDiscountsSet: m(10), totalRefundedSet: m(0), totalTaxSet: m(5), totalShippingPriceSet: m(5), ...o });
@@ -149,5 +149,26 @@ describe("Shopify storefronts", () => {
     expect(shopifyFromHtml('<script>Shopify.shop = "aldecoa.myshopify.com";</script>')).toEqual({ shopify: true, shop: "aldecoa.myshopify.com" });
     expect(shopifyFromHtml('<link href="//cdn.shopify.com/s/files/x.css">')).toEqual({ shopify: true, shop: null });
     expect(shopifyFromHtml("<html>wordpress</html>")).toEqual({ shopify: false, shop: null });
+  });
+});
+
+describe("embedded session tokens", () => {
+  const secret = "hush";
+  const jwt = (claims: Record<string, unknown>, key = secret, alg = "HS256") => {
+    const h = Buffer.from(JSON.stringify({ alg, typ: "JWT" })).toString("base64url");
+    const p = Buffer.from(JSON.stringify(claims)).toString("base64url");
+    return `${h}.${p}.${createHmac("sha256", key).update(`${h}.${p}`).digest("base64url")}`;
+  };
+  const now = 1_800_000_000_000;
+  const ok = { aud: "key1", dest: "https://kaizen-testing.myshopify.com", exp: now / 1000 + 60, nbf: now / 1000 - 5 };
+  it("accepts a token for this app and store", () => {
+    expect(verifyIdToken(jwt(ok), secret, "key1", now)).toEqual({ shop: "kaizen-testing.myshopify.com" });
+  });
+  it("refuses another app, a wrong secret, an expired token or another algorithm", () => {
+    expect(verifyIdToken(jwt({ ...ok, aud: "other" }), secret, "key1", now)).toBeNull();
+    expect(verifyIdToken(jwt(ok, "nope"), secret, "key1", now)).toBeNull();
+    expect(verifyIdToken(jwt({ ...ok, exp: now / 1000 - 60 }), secret, "key1", now)).toBeNull();
+    expect(verifyIdToken(jwt(ok, secret, "none"), secret, "key1", now)).toBeNull();
+    expect(verifyIdToken("garbage", secret, "key1", now)).toBeNull();
   });
 });

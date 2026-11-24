@@ -594,3 +594,17 @@ export async function autoLinkWaiting(admin: SupabaseClient) {
   }
   return out;
 }
+
+/** A store's own last 30 days and how much history is read, for the app's page in Shopify admin (that store only) */
+export async function storeGlance(admin: SupabaseClient, shop: string) {
+  const { data: conn } = await admin.from("client_integrations").select("settings").eq("kind", "shopify").eq("account", shop).eq("status", "connected").limit(1).maybeSingle();
+  if (!conn) return null;
+  const s = (conn.settings ?? {}) as ShopSettings;
+  const t = today(s.timezone);
+  const [{ data: recent }, { count }] = await Promise.all([
+    admin.from("shopify_daily").select("orders, total_sales").eq("shop", shop).gte("date", addDays(t, -29)),
+    admin.from("shopify_daily").select("date", { count: "exact", head: true }).eq("shop", shop),
+  ]);
+  const last30 = (recent ?? []).reduce((a, r) => ({ revenue: a.revenue + Number(r.total_sales ?? 0), orders: a.orders + Number(r.orders ?? 0) }), { revenue: 0, orders: 0 });
+  return { last30, days: count ?? 0, historyFrom: s.backfill?.done ? (s.earliest ?? null) : (s.backfill?.before ?? null), currency: s.currency ?? null };
+}

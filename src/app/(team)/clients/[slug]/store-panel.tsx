@@ -142,7 +142,7 @@ export function StorePanel({ clientId, overview, split, hint, canEdit, suggest, 
             </li>
             <li>Settings › Apps and sales channels › Develop apps › Create an app named &quot;Kaizen OS&quot;.</li>
             <li>
-              Configure Admin API scopes: tick <b className="text-fg">read_orders</b>, <b className="text-fg">read_all_orders</b>, <b className="text-fg">read_products</b> and <b className="text-fg">read_customers</b>. Save, Install app, then reveal the Admin API access token (shown once) and paste it here.
+              Configure Admin API scopes: tick <b className="text-fg">read_orders</b>, <b className="text-fg">read_all_orders</b> and <b className="text-fg">read_customers</b>. Save, Install app, then reveal the Admin API access token (shown once) and paste it here.
             </li>
           </ol>
           {tokenForm}
@@ -172,7 +172,7 @@ export function StorePanel({ clientId, overview, split, hint, canEdit, suggest, 
       ) : (
         <>
           <ol className="grid list-decimal gap-1 pl-5 text-[13px] leading-relaxed text-muted">
-            <li>The store owner opens dev.shopify.com › Apps › Create app, named &quot;Kaizen OS&quot;, with the scopes read_orders, read_all_orders, read_products and read_customers, and installs it on their store.</li>
+            <li>The store owner opens dev.shopify.com › Apps › Create app, named &quot;Kaizen OS&quot;, with the scopes read_orders, read_all_orders and read_customers, and installs it on their store.</li>
             <li>They send us its client ID and client secret (the app&apos;s Settings). Kaizen OS gets fresh read-only tokens from them as needed.</li>
           </ol>
           {tokenForm}
