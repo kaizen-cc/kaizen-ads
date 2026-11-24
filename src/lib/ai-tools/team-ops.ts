@@ -725,13 +725,13 @@ const benchmarkingProject: AiTool = {
     let created = false;
     const readOnly = !project && mine.length > 0;
     if (!project && !readOnly) {
-      const { data, error } = await db
+      // Not read back: the read rule can't see the row inside its own insert (see createProject)
+      const row = { id: crypto.randomUUID(), created_by: user.id, name: `${c.name} · Benchmarking`, visibility: "private" as const, everyone_can_edit: false };
+      const { error } = await db
         .from("ai_projects")
-        .insert({ created_by: user.id, name: `${c.name} · Benchmarking`, description: `Weekly content benchmarking and desk research for ${c.name}`, instructions: PROJECT_INSTRUCTIONS(c.name), client_id: c.id, visibility: "private" })
-        .select("id, name, created_by, visibility, everyone_can_edit")
-        .single();
-      if (error || !data) return fail("Couldn't make the project. Try again.");
-      project = { ...(data as unknown as P), ai_project_members: [] };
+        .insert({ ...row, description: `Weekly content benchmarking and desk research for ${c.name}`, instructions: PROJECT_INSTRUCTIONS(c.name), client_id: c.id });
+      if (error) return fail("Couldn't make the project. Try again.");
+      project = { ...row, ai_project_members: [] };
       created = true;
     }
     if (!project) return fail(`There's a Benchmarking project for ${c.name} (${mine[0].p.name}) but you can only view it. Ask its owner to make you an editor, or I can make your own.`);

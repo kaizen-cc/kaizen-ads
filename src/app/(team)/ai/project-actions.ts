@@ -162,13 +162,15 @@ export async function createProject(p: { name: string; description?: string; ins
     if (!c) return { ok: false, error: "You can't see that client." };
     clientId = p.clientId;
   }
-  const { data, error } = await db
+  // The id is made here and the row isn't read back: the read rule (private.ai_project_role) looks the project up
+  // in the statement's own snapshot, where the row being inserted isn't there yet, so asking for it back failed
+  // every insert with a row-level security error
+  const id = crypto.randomUUID();
+  const { error } = await db
     .from("ai_projects")
-    .insert({ created_by: me.id, name, description: (p.description ?? "").trim().slice(0, 4000), instructions: (p.instructions ?? "").slice(0, 40_000), client_id: clientId })
-    .select("id")
-    .single();
-  if (error || !data) return { ok: false, error: error?.code === "42P01" ? NOT_READY : "Couldn't create the project." };
-  return { ok: true, id: data.id as string };
+    .insert({ id, created_by: me.id, name, description: (p.description ?? "").trim().slice(0, 4000), instructions: (p.instructions ?? "").slice(0, 40_000), client_id: clientId });
+  if (error) return { ok: false, error: error.code === "42P01" ? NOT_READY : "Couldn't create the project." };
+  return { ok: true, id };
 }
 
 const touch = (db: Awaited<ReturnType<typeof createClient>>, id: string) => db.from("ai_projects").update({ updated_at: new Date().toISOString() }).eq("id", id);
