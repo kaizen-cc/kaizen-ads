@@ -121,6 +121,8 @@ const H48 = () => new Date(Date.now() - 48 * 3_600_000).toISOString();
  * nudges whose item is taken care of leave the leads' Overviews. Run with the owed-replies step (hourly).
  */
 export async function runLadder(admin: SupabaseClient): Promise<{ nudged: number; resolved: number; up?: number; down?: number; fired?: number }> {
+  // A report a newer one replaced is never chased: cleared before the ladder reads what's late
+  await (await import("@/lib/reports/supersede")).supersedeOlder(admin).catch(() => 0);
   const cutoff = H48();
   const reportCutoff = new Date(Date.now() - 3 * 86_400_000).toISOString().slice(0, 10);
   const [owed, said, tickets, emails, briefs, launches, fatigue, reports] = await Promise.all([

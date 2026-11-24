@@ -300,6 +300,8 @@ export async function GET(request: Request) {
         weekly: weekday === "Mon" && !firstMonday && hour >= 5 ? await queueReports(admin, "weekly", date) : 0,
         monthly: firstMonday && hour >= 5 ? await queueReports(admin, "monthly", date) : 0,
       };
+      // An older unsent report a newer one replaced is cleared first (skipped, never deleted), so nobody writes or chases it
+      const superseded = await (await import("@/lib/reports/supersede")).supersedeOlder(admin).catch(() => 0);
       const drafted = await draftQueued(admin, 600_000);
       const remindNow = minute < 15 && ((weekday === "Mon" && hour === 14) || (weekday === "Tue" && hour === 10));
       const reminded = remindNow ? await remindReports(admin, date) : 0;
@@ -324,7 +326,7 @@ export async function GET(request: Request) {
           return { error: e instanceof Error ? e.message : String(e) };
         }
       })();
-      return Response.json({ queued, drafted, reminded, channel });
+      return Response.json({ queued, superseded, drafted, reminded, channel });
     }
     if (step === "loom") {
       const { aiEnabled } = await import("@/lib/ai");

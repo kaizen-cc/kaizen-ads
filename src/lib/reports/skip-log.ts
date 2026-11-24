@@ -14,7 +14,8 @@ export const SKIP_REASONS = [
 export type SkipReason = (typeof SKIP_REASONS)[number]["key"];
 
 export const isSkipReason = (k: unknown): k is SkipReason => SKIP_REASONS.some((r) => r.key === k);
-export const reasonLabel = (k: string | null | undefined) => SKIP_REASONS.find((r) => r.key === k)?.label ?? (k ? String(k) : "");
+// "superseded" is the app's own: a newer report for the same client and cadence replaced it (never picked by a person)
+export const reasonLabel = (k: string | null | undefined) => (k === "superseded" ? "Superseded by a newer report" : (SKIP_REASONS.find((r) => r.key === k)?.label ?? (k ? String(k) : "")));
 
 export type LogEntry = { action: "skipped" | "unskipped"; reason?: string | null; note?: string | null; by: string | null; byName: string | null; at: string };
 
