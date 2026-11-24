@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
-import { execOnMeeting, meetingRef, ownerFor, type Teammate } from "./meeting-actions-core";
+import { execOnMeeting, meetingRef, ownerFor, peopleMatter, type Teammate } from "./meeting-actions-core";
 
 // An internal meeting with an executive on it: its action items, each a task for the teammate who owns it (on their
 // Overview, closed from evidence like any other). Read once per meeting (marked on the call's summary), deduped
@@ -20,8 +20,10 @@ const SCHEMA = {
           detail: { type: "string", description: "The context from the meeting they need to do it (what, for whom, how), a few lines" },
           client: { type: "string", description: "The client it's for, exactly as in the client list, or empty" },
           due_days: { type: "integer", description: "Business days from the meeting it's due (as said, else 2)" },
+          personnel: { type: "boolean", description: "True when the item touches a teammate's performance, conduct, discipline, firing or hiring, pay, health or personal life" },
+          about: { type: "array", items: { type: "string" }, description: "Teammates (team-list names) the item is ABOUT, other than its owner; empty if none" },
         },
-        required: ["owner", "task", "detail", "client", "due_days"],
+        required: ["owner", "task", "detail", "client", "due_days", "personnel", "about"],
         additionalProperties: false,
       },
     },
@@ -30,7 +32,8 @@ const SCHEMA = {
   additionalProperties: false,
 };
 
-const SYSTEM = `You read the notes of an internal meeting at Kaizen, a marketing agency, and list its action items: what someone in the meeting said they (or a named teammate) will do. Only real commitments with a clear owner from the team list; not ideas floated, not things already done in the meeting, not the client's own to-dos. One item per piece of work; keep the specifics that were said (the client, the scope, the audit's focus, the deadline). Refer to people by the name in the team list. If nothing was committed, return no items.`;
+const SYSTEM = `You read the notes of an internal meeting at Kaizen, a marketing agency, and list its action items: what someone in the meeting said they (or a named teammate) will do. Only real commitments with a clear owner from the team list; not ideas floated, not things already done in the meeting, not the client's own to-dos. One item per piece of work; keep the specifics that were said (the client, the scope, the audit's focus, the deadline). Refer to people by the name in the team list. If nothing was committed, return no items.
+People matters stay with leadership: anything about a teammate's performance, conduct, discipline, firing or hiring, pay, health or personal life is marked personnel (it is never filed as a task), and every teammate an item is about is listed in "about". Never phrase a task so it reveals what was said about someone.`;
 
 type Call = { id: string; title: string; notes: string | null; host: string | null; attendees: string[] | null; occurred_at: string; summary: Record<string, unknown> | null };
 
@@ -48,7 +51,7 @@ export async function meetingActionItems(admin: SupabaseClient, callId: string):
   }
   const { data: clients } = await admin.from("clients").select("id, name").is("archived_at", null).limit(800);
   const known = (clients ?? []) as { id: string; name: string }[];
-  const out = await askJson<{ items: { owner: string; task: string; detail: string; client: string; due_days: number }[] }>({
+  const out = await askJson<{ items: { owner: string; task: string; detail: string; client: string; due_days: number; personnel?: boolean; about?: string[] }[] }>({
     agent: "calls",
     label: "meeting action items",
     system: SYSTEM,
@@ -65,6 +68,8 @@ export async function meetingActionItems(admin: SupabaseClient, callId: string):
   let made = 0;
   for (const it of items) {
     if (!it.who || !it.task.trim()) continue;
+    // People matters never become tasks, and nobody is given a task drawn from a conversation about them
+    if (peopleMatter(it, team)) continue;
     if (decide({ title: it.task, clientId: it.client?.id ?? null, ownerId: it.who.id }, found).state !== "new") continue;
     const ref = meetingRef(callId, it.i);
     const { data: had } = await admin.from("agent_asks").select("id").eq("source_ref", ref).maybeSingle();

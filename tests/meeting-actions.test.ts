@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { execOnMeeting, meetingRef, ownerFor, type Teammate } from "@/lib/meeting-actions-core";
+import { execOnMeeting, meetingRef, ownerFor, peopleMatter, type Teammate } from "@/lib/meeting-actions-core";
 
 const team: Teammate[] = [
   { id: "k", full_name: "Kyle Barry", email: "kyle@kaizenmarketing.agency", is_exec: true },
@@ -24,5 +24,21 @@ describe("exec meeting notes feed tasks for their owners", () => {
   });
   it("files each item once", () => {
     expect(meetingRef("c1", 2)).toBe("meet:c1:2");
+  });
+});
+
+describe("people matters never become tasks (owner, Nov 24 2026)", () => {
+  it("drops items the model flags as personnel", () => {
+    expect(peopleMatter({ owner: "Ryan Brand", task: "Talk to Lawrence", detail: "", personnel: true, about: ["Lawrence Samuel"] }, team)).toBe(true);
+  });
+  it("drops items that name a people matter even when the flag is missed", () => {
+    expect(peopleMatter({ owner: "Ryan Brand", task: "Prepare Lawrence's performance review", detail: "", personnel: false, about: [] }, team)).toBe(true);
+    expect(peopleMatter({ owner: "Kyle Barry", task: "Tell the client the designer is being let go", detail: "we are letting him go Friday", personnel: false, about: [] }, team)).toBe(true);
+  });
+  it("never gives someone a task drawn from a conversation about them", () => {
+    expect(peopleMatter({ owner: "Lawrence Samuel", task: "Speed up turnaround", detail: "", personnel: false, about: ["Lawrence Samuel"] }, team)).toBe(true);
+  });
+  it("keeps ordinary work, including ad words that look similar", () => {
+    expect(peopleMatter({ owner: "Kyle Barry", task: "Audit OceanBox and raise the Meta budget", detail: "Meta warning on the ad set", personnel: false, about: [] }, team)).toBe(false);
   });
 });
