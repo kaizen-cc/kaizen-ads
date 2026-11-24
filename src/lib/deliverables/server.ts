@@ -191,7 +191,7 @@ async function socialLinks(admin: Admin, clientId: string, facts: { hqUrl: strin
   ];
 }
 
-export type RequestsResult = { ok: true; doc: string; tasks: Request[]; fieldsMissing: string[]; followerMissing: string | null } | { ok: false; error: string; fixHref?: string; askForLink?: boolean };
+export type RequestsResult = { ok: true; doc: string; tasks: Request[]; fieldsMissing: string[]; followerMissing: string | null } | { ok: false; error: string; fixHref?: string; askForLink?: boolean; /** They haven't connected their own Asana: the screen offers Connect */ connect?: boolean };
 
 /**
  * The requests for an approved run: the Google Doc (made now if it isn't), then one task per item or one for the
@@ -199,7 +199,12 @@ export type RequestsResult = { ok: true; doc: string; tasks: Request[]; fieldsMi
  */
 /** The run's requests made in Asana as the person (their own Asana; without it they're asked to connect first) */
 export async function createRequests(admin: Admin, db: SupabaseClient, me: Me, run: Run, opts: Parameters<typeof createRequestsAs>[4] = {}): Promise<RequestsResult> {
-  const { asanaAsPerson } = await import("@/lib/asana-user");
+  const { asanaAsPerson, hasMyAsana } = await import("@/lib/asana-user");
+  // Every task goes in as them: without their own Asana it would be refused after the Doc was made, so ask first
+  if (!run.state.requests.length && !(await hasMyAsana(admin, me.id))) {
+    const { ASANA_CONNECT_SAY } = await import("@/lib/asana-connect");
+    return { ok: false, error: ASANA_CONNECT_SAY, connect: true };
+  }
   return asanaAsPerson(admin, me.id, () => createRequestsAs(admin, db, me, run, opts));
 }
 
