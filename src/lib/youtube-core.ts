@@ -194,15 +194,17 @@ export function pickTrack<T extends { languageCode?: string; kind?: string }>(tr
 // ─── Lines and roles ────────────────────────────────────────────────────────
 
 /** The lines a source or takeaway teaches. meta is the Meta and TikTok ads line. */
-export const YT_LINES = ["meta", "google", "creative", "email", "social", "tracking"] as const;
+// strategy: full-funnel and offer thinking (offers, funnels, positioning, lead generation, sales), not one platform:
+// it teaches the Strategist and goes to the execs (owner, Nov 24 2026)
+export const YT_LINES = ["meta", "google", "creative", "email", "social", "tracking", "strategy"] as const;
 export type YtLine = (typeof YT_LINES)[number];
-export const YT_LINE_LABEL: Record<YtLine, string> = { meta: "Meta + TikTok ads", google: "Google ads", creative: "Creative", email: "Email", social: "Organic social", tracking: "Tracking" };
+export const YT_LINE_LABEL: Record<YtLine, string> = { meta: "Meta + TikTok ads", google: "Google ads", creative: "Creative", email: "Email", social: "Organic social", tracking: "Tracking", strategy: "Marketing & strategy" };
 
 /** Only real lines, once each, in order; "all" means every line */
 export function cleanLines(xs: readonly unknown[] | null | undefined): YtLine[] {
   const list = (xs ?? []).map((x) => String(x).toLowerCase().trim());
   if (list.includes("all")) return [...YT_LINES];
-  const alias = (x: string) => (x === "tiktok" || x === "facebook" || x === "paid_social" ? "meta" : x === "design" || x === "video" ? "creative" : x);
+  const alias = (x: string) => (x === "tiktok" || x === "facebook" || x === "paid_social" ? "meta" : x === "design" || x === "video" ? "creative" : /^(marketing|full_funnel|funnel|offer|offers|business)$/.test(x) ? "strategy" : x);
   return YT_LINES.filter((l) => list.map(alias).includes(l));
 }
 
@@ -229,6 +231,8 @@ export const LINE_ALWAYS: Record<YtLine, readonly string[]> = {
   social: ["head_of_social", "social_media_manager"],
   // Measurement: the tracking specialist and the heads of the ad lines it serves
   tracking: ["tracking_specialist", "head_of_meta", "head_of_google"],
+  // Offer and full-funnel thinking: the execs, through their digest (no single line's team)
+  strategy: [],
 };
 export const LINE_CRAFT: Record<YtLine, readonly string[]> = {
   meta: [],
@@ -237,13 +241,14 @@ export const LINE_CRAFT: Record<YtLine, readonly string[]> = {
   email: ["email_designer", "email_builder"],
   social: [],
   tracking: [],
+  strategy: [],
 };
 
 /** The head of each line: with the execs, the only ones who accept a takeaway into the agents' learning */
-export const LINE_HEADS: Record<YtLine, readonly string[]> = { meta: ["head_of_meta"], google: ["head_of_google"], creative: ["head_of_creative"], email: ["head_of_email"], social: ["head_of_social"], tracking: ["head_of_meta", "head_of_google"] };
+export const LINE_HEADS: Record<YtLine, readonly string[]> = { meta: ["head_of_meta"], google: ["head_of_google"], creative: ["head_of_creative"], email: ["head_of_email"], social: ["head_of_social"], tracking: ["head_of_meta", "head_of_google"], strategy: [] };
 
 /** An exec's focus lines that cover each takeaway line (src/lib/exec-focus/core.ts FOCUS_LINES) */
-const FOCUS_OF: Record<YtLine, readonly string[]> = { meta: ["meta", "tiktok"], google: ["google"], creative: ["creative", "creative_performance"], email: ["email"], social: ["social"], tracking: ["meta", "google"] };
+const FOCUS_OF: Record<YtLine, readonly string[]> = { meta: ["meta", "tiktok"], google: ["google"], creative: ["creative", "creative_performance"], email: ["email"], social: ["social"], tracking: ["meta", "google"], strategy: ["meta", "google", "tiktok", "email", "social", "creative", "creative_performance", "web", "crm", "finance"] };
 
 /** Whether an exec's focus covers any of these lines (no focus set: everything) */
 export function focusCovers(focus: readonly string[] | null | undefined, lines: readonly YtLine[]): boolean {
@@ -308,6 +313,7 @@ export function agentsForTakeaway(t: { lines: readonly YtLine[]; roles: readonly
     }
     if (l === "social") add("social_strategist");
     if (l === "tracking") add("tracking_engineer");
+    if (l === "strategy") add("strategist");
   }
   return out;
 }
@@ -442,7 +448,7 @@ export const AGENT_LINES: Record<string, readonly YtLine[]> = {
   media_buyer: ["meta"],
   tiktok_buyer: ["meta"],
   google_buyer: ["google"],
-  strategist: ["meta", "creative"],
+  strategist: ["meta", "creative", "strategy"],
   creative_director: ["creative"],
   copywriter: ["creative"],
   email_strategist: ["email"],
@@ -478,6 +484,7 @@ export function lineOfChannel(name: string | null | undefined): YtLine | null {
   if (/email|klaviyo|sms|retention/.test(n)) return "email";
   if (/organic|social-media|\bsocial\b|community|content-team/.test(n)) return "social";
   if (/creative|design|video|edit|ugc|copy|motion/.test(n)) return "creative";
+  if (/strateg|marketing|offer|funnel|growth|leadership|exec/.test(n)) return "strategy";
   if (/facebook|\bmeta\b|\bfb\b|paid|ads|media-?buy|tiktok/.test(n)) return "meta";
   return null;
 }

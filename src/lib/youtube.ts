@@ -352,7 +352,7 @@ export async function queueVideos(admin: Admin, videos: { videoId: string; title
  * (backfill); after that, only what's new.
  */
 export async function checkSource(admin: Admin, id: string, opts: { backfill?: number } = {}) {
-  const { data: s } = await admin.from("youtube_sources").select("id, kind, channel_id, title, added_by").eq("id", id).single();
+  const { data: s } = await admin.from("youtube_sources").select("id, kind, channel_id, title, added_by, backfill").eq("id", id).single();
   if (!s || s.kind !== "channel" || !s.channel_id) return { queued: 0, error: null as string | null };
   const now = new Date().toISOString();
   try {
@@ -362,7 +362,8 @@ export async function checkSource(admin: Admin, id: string, opts: { backfill?: n
     const newest = (have ?? [])[0]?.published_at as string | undefined;
     let fresh = feed.videos.filter((v) => !known.has(v.videoId) && !("short" in v && v.short) && (!newest || (v.publishedAt ?? "") > newest));
     // A brand-new subscription reads its latest few, not the whole feed
-    if (!known.size) fresh = fresh.slice(0, opts.backfill ?? BACKFILL);
+    // (the channel's own backfill when set: the feed gives its latest 15; the Data API key, more)
+    if (!known.size) fresh = fresh.slice(0, opts.backfill ?? (Number(s.backfill) || BACKFILL));
     // Shorts teach little (and would spend Gemini on nothing): left out; the transcript step skips what's too thin
     const queued = await queueVideos(admin, fresh.map((v) => ({ ...v, channelTitle: v.channelTitle ?? feed.title ?? (s.title as string | null) })), { sourceId: id, by: (s.added_by as string | null) ?? null });
     const { count } = await admin.from("youtube_videos").select("id", { count: "exact", head: true }).eq("source_id", id);
@@ -412,7 +413,7 @@ export async function suggestLines(admin: Admin, id: string) {
     schema: SUGGEST,
     override: { model: "haiku", effort: "low" },
     maxTokens: 800,
-    system: `You sort a YouTube channel a marketing agency studies into the agency's lines it can teach. Lines: meta (paid social: Meta and TikTok ads, media buying, campaign structure, testing), google (Google and YouTube ads, search, Performance Max), creative (ad creative: hooks, images, video editing, UGC, copy for ads), email (email and SMS marketing, Klaviyo, flows), social (organic social: posting, content, community, growth), tracking (measurement: pixels, Conversions API, server-side tagging, GTM, GA4, conversion tracking, attribution). Pick every line it clearly teaches, usually one or two. about: one sentence on what the channel teaches, no people's names.`,
+    system: `You sort a YouTube channel a marketing agency studies into the agency's lines it can teach. Lines: meta (paid social: Meta and TikTok ads, media buying, campaign structure, testing), google (Google and YouTube ads, search, Performance Max), creative (ad creative: hooks, images, video editing, UGC, copy for ads), email (email and SMS marketing, Klaviyo, flows), social (organic social: posting, content, community, growth), tracking (measurement: pixels, Conversions API, server-side tagging, GTM, GA4, conversion tracking, attribution), strategy (marketing and strategy across the funnel: offers, pricing, funnels, positioning, lead generation and sales, rather than one platform). Pick every line it clearly teaches, usually one or two. about: one sentence on what the channel teaches, no people's names.`,
     prompt: `<channel>${s.title ?? "unknown"}</channel>\n<description>${(s.about ?? "").slice(0, 800)}</description>\n<latest_titles>\n${titles.slice(0, 15).join("\n")}\n</latest_titles>`,
   });
   const lines = cleanLines(out.lines);
@@ -462,7 +463,7 @@ Return:
 - takeaways: the concrete, actionable methods, strategies, frameworks or findings (at most 8, the strongest first). Each:
   - takeaway: one or two sentences, specific enough to act on (numbers, structures, thresholds, sequences as the creator gives them). Attributed: say it's the creator's view or finding ("Per <channel>: …" or "<channel> finds…"), never present an opinion as settled fact. No people's names other than the channel's.
   - why: one line on why it matters or what it beats.
-  - lines: the lines it applies to: meta (Meta and TikTok ads, media buying), google (Google and YouTube ads), creative (ad creative: images, video, hooks, copy), email, social (organic social), tracking (pixels, Conversions API, server-side tagging, GTM, GA4, conversion tracking, attribution).
+  - lines: the lines it applies to: meta (Meta and TikTok ads, media buying), google (Google and YouTube ads), creative (ad creative: images, video, hooks, copy), email, social (organic social), tracking (pixels, Conversions API, server-side tagging, GTM, GA4, conversion tracking, attribution), strategy (full-funnel marketing and strategy: offers, pricing, funnels, positioning, lead generation, sales).
   - roles: the team roles it matters to, from the list: the line's head and its day-to-day people (media_buyer, google_buyer, email_strategist, social_media_manager), and the craft roles only when it's about their craft: graphic_designer (static images), video_editor (video editing), copywriter (ad copy), email_designer (email design), email_builder (building in Klaviyo), tracking_specialist (setting up and fixing tracking).
   - at: where in the video it's said, as the nearest [m:ss] mark from the transcript ("12:34"), or "" if unsure.
 Skip generic advice every marketer knows ("test your creatives"), sponsor reads and calls to subscribe.`;

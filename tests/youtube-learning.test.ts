@@ -154,7 +154,7 @@ describe("youtube takeaways", () => {
     expect(cleanTakeaways(many, { fallbackLines: [], max: 5 })).toHaveLength(5);
   });
   it("expands 'all' and aliases into the lines", () => {
-    expect(cleanLines(["all"])).toEqual(["meta", "google", "creative", "email", "social", "tracking"]);
+    expect(cleanLines(["all"])).toEqual(["meta", "google", "creative", "email", "social", "tracking", "strategy"]);
     expect(cleanLines(["video", "tiktok", "email", "email"])).toEqual(["meta", "creative", "email"]);
   });
   it("writes the learning with its source", () => {

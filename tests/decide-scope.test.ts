@@ -10,9 +10,10 @@ const exec = (execFocus: string[], isOwner = false) => ({ role: "executive", isE
 
 describe("decisions scoped by line", () => {
   it("the lines each exec oversees, from their focus", () => {
-    expect(linesOverseen(exec(paid))).toEqual(["meta", "google", "creative", "tracking"]);
-    expect(linesOverseen(exec(socialCreative))).toEqual(["creative", "social"]);
-    expect(linesOverseen(exec(email))).toEqual(["email"]);
+    expect(linesOverseen(exec(paid))).toEqual(["meta", "google", "creative", "tracking", "strategy"]);
+    expect(linesOverseen(exec(socialCreative))).toEqual(["creative", "social", "strategy"]);
+    // Every exec also oversees Marketing & strategy (full-funnel and offer thinking)
+    expect(linesOverseen(exec(email))).toEqual(["email", "strategy"]);
     expect(linesOverseen({ role: "head_of_meta" })).toEqual(["meta", "tracking"]);
   });
   it("an item reaches an exec only when every line it touches is theirs", () => {
