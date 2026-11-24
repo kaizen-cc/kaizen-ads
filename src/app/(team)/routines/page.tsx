@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { mayUseRoutines, routineOf, type RoutineReport } from "@/lib/routines-core";
 import { routinesOf } from "@/lib/routines";
 import { RoutineToggles } from "./routine-toggles";
+import { AgentDesk, type DeskDraft, type DeskStaged } from "./agent-desk";
 
 export const metadata: Metadata = { title: "Routines" };
 export const maxDuration = 120;
@@ -29,7 +30,22 @@ export default async function RoutinesPage({ searchParams }: PageProps<"/routine
     );
   const db = await createClient();
   const runId = typeof sp.run === "string" ? sp.run : null;
-  const [routines, { data: runs }] = await Promise.all([routinesOf(db, me.id), db.from("routine_runs").select("id, kind, status, headline, report, error, started_at").eq("profile_id", me.id).order("started_at", { ascending: false }).limit(40)]);
+  const [routines, { data: runs }, { data: desk }, { data: people }] = await Promise.all([
+    routinesOf(db, me.id),
+    db.from("routine_runs").select("id, kind, status, headline, report, error, started_at").eq("profile_id", me.id).order("started_at", { ascending: false }).limit(40),
+    // What the nightly agent left: drafts on open items, and tasks staged for release
+    db.from("agent_asks").select("id, title, detail, status, draft, staged_for").eq("owner_id", me.id).in("status", ["open", "staged"]).order("created_at", { ascending: false }).limit(200),
+    db.from("profiles").select("id, full_name").eq("is_active", true),
+  ]);
+  const nameOf = new Map((people ?? []).map((p) => [p.id as string, p.full_name as string]));
+  type D = { kind?: string; text?: string; channelId?: string | null; channelName?: string | null; to?: string | null; subject?: string | null; pdf?: string | null; sentAt?: string | null };
+  const drafts: DeskDraft[] = (desk ?? [])
+    .filter((i) => i.status === "open" && i.draft && ["slack", "email"].includes(String((i.draft as D).kind)) && (i.draft as D).text && !(i.draft as D).sentAt)
+    .map((i) => {
+      const d = i.draft as D;
+      return { id: i.id as string, title: i.title as string, kind: d.kind as "slack" | "email", text: d.text ?? "", where: d.channelName ?? null, to: d.to ?? null, subject: d.subject ?? null, pdf: d.pdf ?? null, canSend: d.kind === "slack" && Boolean(d.channelId) };
+    });
+  const staged: DeskStaged[] = (desk ?? []).filter((i) => i.status === "staged").map((i) => ({ id: i.id as string, title: i.title as string, detail: String(i.detail ?? ""), forName: i.staged_for ? (nameOf.get(i.staged_for as string) ?? null) : null }));
   const list = (runs ?? []) as Run[];
   const open = runId ? (list.find((r) => r.id === runId) ?? null) : null;
 
@@ -82,6 +98,8 @@ export default async function RoutinesPage({ searchParams }: PageProps<"/routine
           )}
         </article>
       ) : null}
+
+      <AgentDesk drafts={drafts} staged={staged} />
 
       <RoutineToggles routines={routines} />
 

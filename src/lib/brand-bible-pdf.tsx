@@ -144,33 +144,34 @@ function Body({ text }: { text: string }) {
   return <>{out}</>;
 }
 
-export async function renderBiblePdf(input: { client: string; version: string; status: string; generatedAt: string | null; markdown: string; readThisFirst: string }) {
+export async function renderBiblePdf(input: { client: string; version: string; status: string; generatedAt: string | null; markdown: string; readThisFirst: string; /** Another Kaizen document in the same layout (the nightly agent's deliverables): its kind and cover line */ kind?: string; about?: string }) {
+  const kind = input.kind ?? "Brand Bible";
   const date = input.generatedAt ? new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "long", day: "numeric", year: "numeric" }).format(new Date(input.generatedAt)) : "";
   const sections = splitBible(input.markdown).filter((x) => kindOf(x.title) !== "first");
   const footer = (
     <View style={s.footer} fixed>
       <Text>
-        {input.client} · Brand Bible {input.version}
+        {input.client} · {kind} {input.version}
       </Text>
       <Text render={({ pageNumber, totalPages }) => `${pageNumber} / ${totalPages}`} />
     </View>
   );
   const doc = (
-    <Document title={`${input.client} Brand Bible`} author="Kaizen Marketing">
+    <Document title={`${input.client} ${kind}`} author="Kaizen Marketing">
       <Page size="LETTER" style={s.cover}>
         <View>
           <View style={s.coverRule} />
-          <Text style={s.coverEyebrow}>Kaizen Marketing · Brand Bible</Text>
+          <Text style={s.coverEyebrow}>Kaizen Marketing · {kind}</Text>
           <Text style={s.coverName}>{input.client}</Text>
           <Text style={s.coverMeta}>
             {input.version}
             {date ? ` · ${date}` : ""}
-            {input.status === "reviewed" ? " · Reviewed" : " · Draft"}
+            {input.kind ? "" : input.status === "reviewed" ? " · Reviewed" : " · Draft"}
           </Text>
         </View>
         <Text style={s.coverFoot}>
-          Audience profiles, voice, claims, reviews, look, competitors and the marketing calendar. Every fact carries its source. Internal: not for
-          sharing outside Kaizen and the client.
+          {input.about ??
+            "Audience profiles, voice, claims, reviews, look, competitors and the marketing calendar. Every fact carries its source. Internal: not for sharing outside Kaizen and the client."}
         </Text>
       </Page>
       {input.readThisFirst.trim() && (

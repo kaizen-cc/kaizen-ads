@@ -38,3 +38,49 @@ export async function runRoutineNow(kind: string): Promise<Result> {
   });
   return { ok: true };
 }
+
+/** Sends a drafted message from the nightly agent, as you, in the client's internal channel; the item closes as sent */
+export async function sendItemDraft(id: string, text: string): Promise<Result> {
+  const me = await requireStaff();
+  if (me.viewAs) return { ok: false, error: "Not while viewing as someone." };
+  if (!adminConfigured()) return { ok: false, error: "Not available here." };
+  const admin = createAdminClient();
+  const { data: it } = await admin.from("agent_asks").select("owner_id, draft, detail").eq("id", id).maybeSingle();
+  const d = it?.draft as { kind?: string; channelId?: string | null } | null;
+  if (!it || it.owner_id !== me.id || !d) return { ok: false, error: "That draft isn't yours." };
+  if (d.kind !== "slack" || !d.channelId) return { ok: false, error: "This one goes from Gmail or to a teammate: copy the draft and send it yourself." };
+  const body = text.trim();
+  if (!body) return { ok: false, error: "Write the message first." };
+  const { postAsUser } = await import("@/lib/slack-user");
+  const sent = await postAsUser(me.id, { channel: d.channelId, text: body.slice(0, 3900) });
+  if (!sent.ok) return { ok: false, error: sent.error };
+  const now = new Date().toISOString();
+  await admin.from("agent_asks").update({ status: "done", done_at: now, draft: { ...(it.draft as object), text: body, sentAt: now }, detail: `${String(it.detail ?? "").trim()}\nSent by ${me.fullName.split(" ")[0]} from Kaizen OS`.trim().slice(0, 4000) }).eq("id", id);
+  revalidatePath("/routines");
+  return { ok: true };
+}
+
+/** Releases a task the nightly agent staged: it goes to the teammate it was staged for (or you), live on their Overview */
+export async function releaseStaged(id: string, to?: string | null): Promise<Result> {
+  const me = await requireStaff();
+  if (me.viewAs) return { ok: false, error: "Not while viewing as someone." };
+  if (!adminConfigured()) return { ok: false, error: "Not available here." };
+  const admin = createAdminClient();
+  const { data: it } = await admin.from("agent_asks").select("owner_id, status, staged_for, detail").eq("id", id).maybeSingle();
+  if (!it || it.owner_id !== me.id || it.status !== "staged") return { ok: false, error: "That isn't a task waiting for your release." };
+  const owner = to || (it.staged_for as string | null) || me.id;
+  const { error } = await admin.from("agent_asks").update({ status: "open", owner_id: owner, asked_by: me.id, released_at: new Date().toISOString(), detail: String(it.detail ?? "").replace(/^STAGED: [^\n]*\n?/, "") }).eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/routines");
+  return { ok: true };
+}
+
+/** Drops a staged task (not needed) */
+export async function dropStaged(id: string): Promise<Result> {
+  const me = await requireStaff();
+  if (!adminConfigured()) return { ok: false, error: "Not available here." };
+  const { error } = await createAdminClient().from("agent_asks").update({ status: "dismissed", done_at: new Date().toISOString() }).eq("id", id).eq("owner_id", me.id).eq("status", "staged");
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/routines");
+  return { ok: true };
+}

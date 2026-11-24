@@ -242,8 +242,8 @@ const RUNNERS: Record<RoutineKind, (admin: Admin, me: Person) => Promise<Routine
   week_ahead: weekAhead,
   debrief: (admin, me) => import("@/lib/routine-sweeps").then((m) => m.debrief(admin, me)),
   delegation: (admin, me) => import("@/lib/routine-sweeps").then((m) => m.delegation(admin, me)),
-  nightly: later("The nightly execution agent"),
-  clean_sweep: later("The morning clean sweep"),
+  nightly: (admin, me) => import("@/lib/routine-agent").then((m) => m.nightly(admin, me)),
+  clean_sweep: (admin, me) => import("@/lib/routine-agent").then((m) => m.cleanSweep(admin, me)),
   call_prep: later("Call prep"),
 };
 
