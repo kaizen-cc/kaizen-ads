@@ -42,11 +42,12 @@ export async function openCheckables(admin: Admin): Promise<Checkable[]> {
   }
   const [{ data: flags }, { data: asks }, { data: tasks }] = await Promise.all([
     admin.from("watch_flags").select("id, kind, client_id, title, opened_at").is("resolved_at", null).not("client_id", "is", null).limit(800),
-    admin.from("agent_asks").select("id, client_id, owner_id, asked_by, title, created_at, source_ref").eq("status", "open").not("client_id", "is", null).limit(800),
-    admin.from("asana_tasks").select("gid, name, client_id, profile_id, stage, due_on, asana_created_at, moves").eq("open", true).not("client_id", "is", null).not("profile_id", "is", null).lte("due_on", new Date(Date.now() + 3 * DAY).toISOString().slice(0, 10)).limit(400),
+    admin.from("agent_asks").select("id, client_id, owner_id, asked_by, title, created_at, source_ref").eq("status", "open").not("client_id", "is", null).limit(2000),
+    admin.from("asana_tasks").select("gid, name, client_id, profile_id, stage, due_on, asana_created_at, moves").eq("open", true).not("client_id", "is", null).not("profile_id", "is", null).limit(1500),
   ]);
   for (const f of flags ?? []) out.push({ key: `dog:${f.id}`, kind: "dog", clientId: f.client_id as string, ownerId: null, title: f.title as string, client: nameOf.get(f.client_id as string) ?? "Client", since: f.opened_at as string, meta: { flagKind: f.kind } });
-  for (const a of asks ?? []) if (a.owner_id !== a.asked_by || String(a.source_ref ?? "").startsWith("trk:")) out.push({ key: `ask:${a.id}`, kind: "ask", clientId: a.client_id as string, ownerId: a.owner_id as string, title: a.title as string, client: nameOf.get(a.client_id as string) ?? "Client", since: a.created_at as string });
+  // Every open item, every role (owner, Nov 24 2026): meeting and call tasks, routine items, reminders on a client
+  for (const a of asks ?? []) out.push({ key: `ask:${a.id}`, kind: "ask", clientId: a.client_id as string, ownerId: a.owner_id as string, title: a.title as string, client: nameOf.get(a.client_id as string) ?? "Client", since: a.created_at as string });
   for (const t of tasks ?? []) {
     const stage = String(t.stage ?? "");
     const kind = stage === "copy" ? "stuck_copy" : stage === "client_review" ? "stuck_client" : "asana";
@@ -139,7 +140,9 @@ export async function classify(admin: Admin, item: Checkable): Promise<{ verdict
       schema: SCHEMA,
       prompt: `Client: ${item.client}\nThe work: ${item.title}\nDone means: ${means}\nOpened: ${item.since.slice(0, 10)}\n\nWhat was said since (newest first):\n${evidence.map((e) => `${e.n}. [${e.at.slice(0, 10)} · ${e.source}${e.author ? ` · ${e.author}${byTracker(e.author) ? " (Tracking Specialist)" : ""}` : ""}] ${e.text}`).join("\n")}`,
     });
-    const v = guard(out, evidence, item.since, { latestWins: isState });
+    const g = guard(out, evidence, item.since, { latestWins: isState });
+    const { mayAutoClose } = await import("@/lib/done-check-core");
+    const v = g.state === "done" && !mayAutoClose(item.title) ? { ...g, state: "moving" as const } : g;
     // Tracking is a state with plain words for "it's working", so a fixed rule decides it, not the model: the newest plain
     // confirmation (no plan, condition or negation) closes it unless something later says it broke, and a model's "done"
     // that the rule doesn't find stays moving (src/lib/done-check-core.ts stateConfirmed)
@@ -189,14 +192,14 @@ async function writeBack(admin: Admin, item: Checkable, note: string, at: string
 /** One pass: the items due a check (new, ingested-for, or not checked for an hour), oldest first, within a budget */
 export type CheckResult = { key: string; kind: string; client: string; title: string; state: "done" | "moving" | "nothing"; quote: string; source: string | null; link: string | null; at: string | null };
 
-export async function runDoneChecks(admin: Admin, opts: { budget?: number; onlyKeys?: string[]; clientIds?: string[]; force?: boolean } = {}): Promise<{ checked: number; closed: number; moving: number; byKind: Record<string, number>; examples: { key: string; note: string }[]; results: CheckResult[] }> {
+export async function runDoneChecks(admin: Admin, opts: { budget?: number; onlyKeys?: string[]; clientIds?: string[]; force?: boolean; staleHours?: number } = {}): Promise<{ checked: number; closed: number; moving: number; byKind: Record<string, number>; examples: { key: string; note: string }[]; results: CheckResult[] }> {
   const { closedNote } = await import("@/lib/done-check-core");
   let items = await openCheckables(admin);
   if (opts.onlyKeys) items = items.filter((i) => opts.onlyKeys!.includes(i.key));
   if (opts.clientIds) items = items.filter((i) => opts.clientIds!.includes(i.clientId));
   const { data: rows } = await admin.from("done_checks").select("key, checked_at, closed_at, reopened_at, due").in("key", items.map((i) => i.key).slice(0, 3000));
   const by = new Map((rows ?? []).map((r) => [r.key as string, r]));
-  const hourAgo = Date.now() - 3_600_000;
+  const hourAgo = Date.now() - (opts.staleHours ?? 1) * 3_600_000;
   // Priority: tracking first (the owner's ask), then never checked, then due after new messages, then the oldest check
   const order = (i: Checkable) => (i.kind === "notrack" ? 0 : i.kind === "dog" ? 1 : 2);
   const due = items

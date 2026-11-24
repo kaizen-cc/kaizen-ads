@@ -29,3 +29,15 @@ describe("dedupe against reality (Nov 24 2026)", () => {
     expect(decide({ title: "BFCM ad set launch", clientId: "c1" }, [ex({ open: false, id: "old" }), ex({ id: "new" })]).match?.id).toBe("new");
   });
 });
+
+import { mayAutoClose } from "@/lib/done-check-core";
+
+describe("the floating sweep never closes decisions, approvals or partial work (Nov 24 2026)", () => {
+  it("decisions and approvals stay with their person", () => {
+    expect(mayAutoClose("[Call 11/24] Decide Limelight's December make-good")).toBe(false);
+    expect(mayAutoClose("Approve the BFCM box statics")).toBe(false);
+    expect(mayAutoClose("Confirm the pricing for the Silver tier")).toBe(false);
+    expect(mayAutoClose("Send the October report")).toBe(true);
+    expect(mayAutoClose("Launch the BFCM ad set")).toBe(true);
+  });
+});

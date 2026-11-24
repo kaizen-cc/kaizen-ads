@@ -47,8 +47,8 @@
       "schedule": "45 12,18 * * *"
     },
     {
-      "path": "/api/cron/context?step=done",
-      "schedule": "37 * * * *"
+      "path": "/api/cron/context?step=floating",
+      "schedule": "7,37 * * * *"
     },
     {
       "path": "/api/cron/context?step=routines",

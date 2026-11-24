@@ -132,6 +132,7 @@ function due(step: string | null) {
   if (step === "bible_upkeep") return true; // hourly (vercel.json): links, website issues, creative packages with nothing made
   if (step === "learnings") return true; // nightly (vercel.json): the team's learnings classified, merged, settled and retired
   if (step === "drift") return true; // weekly (vercel.json): replay what the week's learning changes did to each agent
+  if (step === "floating") return true; // every 30 minutes (vercel.json): every person's open items, closed when done or marked in motion elsewhere
   if (step === "routines") return true; // every 5 minutes (vercel.json): each person's routines at their own times (recaps, sweeps, the nightly agent)
   if (step === "done") return hour >= 7 && hour <= 23; // hourly (vercel.json), 7am to 11pm: items on anyone's day closed when Slack, Gmail or call notes show them done
   if (step === "precall") return weekday !== "Sat" && hour === 15; // hourly (vercel.json), runs at 3pm New York on Sun-Fri: connections checked for the next business day's client calls
@@ -450,6 +451,7 @@ export async function GET(request: Request) {
     if (step === "precall") return Response.json(await (await import("@/lib/integration-health/precall")).runPrecallCheck(admin));
     if (step === "stepins") return Response.json(await (await import("@/lib/stepins/run")).runStepins(admin));
     if (step === "dogs") return Response.json(await (await import("@/lib/watchdogs/run")).runWatchdogs(admin));
+    if (step === "floating") return Response.json(await (await import("@/lib/floating")).runFloating(admin, { budget: Number(new URL(request.url).searchParams.get("budget")) || 50 }));
     if (step === "routines") return Response.json(await (await import("@/lib/routines")).runDueRoutines(admin, { budgetMs: 250_000 }));
     if (step === "done") return Response.json(await (await import("@/lib/done-check")).runDoneChecks(admin, { budget: Number(new URL(request.url).searchParams.get("budget")) || 40 }));
     if (step === "sites") return Response.json(await (await import("@/lib/watchdogs/run")).runSiteChecks(admin));

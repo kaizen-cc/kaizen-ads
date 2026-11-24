@@ -94,6 +94,13 @@ export function guard(v: Verdict, evidence: readonly Evidence[], since: string, 
   return v;
 }
 
+/**
+ * Items never closed automatically, whatever the evidence (owner, Nov 24 2026): a decision only a person makes (pricing,
+ * fees, scope, hiring, churn), an approval or sign-off, a contract. At most they show as moving.
+ */
+const NEVER_AUTO = /\b(decid\w*|decision|approv\w*|sign[- ]?off|pricing|price|fees?|retainer|scope|contract|hir(e|ing)|churn\w*|renew\w*|negotiat\w*|refund|discount)\b/i;
+export const mayAutoClose = (title: string) => !NEVER_AUTO.test(title);
+
 /** Kinds that are a state (true until something says otherwise): the latest word wins and the whole history counts */
 export const STATE_KINDS = new Set(["notrack", "dog"]);
 
