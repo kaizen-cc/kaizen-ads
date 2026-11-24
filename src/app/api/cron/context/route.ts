@@ -119,6 +119,7 @@ function due(step: string | null) {
   if (step === "market") return hour === 8;
   if (step === "creative_drive") return true; // every 10 minutes (vercel.json): ticket creative copied into each client's Drive, retries
   if (step === "bibles") return true; // every 10 minutes (vercel.json): every client gets a Brand Bible, kept current
+  if (step === "phone") return true; // every 5 minutes (vercel.json): a critical item unseen 10 minutes rings the phone of a teammate who opted in (dormant until Twilio is set)
   if (step === "after_call") return true; // every 5 minutes (vercel.json): work approved on a call that keeps going after it (case studies), one item at a time
   if (step === "slack_seats") return true; // hourly (vercel.json), but runs once a day: everyone on a client's seats in its Slack channels
   if (step === "meta_tokens") return true; // daily (vercel.json): each Business Manager's Meta token checked, execs told when one stops working
@@ -215,6 +216,7 @@ export async function GET(request: Request) {
       const boostFlags = await boosts.boostAlerts(admin).catch((e) => String(e));
       return Response.json({ ...synced, pace, adPosts, boostFlags });
     }
+    if (step === "phone") return Response.json(await (await import("@/lib/phone")).sweepPhoneNotices(admin));
     if (step === "after_call") return Response.json(await (await import("@/lib/assistant/after-call-jobs")).runAfterCallJobs(admin));
     if (step === "slack_seats") {
       // Once a day: the hourly call does nothing when the last audit is under 20 hours old (so the first runs soon after a deploy)

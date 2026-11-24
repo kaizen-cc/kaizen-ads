@@ -9,7 +9,7 @@ import { CallFilters } from "./calls-filters";
 // call and chat with the agents, flagged first, and who uses the agents most and what it costs this month.
 
 const when = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
-const MODE = { voice: "Voice", text: "Text", kaizen_ai: "Kaizen AI" } as const;
+const MODE = { voice: "Voice", text: "Text", kaizen_ai: "Kaizen AI", phone: "Phone" } as const;
 
 export async function CallsUsage({ me, sp }: { me: OwnerWho; sp: Record<string, string | string[] | undefined> }) {
   if (!ownerOnly(me)) notFound();

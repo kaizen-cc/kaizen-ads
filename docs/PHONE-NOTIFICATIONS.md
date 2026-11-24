@@ -1,4 +1,63 @@
-# Phone-call notifications for urgent items (research, not built)
+# Phone-call notifications for urgent items
+
+## Phase 1: built (Nov 24 2026), dormant until Twilio is connected
+
+**What it does.** A critical item that sits unseen for 10 minutes rings the phone of the teammate it's for, if they
+opted in. It's a short spoken notice: press 1 to hear the item (it's then marked seen), then press 1 again to get its
+link by text; press 2 to snooze it an hour.
+- **Who and when:** staff only, explicit opt-in with a consent box, critical items only, and never in their quiet
+  hours.
+- **Limits:** at most 3 calls an hour per person, and 2 per item (the second only after a snooze).
+- **Where it's logged:** every call is a row in `phone_calls`, shown in Settings › Calls & usage and on the person's
+  own Phone alerts tab.
+
+**Code**
+- Settings › Phone alerts: `src/app/(team)/settings/phone-alerts.tsx` and `phone-actions.ts`.
+- The sweep runs every 5 minutes (`/api/cron/context?step=phone`): `src/lib/phone.ts`.
+- The rules and the words spoken: `src/lib/phone-core.ts`.
+- Twilio's callbacks, signature checked: `src/app/api/phone/[step]/route.ts` and `src/lib/phone-signature.ts`.
+- The assistant's `phone_alerts` tool: `src/lib/assistant/phone-tools.ts`.
+
+### Owner setup (about 20 minutes, plus a few days' wait for texting approval)
+
+1. **Account.** Sign up at twilio.com with Kaizen's business details, then upgrade it (add billing). A trial account
+   can only call numbers you've verified, and it adds a trial message to every call.
+2. **A number.** Phone Numbers › Buy a number. A US local number with **Voice** and **SMS** ticked costs about
+   $1.15 a month. Nothing needs setting on the number itself: Kaizen OS gives Twilio its webhook addresses on each call.
+   Optional: set "A call comes in" to a TwiML Bin that says "This number only makes calls for Kaizen OS."
+3. **Calls (no registration required, but do this so calls aren't shown as spam):** Trust Hub.
+   - Create the business's Customer Profile.
+   - Register for **SHAKEN/STIR Trusted Calling** and **Voice Integrity**.
+   - Add **Branded Calls / CNAM** with the caller name "Kaizen OS" (or "Kaizen Marketing").
+4. **Texting the link (only for "press 1 for the link by text"):** US texting from a local number needs **A2P 10DLC**
+   registration. Calls work without it; texts may be blocked until it's approved.
+   - Go to Messaging › Regulatory compliance and register the Brand (Standard; it needs the company's EIN).
+   - Then register a Campaign: use case "Account notifications".
+     - Sample message: "Kaizen OS: OceanBox spend doubled today https://…".
+     - Opt-in: "Employees opt in themselves in Kaizen OS Settings › Phone alerts with a consent checkbox."
+   - Twilio shows the current fees as you go. Approval takes a few days to a few weeks.
+   - A toll-free number with Toll-Free Verification is the alternative.
+5. **Countries.** Voice › Settings › Geo permissions. The US is on by default; switch on any country a teammate's phone
+   is in (for example the Philippines, India, Greece, Spain). Do the same under Messaging › Geo permissions for texts.
+6. **The three values.** From the Twilio Console home (Account Info), take the **Account SID** and the **Auth Token**,
+   and the number you bought in +E.164 form (+15125550100).
+7. **Vercel.** Project kaizen-ads › Settings › Environment Variables, for Production. Add:
+   - `TWILIO_ACCOUNT_SID`
+   - `TWILIO_AUTH_TOKEN` (mark it Sensitive; never paste it into a chat)
+   - `TWILIO_FROM_NUMBER`
+
+   Twilio signs every callback for the exact address it calls, so the app's public address must be
+   `NEXT_PUBLIC_SITE_URL`. Only if Twilio should call a different address, also set `PHONE_WEBHOOK_BASE` to it. Then
+   redeploy.
+8. **Test.** In Kaizen OS, open Settings › Phone alerts. Add your number, tick the consent box, turn it on, and press
+   **Test call**. The call shows in Settings › Calls & usage.
+
+Rotating the Auth Token in Twilio means updating `TWILIO_AUTH_TOKEN` in Vercel the same day; until then every callback
+is refused (calls say nothing useful), which is the safe failure.
+
+---
+
+# Research (Nov 24 2026)
 
 Asked for on the owner's Nov 24 2026 call with the execs: when something is on fire (a client about to leave, an ad
 account down, spend running away), the agent calls the person's phone instead of waiting for them to open the app.

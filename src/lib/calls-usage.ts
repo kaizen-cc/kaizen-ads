@@ -30,7 +30,7 @@ export type CallLogEntry = LogEntry & {
   person: string;
   personId: string | null;
   seconds: number;
-  mode: "voice" | "text" | "kaizen_ai";
+  mode: "voice" | "text" | "kaizen_ai" | "phone";
   agents: string[];
   clients: string[];
   topic: string | null;
@@ -135,6 +135,36 @@ export async function loadCallLog(f: LogFilters): Promise<{ entries: CallLogEntr
         categories: [],
         messages: Number(t.messages) || 0,
         href: `/settings?tab=calls&thread=${t.thread_id}`,
+      });
+    }
+  }
+  // Phone notices (and test calls) Kaizen OS placed to someone's phone about an urgent item
+  if (!threadHits && !callHits) {
+    let pq = admin.from("phone_calls").select("id, profile_id, kind, title, status, digits, texted_at, duration_seconds, created_at, notification_id").gte("created_at", from).lte("created_at", to).order("created_at", { ascending: false }).limit(300);
+    if (f.person && UUID.test(f.person)) pq = pq.eq("profile_id", f.person);
+    const { data: rings } = await pq;
+    for (const c of (rings ?? []) as { id: string; profile_id: string; kind: string; title: string; status: string; digits: string | null; texted_at: string | null; duration_seconds: number | null; created_at: string }[]) {
+      const p = staff.get(c.profile_id);
+      const outcome = c.digits === "2" ? "snoozed" : c.digits === "1" ? (c.texted_at ? "heard, link texted" : "heard") : c.status.replace(/-/g, " ");
+      entries.push({
+        id: c.id,
+        kind: "call",
+        team: teamOf(p?.role, p?.is_exec),
+        flagged: false,
+        logged: false,
+        at: c.created_at,
+        person: p?.full_name ?? "Someone",
+        personId: c.profile_id,
+        seconds: Number(c.duration_seconds) || 0,
+        mode: "phone",
+        agents: [c.kind === "test" ? "Phone alert · test call" : "Phone alert"],
+        clients: [],
+        topic: `${c.kind === "test" ? "Test call" : c.title} (${outcome})`,
+        severity: null,
+        reason: null,
+        categories: [],
+        messages: null,
+        href: "/settings?tab=phone",
       });
     }
   }

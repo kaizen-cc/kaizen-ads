@@ -51,6 +51,8 @@ import { LastRun, ProgressBar, RetryOne, SyncNowButton, type Progress, type RunS
 import type { SyncJob } from "./sync-actions";
 import { SyncShell } from "./sync-shell";
 import { CallsUsage } from "./calls-usage";
+import { PhoneAlerts } from "./phone-alerts";
+import { twilioConfigured } from "@/lib/phone-core";
 import { ownerOnly } from "@/lib/calls-usage";
 
 // Inspecting a big ad account reads a few thousand rows; Sync now runs a whole job in the background
@@ -65,6 +67,8 @@ const TABS = [
   ["errors", "Errors"],
   ["deleted", "Deleted"],
   ["rates", "Rate card"],
+  // Everyone: their own phone number, consent and quiet hours for phone calls about urgent items
+  ["phone", "Phone alerts"],
   // The owner only (can_view_as, never while viewing as someone): every call and chat, and who uses the agents most
   ["calls", "Calls & usage"],
 ] as const;
@@ -75,7 +79,7 @@ const LEAD_TABS = ["team", "deleted"];
 const HEAD_TABS = ["agents"];
 // One Connections tab for everyone: your own accounts first (connecting itself lives in Kaizen AI); execs also enable
 // the team's connectors and answer requests, and leads and execs see the media keys (ElevenLabs, Higgsfield, Motion)
-const EVERYONE_TABS = ["connections", "agents"];
+const EVERYONE_TABS = ["connections", "agents", "phone"];
 const CONNECTION_SECTIONS = [
   ["yours", "Your accounts", "everyone"],
   ["stores", "Client stores", "everyone"],
@@ -1145,6 +1149,7 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
       {tab === "deleted" && <Deleted />}
       {tab === "rates" && <Rates />}
       {tab === "calls" && <CallsUsage me={me} sp={sp} />}
+      {tab === "phone" && <Phone me={me} />}
     </div>
   );
 }
@@ -1189,4 +1194,21 @@ async function loadAssistantUse(since: string): Promise<AssistantUse> {
     cost += costOf(r.model, { runs: 1, failed: r.ok === false ? 1 : 0, input: Number(r.input_tokens) || 0, output: Number(r.output_tokens) || 0, cacheW: Number(r.cache_write_tokens) || 0, cacheR: Number(r.cache_read_tokens) || 0, searches: Number(r.searches) || 0 });
   }
   return { cost7: cost, runs7: runs, characters7: characters, audioMinutes7: Math.round(audioSeconds / 60), quota: quota ? { tier: quota.tier, used: quota.used, limit: quota.limit, resetsAt: quota.resetsAt } : null };
+}
+
+/** Settings › Phone alerts: the person's own number, consent, quiet hours and recent calls (their own rows only) */
+async function Phone({ me }: { me: Awaited<ReturnType<typeof requireStaff>> }) {
+  const db = await createClient();
+  const [{ data: s }, { data: calls }] = await Promise.all([
+    db.from("phone_settings").select("phone, opted_in, consent_at, quiet_start, quiet_end, timezone").eq("profile_id", me.id).maybeSingle(),
+    db.from("phone_calls").select("id, title, status, kind, created_at, digits").eq("profile_id", me.id).order("created_at", { ascending: false }).limit(5),
+  ]);
+  return (
+    <PhoneAlerts
+      configured={twilioConfigured()}
+      readOnly={Boolean(me.viewAs)}
+      initial={{ phone: (s?.phone as string | null) ?? "", optedIn: Boolean(s?.opted_in), consent: Boolean(s?.consent_at && s?.opted_in), quietStart: Number(s?.quiet_start ?? 21), quietEnd: Number(s?.quiet_end ?? 7), timezone: String(s?.timezone ?? "America/New_York") }}
+      recent={((calls ?? []) as { id: string; title: string; status: string; kind: string; created_at: string; digits: string | null }[]).map((c) => ({ id: c.id, title: c.title, status: c.status, kind: c.kind, at: c.created_at, digits: c.digits }))}
+    />
+  );
 }
