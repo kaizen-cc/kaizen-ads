@@ -107,6 +107,24 @@ async function needsMe(db: SupabaseClient, admin: SupabaseClient, me: Staff, dra
   const own = await ownDay(admin, me.id, mineDrafts).catch(() => mineDrafts);
   const { stableKeyOf } = await import("@/lib/today-counts");
   const moved = await transferredTo(admin, me.id, new Set([...cards.map((c) => stableKeyOf(c.key)), ...own.map((d) => stableKeyOf(d.key))]), "needs").catch(() => []);
+  // Step-ins this exec took on (or was put on), with the due date: overdue once it passes
+  const { data: steps } = await admin.from("exec_stepins").select("client_id, due_on, card, reasons").eq("status", "open").eq("handler_id", me.id).limit(50);
+  for (const st of (steps ?? []) as { client_id: string; due_on: string | null; card: { client?: { name?: string; slug?: string }; step?: string } | null; reasons: { title?: string }[] | null }[]) {
+    const overdue = Boolean(st.due_on && st.due_on < today);
+    cards.push({
+      key: `stepin:${st.client_id}`,
+      tab: "needs",
+      kind: "mine",
+      client: st.card?.client?.name ?? null,
+      clientId: st.client_id,
+      clientSlug: st.card?.client?.slug ?? null,
+      title: `Step in: ${st.card?.client?.name ?? "a client"}${overdue ? " (overdue)" : ""}`,
+      detail: `${st.reasons?.[0]?.title ?? ""}${st.card?.step ? ` · ${st.card.step}` : ""}`.slice(0, 200),
+      severity: overdue ? "critical" : "high",
+      due: st.due_on ? `${st.due_on}T17:00:00-05:00` : null,
+      action: { label: "Open the step-in", href: `/stepins#s-${st.client_id}` },
+    });
+  }
   for (const d of [...own, ...moved])
     cards.push({ key: d.key, tab: "needs", kind: d.topic === "mine" ? "mine" : "taken", client: d.client === "Team" ? null : d.client, clientId: d.clientId, clientSlug: d.clientSlug || null, title: d.title, detail: d.story.slice(0, 160), severity: d.score >= 80 ? "critical" : d.score >= 60 ? "high" : "normal", due: d.due ?? null, action: { label: d.action.label, href: d.action.href ?? null } });
   return sortNeeds(cards);

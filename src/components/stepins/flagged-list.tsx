@@ -24,7 +24,7 @@ export function FlaggedList({ rows, people }: { rows: Flagged[]; people: Person[
   if (!rows.length) return null;
   const stuck = rows.filter((r) => r.status.kind === "stuck").length;
   return (
-    <div className="grid gap-2 border-t border-ink/[0.08] pt-4">
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 border-t border-ink/[0.08] pt-4">
       <button type="button" aria-expanded={open} onClick={() => (open ? closeParams("flagged") : pushParams({ flagged: "1" }))} className="group flex min-h-11 items-center justify-between gap-3 text-left">
         <span className="grid gap-0.5">
           <span className="text-[11px] font-semibold uppercase tracking-[0.22em]" style={{ color: VIOLET }}>
@@ -80,10 +80,10 @@ function Row({ r, people }: { r: Flagged; people: Person[] }) {
         </span>
       </button>
       {open && (
-        <div className="grid gap-3 border-t border-line px-3.5 py-3.5 text-[13px]">
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3 break-words border-t border-line px-3.5 py-3.5 text-[13px]">
           {r.holes.length > 2 && <p className="text-muted">Also: {r.holes.slice(2).join(" · ")}</p>}
           {r.results.length > 0 && (
-            <div className="grid gap-1">
+            <div className="grid content-start gap-1">
               <p className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-faint">Numbers vs target</p>
               {r.results.map((x, i) => (
                 <p key={i}>
@@ -92,18 +92,18 @@ function Row({ r, people }: { r: Flagged; people: Person[] }) {
               ))}
             </div>
           )}
-          <div className="grid gap-3 md:grid-cols-2">
-            <div className="grid gap-1">
+          <div className="grid items-start gap-3 md:grid-cols-2">
+            <div className="grid content-start gap-1">
               <p className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-faint">The team did</p>
               {r.done.length ? r.done.map((d, i) => <p key={i}>· {d}</p>) : <p className="text-muted">Nothing on record this week</p>}
             </div>
-            <div className="grid gap-1">
+            <div className="grid content-start gap-1">
               <p className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-faint">Hasn&apos;t done</p>
               {r.notDone.length ? r.notDone.map((d, i) => <p key={i}>· {d}</p>) : <p className="text-muted">No open promises</p>}
             </div>
           </div>
           {r.items.length > 0 && (
-            <div className="grid gap-1">
+            <div className="grid content-start gap-1">
               <p className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-faint">Stuck with the lead</p>
               {r.items.map((x, i) => (
                 <p key={i}>
@@ -141,7 +141,7 @@ function Row({ r, people }: { r: Flagged; people: Person[] }) {
           </div>
           {assigning && (
             <div className="flex flex-wrap gap-2">
-              <select value={who} onChange={(e) => setWho(e.target.value)} className="min-h-11 rounded-full border border-line bg-bg px-3 text-[13px] text-fg md:min-h-9">
+              <select value={who} onChange={(e) => setWho(e.target.value)} className="min-h-11 min-w-0 max-w-full flex-1 rounded-full border border-line bg-bg px-3 text-[13px] text-fg md:min-h-9">
                 <option value="">Keep on {r.owner?.label ?? "nobody"}</option>
                 {people.map((p) => (
                   <option key={p.id} value={p.id}>

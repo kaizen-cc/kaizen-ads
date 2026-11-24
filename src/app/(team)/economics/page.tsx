@@ -86,7 +86,7 @@ export default async function EconomicsPage() {
                 </ul>
               )}
             </div>
-            <div className="grid grid-cols-4 gap-3 text-[13px]">
+            <div className="grid grid-cols-2 gap-x-3 gap-y-4 text-[13px] sm:grid-cols-4">
               {[
                 { l: "Fee / mo", v: usd(r.fee) },
                 { l: "Hours 30d", v: Math.round(r.hours).toString() },

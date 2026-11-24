@@ -16,7 +16,7 @@ export type Stepin = {
   card: StepinCard;
   fire: boolean;
   severity: number;
-  handler: { id: string; name: string } | null;
+  handler: { id: string; name: string; label: string } | null;
   dueOn: string | null;
   handledBy: string | null;
   handledAt: string | null;
@@ -33,10 +33,11 @@ type Result = { ok: true; message?: string } | { ok: false; error: string };
 export async function loadStepins(db: SupabaseClient, me: Staff, opts: { status?: "open" | "all" } = {}): Promise<Stepin[]> {
   if (!me.isExec) return [];
   const { loadExecFocus } = await import("@/lib/exec-focus/server");
-  let q = db.from("exec_stepins").select("id, client_id, status, reasons, card, fire, severity, handler_id, due_on, handled_at, handled_note, opened_at, reopened_at, handler:profiles!exec_stepins_handler_id_fkey(full_name), closer:profiles!exec_stepins_handled_by_fkey(full_name)").order("severity", { ascending: false }).limit(200);
+  let q = db.from("exec_stepins").select("id, client_id, status, reasons, card, fire, severity, handler_id, due_on, handled_at, handled_note, opened_at, reopened_at, handler:profiles!exec_stepins_handler_id_fkey(full_name, role), closer:profiles!exec_stepins_handled_by_fkey(full_name)").order("severity", { ascending: false }).limit(200);
   q = opts.status === "all" ? q.neq("status", "recovered") : q.eq("status", "open");
   const [{ data }, focus] = await Promise.all([q, loadExecFocus(db, me.id).catch(() => [])]);
-  const rows = ((data ?? []) as unknown as { id: string; client_id: string; status: CardStatus; reasons: Reason[]; card: StepinCard; fire: boolean; severity: number; handler_id: string | null; due_on: string | null; handled_at: string | null; handled_note: string | null; opened_at: string; reopened_at: string | null; handler: { full_name: string } | null; closer: { full_name: string } | null }[]).filter((r) => execSees(r.reasons, focus));
+  const rows = ((data ?? []) as unknown as { id: string; client_id: string; status: CardStatus; reasons: Reason[]; card: StepinCard; fire: boolean; severity: number; handler_id: string | null; due_on: string | null; handled_at: string | null; handled_note: string | null; opened_at: string; reopened_at: string | null; handler: { full_name: string; role: string } | null; closer: { full_name: string } | null }[]).filter((r) => execSees(r.reasons, focus));
+  const { roleLabel } = await import("@/lib/roles");
   const keys = rows.map((r) => stepinKey(r.client_id));
   const { data: cs } = keys.length ? await db.from("item_comments").select("id, key, body, kind, created_at, author:profiles!item_comments_author_id_fkey(full_name)").in("key", keys).order("created_at").limit(2000) : { data: [] };
   const byKey = new Map<string, Stepin["comments"]>();
@@ -49,7 +50,7 @@ export async function loadStepins(db: SupabaseClient, me: Staff, opts: { status?
     card: r.card,
     fire: r.fire,
     severity: r.severity,
-    handler: r.handler_id ? { id: r.handler_id, name: r.handler?.full_name ?? "An exec" } : null,
+    handler: r.handler_id ? { id: r.handler_id, name: r.handler?.full_name ?? "An exec", label: r.handler ? `${r.handler.full_name.split(" ")[0]} (${roleLabel(r.handler.role as Parameters<typeof roleLabel>[0])})` : "An exec" } : null,
     dueOn: r.due_on,
     handledBy: r.closer?.full_name ?? null,
     handledAt: r.handled_at,
@@ -117,6 +118,11 @@ export async function assignStepin(admin: SupabaseClient, me: Staff, id: string,
   const what = `${handlerId ? `${handlerId === me.id ? `${me.fullName.split(" ")[0]} is taking this` : `${name} is handling this`}` : "Due date set"}${due ? `, due ${new Date(`${due}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })}` : ""}.`;
   await note(admin, me, o.row, what);
   await tellExecs(admin, me, o.row, what);
+  if (handlerId && handlerId !== me.id)
+    await admin.from("notifications").upsert(
+      { profile_id: handlerId, kind: "comment", title: `${me.fullName.split(" ")[0]} put ${o.row.card?.client?.name ?? "a client"} on you`.slice(0, 200), body: `${o.row.card?.step ?? ""}${due ? ` Due ${due}.` : ""}`.trim().slice(0, 1000), href: `/pipeline?comments=${encodeURIComponent(stepinKey(o.row.client_id))}`, client_id: o.row.client_id, key: `stepin-on:${o.row.client_id}`, priority: "normal", read_at: null, cleared_at: null, actor_id: me.id },
+      { onConflict: "profile_id,key" },
+    );
   return { ok: true, message: what };
 }
 

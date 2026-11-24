@@ -56,7 +56,7 @@ async function CustomerSuccess() {
           <li key={r.clientId}>
             <Link href={`/clients/${r.slug}`} className="grid gap-2 rounded-[14px] border border-line px-4 py-3 transition-colors hover:border-faint md:grid-cols-[minmax(0,1.2fr)_minmax(0,2fr)] md:items-center">
               <span className="truncate font-medium">{r.client}</span>
-              <span className="grid grid-cols-4 gap-2 text-[12px]">
+              <span className="grid grid-cols-2 gap-2 text-[12px] sm:grid-cols-4">
                 <span className="grid">
                   <span className={r.sentiment.now != null && r.sentiment.now < 0 ? "text-bad" : ""}>
                     {tone(r.sentiment.now)}

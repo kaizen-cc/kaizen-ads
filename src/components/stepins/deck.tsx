@@ -47,7 +47,7 @@ export function StepinsHero({ cards, compact = false, people, canRefresh = false
   const mine = open.filter((c) => !c.handler).length;
   const refresh = useAct();
   return (
-    <section className="relative isolate grid gap-5 overflow-hidden rounded-[26px] border border-ink/[0.08] bg-deep p-5 shadow-[0_30px_70px_-40px_rgba(0,0,0,0.9)] md:p-7" aria-label="This week's step-ins">
+    <section className="relative isolate grid min-w-0 grid-cols-[minmax(0,1fr)] gap-5 overflow-hidden rounded-[26px] border border-ink/[0.08] bg-deep p-4 shadow-[0_30px_70px_-40px_rgba(0,0,0,0.9)] md:p-7" aria-label="This week's step-ins">
       <span aria-hidden className="pointer-events-none absolute -right-20 -top-28 -z-10 h-[320px] w-[320px] rounded-full blur-[100px]" style={{ background: GLOW }} />
       <span aria-hidden className="pointer-events-none absolute -bottom-32 -left-10 -z-10 h-[240px] w-[240px] rounded-full bg-[rgba(255,77,94,0.16)] blur-[110px]" />
       <span aria-hidden className="pointer-events-none absolute inset-x-6 top-0 -z-10 h-px opacity-70" style={{ background: `linear-gradient(90deg, transparent, ${VIOLET}, transparent)` }} />
@@ -104,7 +104,7 @@ function Deck({ cards, people }: { cards: Stepin[]; people: Person[] }) {
     el?.scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" });
   };
   return (
-    <div className="grid gap-3">
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3">
       <div
         ref={ref}
         onScroll={(e) => {
@@ -112,10 +112,10 @@ function Deck({ cards, people }: { cards: Stepin[]; people: Person[] }) {
           const w = (el.children[0] as HTMLElement | undefined)?.offsetWidth ?? 1;
           setAt(Math.round(el.scrollLeft / (w + 12)));
         }}
-        className="no-scrollbar -mx-5 flex snap-x snap-mandatory gap-3 overflow-x-auto px-5 pb-2 md:-mx-7 md:px-7"
+        className="no-scrollbar -mx-4 flex snap-x snap-mandatory items-start gap-3 overflow-x-auto overflow-y-visible px-4 pb-2 [touch-action:pan-x_pan-y] md:-mx-7 md:px-7"
       >
         {cards.map((c, i) => (
-          <div key={c.id} id={`s-${c.clientId}`} className="w-[88%] shrink-0 snap-start sm:w-[70%] lg:w-[46%]" style={{ transform: i === at ? "none" : "scale(0.97)", transition: "transform .3s cubic-bezier(.2,.8,.2,1)" }}>
+          <div key={c.id} id={`s-${c.clientId}`} className="w-[92%] min-w-0 shrink-0 snap-center sm:w-[70%] sm:snap-start lg:w-[46%]" style={{ transform: i === at ? "none" : "scale(0.97)", transition: "transform .3s cubic-bezier(.2,.8,.2,1)" }}>
             <StepinCardView s={c} people={people} />
           </div>
         ))}
@@ -151,27 +151,45 @@ export function StepinCardView({ s, people, big = false }: { s: Stepin; people: 
   const [closing, setClosing] = useState(false);
   const [why, setWhy] = useState("");
   const top = [...s.reasons].sort((a, b) => (a.kind === "fire" ? -1 : b.kind === "fire" ? 1 : 0))[0];
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  const overdue = Boolean(s.handler && s.dueOn && s.dueOn < today && s.status === "open");
+  const handlerFirst = s.handler?.label.split(" ")[0] ?? "";
   return (
-    <article className={`relative grid gap-4 overflow-hidden rounded-[22px] border bg-surface p-4 md:p-5 ${s.fire ? "border-bad/40" : "border-line"} ${big ? "md:p-7" : ""}`}>
+    <article className={`relative grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-4 overflow-hidden break-words rounded-[22px] border bg-surface p-4 md:p-5 ${s.fire ? "border-bad/40" : "border-line"} ${big ? "md:p-7" : ""}`}>
       <span aria-hidden className="absolute inset-x-0 top-0 h-1" style={{ background: s.fire ? "#ff4d5e" : VIOLET }} />
-      <header className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
+      <header className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+        <div className="min-w-0 flex-1">
           <Link href={`/clients/${c.client.slug}`} className="block truncate font-heading text-[21px] leading-tight hover:underline">
             {c.client.name}
           </Link>
-          <p className="mt-0.5 text-[12.5px] text-muted">{c.owners.length ? `On ${c.owners.map((o) => `${o.name.split(" ")[0]} (${o.role})`).join(" · ")}` : "No owner seated"}</p>
+          {s.handler ? (
+            <p className={`mt-0.5 text-[12.5px] font-medium ${overdue ? "text-bad" : "text-ok"}`}>
+              Handling: {s.handler.label}
+              {s.dueOn ? ` · ${overdue ? "overdue since" : "due"} ${day(`${s.dueOn}T12:00:00Z`)}` : ""}
+            </p>
+          ) : null}
+          <p className="mt-0.5 text-[12.5px] text-muted">{c.owners.length ? `Account on ${c.owners.map((o) => `${o.name.split(" ")[0]} (${o.role})`).join(" · ")}` : "No owner seated"}</p>
         </div>
-        <span className="flex shrink-0 flex-wrap justify-end gap-1">
-          {s.reasons.map((r, i) => (
-            <span key={i} className={`rounded-full px-2 py-0.5 text-[10.5px] font-medium ${r.kind === "fire" ? "bg-bad-soft text-bad" : "bg-warn-soft text-warn"}`}>
-              {KIND_LABEL[r.kind]}
-            </span>
-          ))}
+        <span className="flex flex-wrap gap-1">
+          {s.handler && s.status === "open" ? (
+            <>
+              {s.fire && <span className="rounded-full bg-bad-soft px-2 py-0.5 text-[10.5px] font-medium text-bad">Fire</span>}
+              <span className={`rounded-full px-2 py-0.5 text-[10.5px] font-medium ${overdue ? "bg-bad-soft text-bad" : "bg-ok-soft text-ok"}`}>
+                {handlerFirst} handling{overdue ? " · overdue" : ""}
+              </span>
+            </>
+          ) : (
+            [...new Set(s.reasons.map((r) => r.kind))].map((k) => (
+              <span key={k} className={`rounded-full px-2 py-0.5 text-[10.5px] font-medium ${k === "fire" ? "bg-bad-soft text-bad" : "bg-warn-soft text-warn"}`}>
+                {KIND_LABEL[k]}
+              </span>
+            ))
+          )}
         </span>
       </header>
 
       {top && (
-        <div className="grid gap-1">
+        <div className="grid content-start gap-1">
           <p className={`text-[15.5px] font-medium leading-snug ${top.kind === "fire" ? "text-bad" : "text-fg"}`}>{top.title}</p>
           {top.detail && <p className="text-[13px] leading-relaxed text-muted">{top.detail}</p>}
           {s.reasons.slice(1).map((r, i) => (
@@ -205,12 +223,12 @@ export function StepinCardView({ s, people, big = false }: { s: Stepin; people: 
       )}
 
       {(c.team.done.length > 0 || c.team.notDone.length > 0 || c.team.lastUpdateDays != null) && (
-        <div className="grid gap-2 text-[13px] md:grid-cols-2">
-          <div className="grid gap-1">
+        <div className="grid items-start gap-3 text-[13px] md:grid-cols-2">
+          <div className="grid content-start gap-1">
             <p className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-faint">The team did</p>
             {c.team.done.length ? c.team.done.map((d, i) => <p key={i}>· {d}</p>) : <p className="text-muted">Nothing on record this week</p>}
           </div>
-          <div className="grid gap-1">
+          <div className="grid content-start gap-1">
             <p className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-faint">Hasn&apos;t done</p>
             {c.team.notDone.length ? c.team.notDone.map((d, i) => <p key={i}>· {d}</p>) : <p className="text-muted">No open promises</p>}
             {c.team.lastUpdateDays != null && <p className={c.team.lastUpdateDays >= 5 ? "text-bad" : "text-muted"}>Last update to the client {c.team.lastUpdateDays} days ago</p>}
@@ -220,18 +238,12 @@ export function StepinCardView({ s, people, big = false }: { s: Stepin; people: 
 
       <div className="rounded-[14px] p-3.5" style={{ background: "rgba(140,90,255,0.10)" }}>
         <p className="font-display text-[17px] leading-snug" style={{ color: VIOLET }}>
-          Step in: <span className="text-fg">{c.step}</span>
+          Step in: <span className="font-sans text-[14.5px] font-medium text-fg">{c.step}</span>
         </p>
       </div>
 
       <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
-        {s.handler ? (
-          <span className="rounded-full bg-ok-soft px-2.5 py-1 text-ok">
-            {s.handler.name} is handling it{s.dueOn ? ` · due ${day(`${s.dueOn}T12:00:00Z`)}` : ""}
-          </span>
-        ) : (
-          <span className="rounded-full bg-warn-soft px-2.5 py-1 text-warn">Nobody handling yet</span>
-        )}
+        {!s.handler && s.status === "open" && <span className="rounded-full bg-warn-soft px-2.5 py-1 text-warn">Nobody handling yet</span>}
         {s.status !== "open" && <span className="rounded-full bg-bg px-2.5 py-1 text-muted">{s.status === "handled" ? `Handled by ${s.handledBy ?? "an exec"}` : "Recovered"}</span>}
         {s.reopenedAt && s.status === "open" && <span className="text-muted">Reopened {day(s.reopenedAt)}</span>}
       </div>
@@ -248,7 +260,7 @@ export function StepinCardView({ s, people, big = false }: { s: Stepin; people: 
       )}
 
       <div className="grid gap-2">
-        <div className="flex gap-2">
+        <div className="flex min-w-0 gap-2">
           <input value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Context, “I'll take this”, “Kyle handles”…" className="min-h-11 min-w-0 flex-1 rounded-full border border-line bg-bg px-4 text-[13.5px] text-fg outline-none focus:border-faint md:min-h-9" />
           <button type="button" disabled={pending || !comment.trim()} onClick={() => run(() => commentOnStepin(s.id, comment), () => setComment(""))} className="inline-flex min-h-11 items-center rounded-full bg-fg px-4 text-[13px] font-medium text-bg disabled:opacity-40 md:min-h-9">
             Send
@@ -272,7 +284,7 @@ export function StepinCardView({ s, people, big = false }: { s: Stepin; people: 
         </div>
         {assigning && (
           <div className="flex flex-wrap gap-2">
-            <select value={who} onChange={(e) => setWho(e.target.value)} className="min-h-11 rounded-full border border-line bg-bg px-3 text-[13px] text-fg md:min-h-9">
+            <select value={who} onChange={(e) => setWho(e.target.value)} className="min-h-11 min-w-0 max-w-full flex-1 rounded-full border border-line bg-bg px-3 text-[13px] text-fg md:min-h-9 md:flex-none">
               <option value="">Pick who</option>
               {people.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -287,7 +299,7 @@ export function StepinCardView({ s, people, big = false }: { s: Stepin; people: 
           </div>
         )}
         {closing && (
-          <div className="flex gap-2">
+          <div className="flex min-w-0 flex-wrap gap-2">
             <input value={why} onChange={(e) => setWhy(e.target.value)} placeholder="What was done (optional)" className="min-h-11 min-w-0 flex-1 rounded-full border border-line bg-bg px-4 text-[13px] text-fg outline-none focus:border-faint md:min-h-9" />
             <button type="button" disabled={pending} onClick={() => run(() => handleStepin(s.id, why), () => setClosing(false))} className="inline-flex min-h-11 items-center rounded-full bg-fg px-4 text-[13px] font-medium text-bg md:min-h-9">
               Handled
@@ -315,7 +327,7 @@ function Story({ cards, people }: { cards: Stepin[]; people: Person[] }) {
   }, [cards.length]);
   const s = cards[i];
   return (
-    <div role="dialog" aria-modal="true" aria-label="Monday step-ins story" className="fixed inset-0 z-50 grid grid-rows-[auto_1fr_auto] bg-deep/95 p-4 backdrop-blur-xl md:p-8">
+    <div role="dialog" aria-modal="true" aria-label="Monday step-ins story" className="fixed inset-0 z-50 grid h-[100dvh] grid-rows-[auto_minmax(0,1fr)_auto] gap-2 bg-deep/95 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] backdrop-blur-xl md:p-8">
       <span aria-hidden className="pointer-events-none absolute left-1/2 top-0 -z-10 h-[420px] w-[420px] -translate-x-1/2 rounded-full blur-[130px]" style={{ background: GLOW }} />
       <div className="grid gap-3">
         <div className="flex gap-1">
@@ -332,7 +344,7 @@ function Story({ cards, people }: { cards: Stepin[]; people: Person[] }) {
           </button>
         </div>
       </div>
-      <div className="mx-auto w-full max-w-2xl overflow-y-auto py-4">
+      <div className="mx-auto min-h-0 w-full max-w-2xl overflow-y-auto overscroll-contain py-2">
         <StepinCardView key={s.id} s={s} people={people} big />
       </div>
       <div className="mx-auto flex w-full max-w-2xl gap-2">

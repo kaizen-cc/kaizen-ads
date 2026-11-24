@@ -49,12 +49,12 @@ export async function loadFlagged(admin: SupabaseClient, me: Staff): Promise<Fla
     admin.from("line_reviews").select("id, client_id, line, risk, status, review, assignee_id, due_on, clients!inner(name, slug, archived_at)").eq("week_start", week).is("clients.archived_at", null).limit(1000),
     loadExecFocus(admin, me.id).catch(() => []),
     admin.from("profiles").select("id, full_name, role, is_active"),
-    admin.from("exec_stepins").select("client_id, status, fire").in("status", ["open", "handled"]),
+    admin.from("exec_stepins").select("client_id, status, fire, handler_id, due_on").in("status", ["open", "handled"]),
     admin.from("ladder_nudges").select("client_id, line, what, since, exec_at, owner:profiles!ladder_nudges_owner_id_fkey(full_name, role)").in("status", ["open", "sent"]).not("client_id", "is", null).limit(2000),
   ]);
   const pById = new Map(((people ?? []) as { id: string; full_name: string; role: string; is_active: boolean }[]).map((p) => [p.id, p]));
   const label = (p: { full_name: string; role: string }) => `${first(p.full_name)} (${roleLabel(p.role as Parameters<typeof roleLabel>[0])})`;
-  const stepBy = new Map(((steps ?? []) as { client_id: string; status: string; fire: boolean }[]).map((s) => [s.client_id, s]));
+  const stepBy = new Map(((steps ?? []) as { client_id: string; status: string; fire: boolean; handler_id: string | null; due_on: string | null }[]).map((s) => [s.client_id, s]));
   const LADDER_LINE: Record<string, ReviewLine> = { meta: "meta", tiktok: "meta", google: "google", email: "email", social: "social" };
   const out: Flagged[] = [];
   for (const r of (reviews ?? []) as unknown as { id: string; client_id: string; line: ReviewLine; risk: number; status: string; review: Review; assignee_id: string | null; due_on: string | null; clients: { name: string; slug: string } }[]) {
@@ -66,7 +66,9 @@ export async function loadFlagged(admin: SupabaseClient, me: Staff): Promise<Fla
     const items = ((ladder ?? []) as unknown as { client_id: string; line: string | null; what: string; since: string; exec_at: string | null; owner: { full_name: string; role: string } | null }[])
       .filter((l) => l.client_id === r.client_id && (!l.line || LADDER_LINE[l.line] === r.line))
       .map((l) => ({ text: l.what, owner: l.owner ? label(l.owner) : null, since: l.since, atLead: true }));
-    const assignee = r.assignee_id ? pById.get(r.assignee_id) : null;
+    // Who it's on: an exec handling its step-in, else who an exec put it on, else the seat holder
+    const handler = step?.status === "open" && step.handler_id ? pById.get(step.handler_id) : null;
+    const assignee = handler ?? (r.assignee_id ? pById.get(r.assignee_id) : null);
     const seat = r.review?.owner?.id ? pById.get(r.review.owner.id) : null;
     const ownerP = assignee?.is_active ? assignee : seat?.is_active ? seat : null;
     const st = flagStanding({ stepin: Boolean(step && step.status === "open"), ladder: items, handled: r.status === "sent" && !items.length });
@@ -83,7 +85,7 @@ export async function loadFlagged(admin: SupabaseClient, me: Staff): Promise<Fla
       holes: holes.length ? holes : ["Step-in"],
       owner: ownerP ? { id: ownerP.id, label: label(ownerP) } : null,
       assignedBy: Boolean(assignee),
-      dueOn: r.due_on,
+      dueOn: handler ? (step?.due_on ?? r.due_on) : r.due_on,
       rung: st.rung,
       status: st.status,
       risk: r.risk + (step?.status === "open" ? 1000 : 0),

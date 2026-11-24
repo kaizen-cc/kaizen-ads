@@ -40,7 +40,7 @@ function Row({ r }: { r: ScoreRow }) {
           </p>
         )}
       </div>
-      <div className="grid grid-cols-5 gap-3">
+      <div className="grid grid-cols-3 gap-x-3 gap-y-4 sm:grid-cols-5">
         <Stat n={r.accounts} label="Accounts" />
         <Stat n={r.missed} label="Missed" bad />
         <Stat n={r.unapproved} label="Unapproved" bad />

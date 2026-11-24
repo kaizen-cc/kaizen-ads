@@ -112,7 +112,8 @@ export async function runStepins(admin: SupabaseClient, now = new Date()) {
   for (const [clientId, rows] of byClient) {
     const lines = [...new Set(rows.map((r) => r.line))];
     for (const line of lines) {
-      const mine = rows.filter((r) => r.line === line);
+      // The same item from two ladder rows reads once
+      const mine = rows.filter((r, i, all) => r.line === line && all.findIndex((x) => x.line === line && x.owner === r.owner && x.what[0] === r.what[0]) === i);
       add(clientId, { kind: "escalated", line, title: `${mine.length} item${mine.length === 1 ? "" : "s"} stuck past ${mine[0].lead}`, detail: mine.slice(0, 3).map((m) => owesLine(m.owner, m.what[0], m.kind)).join("; ").slice(0, 300), since: mine.map((m) => m.since).sort()[0] ?? null });
     }
   }
