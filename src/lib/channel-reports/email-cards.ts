@@ -81,7 +81,7 @@ export function cardShotIds(m: { template?: string; engagement?: { picks: { best
 }
 
 /** The campaign's own report in Klaviyo (only for a report whose numbers come from Klaviyo) */
-export const klaviyoCampaignUrl = (id: string) => `https://www.klaviyo.com/campaign/${encodeURIComponent(id)}/reports`;
+export const klaviyoCampaignUrl = (id: string) => `https://www.klaviyo.com/campaign/${encodeURIComponent(id)}/reports/overview`;
 export const fromKlaviyo = (source: string | null | undefined) => !source || source === "Klaviyo";
 
 /** One number on a card: its value, an optional line under it, and how it stands against Kaizen's bar */

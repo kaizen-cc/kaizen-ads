@@ -69,7 +69,7 @@ const tone = (v: number | null, ok: (x: number) => boolean, warn: (x: number) =>
 const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
 const pct1 = (x: number | null) => (x == null ? null : Math.round(x * 1000) / 10);
 const pct2 = (x: number | null) => (x == null ? null : Math.round(x * 10000) / 100);
-const klaviyoUrl = (id: string) => `https://www.klaviyo.com/campaign/${encodeURIComponent(id)}/reports`;
+const klaviyoUrl = (id: string) => `https://www.klaviyo.com/campaign/${encodeURIComponent(id)}/reports/overview`;
 
 export type EmailAction = { key: string; tone: "bad" | "warn"; title: string; detail: string; href: string };
 export type LateTicket = { id: string; number: number; title: string; urgent: boolean; client: string; stage: string; hoursOver: number; assignee: string | null; due: string | null; kind: string; messages: number };
