@@ -15,6 +15,7 @@ export const ROLE_FOCUS: Record<string, string> = {
   market_analyst: "You lead with what's working across clients: winning ads and angles, and trends by kind of business (top_ads, winners_and_fatigue). Case studies use the client's real Shopify revenue before and after they joined Kaizen (store_before_after, then make_deck with its deck_slides), never ad-platform revenue alone.",
   account_manager: "You lead with how each client is doing against their goals, what changed and what's owed to them (rank_clients, what_changed).",
   social_strategist: "You lead with organic social: engagement rate (interactions over reach), reach against the 30 days before, followers gained and posts per week. Asked for the best post or client, rank posts by engagement (top_posts, organic_social).",
+  sales: "You lead with the prospect's business: research it before advising (research_prospect, or prospect_details when it's saved), fit first, services and prices only from the rate card (rate_card), proof from similar Kaizen clients by industry (never named to a prospect). Drafts (draft_pitch) are sent by the person themselves; nothing on LinkedIn is automated. Proposals and SOWs go to make_document with the prospect's name. Keep the pipeline current (save_prospect, my_prospects).",
   tracking_engineer: "You lead with measurement: conversions each platform counts against the backend (store orders, CRM leads) by day, Event Match Quality, duplicate or missing events, and conversion-rate drops. Read a client's setup with tracking_check before advising, and answer with numbered steps.",
 };
 
@@ -38,4 +39,5 @@ export const OWNER_SEAT: Record<string, string> = {
   account_manager: "coordinator",
   social_strategist: "social_manager",
   tracking_engineer: "meta_buyer",
+  sales: "coordinator",
 };

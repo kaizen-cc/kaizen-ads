@@ -35,6 +35,8 @@ const I = {
   ideas: "M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.6.5 1 1.2 1.1 2h5c.1-.8.5-1.5 1.1-2A6 6 0 0 0 12 3z",
   ai: "M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z",
   lab: "M9 3h6M10 3v6L4.5 18.5A1.7 1.7 0 0 0 6 21h12a1.7 1.7 0 0 0 1.5-2.5L14 9V3M7 15h10",
+  // A target (prospects to win)
+  sales: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM12 12h.01",
 };
 
 // Two groups: the day-to-day work, and where ideas come from. Settings sits at the bottom, by your name.
@@ -52,6 +54,8 @@ const GROUPS: { title: string; items: Item[] }[] = [
       { href: "/kpis", label: "KPIs", icon: I.kpis, buyer: true },
       { href: "/reports", label: "Reports", icon: I.reports, reports: true },
       { href: "/ai", label: "Kaizen AI", icon: I.ai },
+      // New business (internal for now): the prospects the Sales agent researches, for the executives and the leads
+      { href: "/sales", label: "Sales", icon: I.sales, tiers: ["exec", "lead"] },
     ],
   },
   {
@@ -262,7 +266,7 @@ export function TeamShell({ name, fullName, meId, roles, tier, creative = null, 
   // The email and social teams get only Overview, Clients, KPIs, Reports and Kaizen AI (Feedback and Settings sit apart);
   // the email team also gets Boards (their Email Board)
   // The makers and customer success have no Ideas (their Overview is their plate): gone from the sidebar and the tab bar
-  const groups = GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => can(i) && (!channel || channelNavOk(i.href, role)) && !(noIdeas(role) && isIdeasPath(i.href)) && !(isSupportRole(role) && SUPPORT_HIDDEN.includes(i.href))) })).filter((g) => g.items.length);
+  const groups = GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => can(i) && (!channel || channelNavOk(i.href, role) || i.href === "/sales") && !(noIdeas(role) && isIdeasPath(i.href)) && !(isSupportRole(role) && SUPPORT_HIDDEN.includes(i.href))) })).filter((g) => g.items.length);
   const settings = can(SETTINGS) ? SETTINGS : null;
   // The tab bar on phones: home (the Overview), the board, clients and KPIs (the creative team: their own
   // KPIs, or Ideas); everything else is in the menu

@@ -33,6 +33,7 @@ export const AREAS: { area: string; prefixes: string[] }[] = [
   { area: "Kaizen AI", prefixes: ["/ai"] },
   { area: "Ideas", prefixes: ["/ideas", "/winners", "/market"] },
   { area: "Ads Lab", prefixes: ["/lab"] },
+  { area: "Sales", prefixes: ["/sales"] },
   { area: "Settings", prefixes: ["/settings", "/team"] },
   { area: "Notifications", prefixes: ["/notifications"] },
   { area: "Feedback", prefixes: ["/feedback"] },

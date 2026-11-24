@@ -30,6 +30,7 @@ const MODULES: { key: string; label: string; load: () => Promise<{ tools: Shared
   { key: "youtube", label: "YouTube learning", load: () => import("@/lib/ai-tools/youtube") },
   { key: "tracking", label: "Tracking", load: () => import("@/lib/ai-tools/tracking") },
   { key: "shopify", label: "Shopify", load: () => import("@/lib/ai-tools/shopify") },
+  { key: "sales", label: "Sales", load: () => import("@/lib/ai-tools/sales") },
 ];
 
 function wrap(t: SharedTool, label: string, ctx: ToolCtx): ChatTool {
@@ -75,6 +76,8 @@ export async function extensionTools(ctx: ToolCtx): Promise<ChatTool[]> {
     for (const t of tools) {
       // A tool for some teams only (an email tool isn't offered to the ads side, and the other way round); execs get all
       if (t.lines && !ctx.me.isExec && !t.lines.includes(myLine as "ads" | "email" | "social")) continue;
+      // A tool for some people only (Sales: execs and leads); run() checks again
+      if (t.only && !t.only(ctx.me)) continue;
       if (taken.has(t.name)) continue;
       taken.add(t.name);
       out.push(wrap(t, m.label, ctx));

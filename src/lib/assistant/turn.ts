@@ -70,7 +70,7 @@ export async function runAssistantTurn(input: Input) {
   const hostHop = (m: TurnMode) => assistantAnswer(input, team, m).then(() => undefined);
   // A specialist they asked for, or the one whose line a strategy question is about: it joins and answers now, with
   // no "shall I?" and without the assistant's model in between (that was a whole extra round before anyone spoke)
-  const direct = directSpecialist(text, { screen: input.context?.screen ?? null });
+  const direct = directSpecialist(text, { screen: input.context?.screen ?? null, me: input.me });
   if (team.line.length) {
     const route = routeTeam(text, { host: ASSISTANT_KEY, line: team.line, last: await timer.time("last_speaker", lastSpeaker(admin, call.id)) });
     if (route.dismiss.length) await dismissFromLine(input, team, route.dismiss);
@@ -144,7 +144,7 @@ async function assistantAnswer(input: Input, team: TeamState, m: TurnMode, full?
   const tools = withTipUse(me, admin, tracked(tctx, [...(await timer.time("tools_build", assistantTools(actx))), ...teamTools(tctx)]));
   // A job they're asking for (when none is open), or the specialist whose area this is
   const job = person && team.job?.status !== "open" ? recognizeJob(text) : null;
-  const hint = person && !team.line.length && !job ? suggestSpecialist(text) : null;
+  const hint = person && !team.line.length && !job ? suggestSpecialist(text, null, me) : null;
   const mem = memoryForPrompt(memory, todayIso());
   // Getting to know them: the first call is mostly this; after that, one gentle question per call until each is known
   const left = discoveryLeft(memory);

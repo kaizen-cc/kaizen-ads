@@ -379,9 +379,11 @@ export async function GET(request: Request) {
       const tracking = await import("@/lib/tracking-agent");
       const playbook = await tracking.seedTrackingPlaybook(admin).catch((e) => String(e));
       const trackingChecks = await tracking.trackingWatch(admin, { max: 3 }).catch((e) => String(e));
+      // Won prospects whose client has since been enrolled: linked, and their owner told to move the documents
+      const wonLinked = await (await import("@/lib/sales-agent")).linkEnrolledProspects(admin).catch((e) => String(e));
       // Videos shared in a client's channel, now read: filed to that client's knowledge when they're about the client
       const clientFiled = await ys.attachSharedToClients(admin).catch((e) => String(e));
-      return Response.json({ sources, slackShares, dmShares, requeued, queue, shared, clientFiled, playbook, trackingChecks });
+      return Response.json({ sources, slackShares, dmShares, requeued, queue, shared, clientFiled, playbook, trackingChecks, wonLinked });
     }
     if (step === "social_learn") {
       const { aiEnabled } = await import("@/lib/ai");

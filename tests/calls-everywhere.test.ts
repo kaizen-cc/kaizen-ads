@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { CALL_ROLES, contextPrompt, fitWithin, lookPlan, looksLikeLook, parseCallContext, roleForReport, roleForService, roleForThread, screenFileName } from "@/lib/agent-call/call-context";
 import { audioExt, audioPartPath, DEFAULT_VOICES } from "@/lib/agent-call/core";
 import { ASK_TTL_MS, askLine, liveAsk } from "@/lib/agent-call/connector-ask";
-import { ROLE_SKILLS, canTalkToAgent, canTrainAgent } from "@/lib/agent-access";
+import { RESTRICTED_ROLES, ROLE_SKILLS, canTalkToAgent, canTrainAgent } from "@/lib/agent-access";
 import { lineOfRole } from "@/lib/agent-lines";
 import { SPECIALISTS, suggestSpecialist } from "@/lib/assistant/core";
 
@@ -54,7 +54,9 @@ describe("which agent a button reaches", () => {
   });
   it("only names agents everyone can call", () => {
     const me = { role: "social_media_manager", isExec: false };
-    for (const key of Object.keys(CALL_ROLES)) expect(canTalkToAgent(me, key), key).toBe(true);
+    // Restricted agents (Sales: execs and leads) are the exception, and only reached from their own screens
+    for (const key of Object.keys(CALL_ROLES)) if (!RESTRICTED_ROLES[key]) expect(canTalkToAgent(me, key), key).toBe(true);
+    expect(canTalkToAgent(me, "sales")).toBe(false);
   });
 });
 

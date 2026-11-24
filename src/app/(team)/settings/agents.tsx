@@ -735,6 +735,7 @@ const ROLE_STARTERS: Record<string, string[]> = {
   media_buyer: ["Always check frequency before calling fatigue.", "How do you decide an ad is fatigued?", "Ignore ads with under $100 spend."],
   google_buyer: ["How do you audit a Google account?", "Never raise a budget more than 20% in a day.", "Always check search terms before adding negatives."],
   market_analyst: ["How do you research a new vertical?", "Benchmarks need a source and a date.", "What do you look at first in a market?"],
+  sales: ["Research this business before I call them.", "Never quote a price that isn't on the rate card.", "How do you decide a prospect is a good fit?"],
   account_manager: ["Put client complaints at the very top, always.", "How do you decide a client is at risk?", "Keep briefings to what changed since last time."],
 };
 

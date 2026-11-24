@@ -31,6 +31,7 @@ const ALIASES: Record<string, { full: string[]; short?: string[] }> = {
   social_strategist: { full: ["social strategist", "social media strategist", "organic strategist"], short: ["strategist"] },
   account_manager: { full: ["account manager"] },
   tracking_engineer: { full: ["tracking engineer", "tracking agent", "tracking ai", "measurement agent"] },
+  sales: { full: ["sales agent", "sales ai", "sales strategist", "sales specialist"], short: ["sales"] },
 };
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/ /g, "\\s+");
@@ -507,14 +508,14 @@ export type DirectRoute = { key: string; why: "asked" | "expert" | "deliverable"
  * (campaigns, a flow) goes to the line's lead strategist, who runs the flow; a strategy question goes to the
  * specialist for its line (from the words, else the screen they're on). Null: the assistant answers.
  */
-export function directSpecialist(text: string, opts: { screen?: string | null } = {}): DirectRoute | null {
+export function directSpecialist(text: string, opts: { screen?: string | null; me?: { role?: string | null; isExec?: boolean | null; isLead?: boolean | null } | null } = {}): DirectRoute | null {
   const asked = asksToBringIn(text);
   if (asked) return { key: asked, why: "asked" };
   // Making a deliverable with them ("I need to create campaigns for Candy Cloud"): the line's lead strategist runs it
   const flow = lineForAsk(text);
   if (flow && specialistOf(flow.lead) && emailWritingKind(text) !== "message") return { key: flow.lead, why: "deliverable" };
   if (!isExpertQuestion(text)) return null;
-  const key = specialistNamed(text) ?? suggestSpecialist(text)?.key ?? specialistForScreen(opts.screen);
+  const key = specialistNamed(text) ?? suggestSpecialist(text, null, opts.me)?.key ?? specialistForScreen(opts.screen);
   return key && specialistOf(key) ? { key, why: "expert" } : null;
 }
 

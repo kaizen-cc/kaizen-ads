@@ -91,17 +91,17 @@ const day = (offset: number) => {
 const sixDaysAgo = () => new Date(Date.now() - 6 * 86_400_000);
 const tomorrow = () => new Date(Date.now() + 86_400_000);
 
-/** The role agents anyone can talk to (every one that's online), for the talk-only pages */
-async function talkRoles(): Promise<TalkRole[]> {
+/** The role agents this person can talk to (every one that's online; Sales only for execs and leads), for the talk-only pages */
+async function talkRoles(me: Staff): Promise<TalkRole[]> {
   const { data } = await createAdminClient().from("ai_roles").select("*").order("sort_order");
   return (data ?? [])
-    .filter((r) => ROLE_SKILLS[r.key as string] && !(r as { offline?: boolean }).offline)
+    .filter((r) => ROLE_SKILLS[r.key as string] && !(r as { offline?: boolean }).offline && canTalkToAgent(me, r.key as string))
     .map((r) => ({ key: r.key as string, label: r.label as string, description: (r.description as string) ?? "", icon: (r.icon as string) ?? "spark", line: lineByKey(lineOfRole(r.key as string)).label }));
 }
 
 /** Everyone on the team can call and chat with every agent; only its trainers see its playbook and settings */
 async function TalkOnly({ me, role }: { me: Staff; role: string | null }) {
-  const roles = await talkRoles();
+  const roles = await talkRoles(me);
   const open = role ? roles.find((r) => r.key === role) : null;
   if (open && canTalkToAgent(me, open.key)) {
     const rows = await roleChatRows(createAdminClient(), me, open.key, { limit: 200 });
@@ -324,7 +324,7 @@ async function Agents({ me, open: askedAgent, role: askedRole, line: askedLine, 
             return (
               <div className="grid gap-10">
                 {overview}
-                <OtherAgents mine={roles.map((r) => r.key)} />
+                <OtherAgents me={me} mine={roles.map((r) => r.key)} />
               </div>
             );
           })()
@@ -1149,8 +1149,8 @@ async function Rates() {
 }
 
 /** A head's page also lists the agents outside their line, to call and chat with */
-async function OtherAgents({ mine }: { mine: string[] }) {
-  const others = (await talkRoles()).filter((r) => !mine.includes(r.key));
+async function OtherAgents({ me, mine }: { me: Staff; mine: string[] }) {
+  const others = (await talkRoles(me)).filter((r) => !mine.includes(r.key));
   return <AgentsToTalk roles={others} title="More agents to talk to" sub="Call or chat with any of them about your clients. Their own heads shape what they know." />;
 }
 

@@ -4,6 +4,7 @@
 // checks and greetings, and the safety review's reading and audio retention.
 
 import { pickTip, type TipRow } from "./tips";
+import { RESTRICTED_ROLES } from "@/lib/agent-access";
 import { AFTER_HOURS_GREETINGS, dayPartOf, isAfterHours, looksSensitive } from "@/lib/agent-call/core";
 
 export const ASSISTANT_KEY = "assistant";
@@ -26,6 +27,7 @@ export const SPECIALISTS: readonly Specialist[] = [
   { key: "market_analyst", label: "Market Analyst", about: "what's working across clients and the market", words: /\b(competitors?|market|trends?|industry|benchmarks?|other brands)\b/i },
   { key: "social_strategist", label: "Social Strategist", about: "organic social: posts, reels, engagement, followers, the posting plan", words: /\b(organic|social posts?|posts?|reels?|stories|engagement rate|followers?|content calendar|posting plan|social media)\b/i },
   { key: "tracking_engineer", label: "Tracking Engineer", about: "tracking and measurement: pixels, Conversions API, GTM, GA4, conversion tracking, discrepancies", words: /\b(tracking|pixel|capi|conversions? api|server[- ]side|gtm|tag manager|ga4|google analytics|event match|emq|dedup\w*|event_?id|enhanced conversions|offline conversions?|utms?|attribution window|discrepanc\w*|double[- ]?(firing|counting)|thank[- ]you page|customer events|events api)\b/i },
+  { key: "sales", label: "Sales", about: "new business: prospect research, prospect lists, pitches and outreach drafts, sales calls (execs and leads)", words: /\b(prospects?|prospecting|lead lists?|cold (outreach|email|call\w*)|outreach|pitch(es|ing)?|sales (call|pitch|strategy|script|deck)s?|new business|close the deal|objections?|discovery call)\b/i },
   { key: "account_manager", label: "Account Manager", about: "client relationships, what's owed and how clients feel", words: /\b(client (call|relationship|happy|upset|churn)|retention|renewal|owed|follow up with the client|check-?in)\b/i },
 ];
 
@@ -35,8 +37,9 @@ export const specialistOf = (key: string | null | undefined) => SPECIALISTS.find
  * The specialist a question is best for, if one stands out (the most matching words wins; a tie or nothing: none).
  * The assistant only offers ("Want me to call in the Media Buyer?"); it never calls one in without a yes.
  */
-export function suggestSpecialist(text: string, exclude: string | null = null): Specialist | null {
-  const scored = SPECIALISTS.filter((s) => s.key !== exclude)
+export function suggestSpecialist(text: string, exclude: string | null = null, me?: { role?: string | null; isExec?: boolean | null; isLead?: boolean | null } | null): Specialist | null {
+  // Restricted agents (Sales: execs and leads) are only suggested to the people who can talk to them
+  const scored = SPECIALISTS.filter((s) => s.key !== exclude && (!RESTRICTED_ROLES[s.key] || (me ? RESTRICTED_ROLES[s.key]({ role: me.role ?? null, isExec: me.isExec, isLead: me.isLead }) : false)))
     .map((s) => ({ s, n: (text.match(new RegExp(s.words.source, "gi")) ?? []).length }))
     .filter((x) => x.n > 0)
     .sort((a, b) => b.n - a.n);
@@ -108,7 +111,7 @@ export function orderForToday<T extends DayItem>(items: readonly T[]): T[] {
 // ─── Screens and links ──────────────────────────────────────────────────────
 
 /** The places in the app the assistant may open during a call */
-const APP_PREFIXES = ["/pipeline", "/board", "/clients", "/kpis", "/reports", "/ai", "/ideas", "/lab", "/settings", "/feedback", "/assistant", "/requests", "/winners", "/market", "/notifications", "/fatigue", "/team", "/next", "/profile", "/watch", "/csuite", "/safety", "/copy", "/reviews", "/scorecard", "/economics", "/stepins"];
+const APP_PREFIXES = ["/pipeline", "/board", "/clients", "/kpis", "/reports", "/ai", "/ideas", "/lab", "/settings", "/feedback", "/assistant", "/requests", "/winners", "/market", "/notifications", "/fatigue", "/team", "/next", "/profile", "/watch", "/csuite", "/safety", "/copy", "/reviews", "/scorecard", "/economics", "/stepins", "/sales"];
 
 /**
  * The named places open_screen knows (each screen's own address, with its URL state where a place is a view inside a
@@ -233,6 +236,12 @@ export const SCREEN_PLACES: Record<string, string> = {
   "kaizen ai": "/ai",
   ideas: "/ideas",
   "ads lab": "/lab",
+  // Sales (execs and leads): the prospects pipeline, one prospect's drafts, and the Sales agent itself
+  prospects: "/sales",
+  sales: "/sales",
+  "sales pipeline": "/sales",
+  "my prospects": "/sales?mine=1",
+  "sales agent": "/settings?tab=agents&role=sales#talk",
   market: "/market",
   winners: "/winners",
   fatigue: "/board?view=kpis&ads=1#tiring",

@@ -13,6 +13,8 @@ export type AiTool = {
   run: (user: Staff, input: Record<string, unknown>, chat?: ChatExtra) => Promise<unknown>;
   /** Only for these teams' lines (leave out for everyone): "ads" (the ads side), "email", "social" */
   lines?: ("ads" | "email" | "social")[];
+  /** Only for the people this says yes to (e.g. Sales: execs and leads); left out of everyone else's tool list */
+  only?: (user: Staff) => boolean;
 };
 
 /**

@@ -1,0 +1,473 @@
+import "server-only";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { askJson, researchWeb } from "@/lib/ai";
+import { briefText, cleanBrief, cleanPitch, cleanReview, cleanSite, clampScore, forwardStatus, isProspectStatus, sameBusiness, siteHost, type CallReview, type PitchDrafts, type ProspectBrief, type ProspectStatus } from "@/lib/sales-core";
+
+// The Sales agent (phase 1, internal: execs and leads). It researches a business from its site and the open web into a
+// prospect brief and a Kaizen sales strategy, builds prospect lists scored by fit, drafts outreach (call script,
+// email, LinkedIn note and message, all sent by the person themselves), reviews sales calls, and keeps everything on
+// the prospect in Sales › Prospects. When a prospect is won and enrolled, it's linked to the new client and its
+// documents can move from Kaizen Sales › Prospects › <name> to the client's Headquarters (the Drive rule: said back
+// for a yes first). LinkedIn: research and drafts only; nothing here browses, scrapes, connects or sends on LinkedIn.
+// Every function here trusts its caller to have checked the person works sales (worksSales); the tools do.
+
+type Admin = SupabaseClient;
+export type Prospect = {
+  id: string;
+  name: string;
+  website: string | null;
+  industry: string | null;
+  location: string | null;
+  contacts: { name: string; role: string; where: string }[];
+  fit_score: number | null;
+  fit_reason: string | null;
+  brief: ProspectBrief | null;
+  status: ProspectStatus;
+  owner_id: string | null;
+  source: string | null;
+  notes: string | null;
+  lost_reason: string | null;
+  client_id: string | null;
+  won_at: string | null;
+  researched_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export const PROSPECT_COLS = "id, name, website, industry, location, contacts, fit_score, fit_reason, brief, status, owner_id, source, notes, lost_reason, client_id, won_at, researched_at, created_at, updated_at";
+
+const RESEARCH_RULES = `Public sources only: the business's own website, Google (Business Profile, reviews), Yelp and similar review sites, their public social profiles (Instagram, Facebook, TikTok, YouTube), the Meta Ad Library (facebook.com/ads/library, search the page name: active ads and how long they've run) and the Google Ads Transparency Center (adstransparency.google.com). LinkedIn: only what a public web search shows (a company page or a person's title in a search result); never log in, browse or scrape LinkedIn. Never guess: when you can't see something (an ad library page that won't load), say "not visible" and why.`;
+
+/** Kaizen's rate card as lines for the prompt (the only prices the agent may quote) */
+export async function rateCardText(admin: Admin): Promise<string> {
+  const { data } = await admin.from("rate_card").select("service, tier, label, cadence, amount").eq("active", true).order("service").order("sort_order");
+  if (!(data ?? []).length) return "The rate card is empty: name services without prices and say prices are to confirm.";
+  return (data ?? []).map((r) => `- [${r.service}${r.tier ? ` · ${r.tier}` : ""}] ${r.label}: $${Number(r.amount).toLocaleString("en-US")}${r.cadence === "month" ? "/month" : " one-time"}`).join("\n");
+}
+
+/**
+ * Kaizen's own clients by industry with how their main ad account does against its target (last 30 days), for proof.
+ * Internal only: the agent describes them by industry, never by name, in anything a prospect sees.
+ */
+export async function clientProofText(admin: Admin, industryHint: string | null): Promise<string> {
+  const { data: clients } = await admin.from("clients").select("id, name, industry, industry_detail, created_at").is("archived_at", null).limit(400);
+  const all = (clients ?? []).filter((c) => c.industry || c.industry_detail);
+  if (!all.length) return "No client industries are recorded yet.";
+  const words = String(industryHint ?? "").toLowerCase().split(/[^a-z]+/).filter((w) => w.length >= 4);
+  const near = words.length ? all.filter((c) => words.some((w) => `${c.industry ?? ""} ${c.industry_detail ?? ""}`.toLowerCase().includes(w))) : [];
+  const pick = (near.length ? near : all).slice(0, 40);
+  const ids = pick.map((c) => c.id as string);
+  const [{ data: targets }, { data: snaps }] = await Promise.all([
+    admin.from("kpi_targets").select("id, client_id, platform, conversion, target").in("client_id", ids).eq("active", true),
+    admin.from("kpi_snapshots").select("target_id, windows, status").in("client_id", ids),
+  ]);
+  const lines = pick.map((c) => {
+    const ts = (targets ?? []).filter((t) => t.client_id === c.id);
+    const perf = ts
+      .map((t) => {
+        const s = (snaps ?? []).find((x) => x.target_id === t.id);
+        const d30 = ((s?.windows ?? {}) as Record<string, { spend?: number; results?: number }>).d30;
+        if (!d30?.spend) return null;
+        const cpr = d30.results ? Math.round((d30.spend / d30.results) * 100) / 100 : null;
+        return `${t.platform} ${t.conversion ?? "results"}: $${Math.round(d30.spend)} spend, ${d30.results ?? 0} results${cpr != null ? `, $${cpr} each` : ""}${t.target ? ` (target $${t.target})` : ""}${s?.status ? `, ${s.status}` : ""}`;
+      })
+      .filter(Boolean);
+    const months = Math.max(0, Math.round((Date.now() - new Date(c.created_at as string).getTime()) / (30 * 86_400_000)));
+    return `- ${c.name} · ${c.industry_detail ?? c.industry} · with Kaizen ~${months} months${perf.length ? ` · last 30 days: ${perf.join("; ")}` : ""}`;
+  });
+  return `${near.length ? "Kaizen clients in a similar industry" : "Kaizen clients (none matched the industry closely)"} (internal: never name them to a prospect):\n${lines.join("\n")}`;
+}
+
+const STR = { type: "string" };
+const STRS = { type: "array", items: STR };
+const BRIEF_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["name", "website", "industry", "summary", "sells", "locations", "positioning", "marketing", "gaps", "fit_score", "fit_reason", "strategy", "contacts", "sources"],
+  properties: {
+    name: STR,
+    website: STR,
+    industry: STR,
+    summary: STR,
+    sells: STR,
+    locations: STRS,
+    positioning: STR,
+    marketing: {
+      type: "object",
+      additionalProperties: false,
+      required: ["site", "offers", "reviews", "social", "meta_ads", "google_ads", "email_capture"],
+      properties: { site: STR, offers: STR, reviews: STR, social: STR, meta_ads: STR, google_ads: STR, email_capture: STR },
+    },
+    gaps: STRS,
+    fit_score: { type: "integer" },
+    fit_reason: STR,
+    strategy: {
+      type: "object",
+      additionalProperties: false,
+      required: ["services", "angle", "proof", "talking_points"],
+      properties: {
+        services: { type: "array", items: { type: "object", additionalProperties: false, required: ["service", "why", "price"], properties: { service: STR, why: STR, price: STR } } },
+        angle: STR,
+        proof: STRS,
+        talking_points: STRS,
+      },
+    },
+    contacts: { type: "array", items: { type: "object", additionalProperties: false, required: ["name", "role", "where"], properties: { name: STR, role: STR, where: STR } } },
+    sources: STRS,
+  },
+};
+
+/** One prospect by id (the caller's own session decides access) */
+export async function getProspect(db: SupabaseClient, id: string): Promise<Prospect | null> {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
+  const { data } = await db.from("prospects").select(PROSPECT_COLS).eq("id", id).maybeSingle();
+  return (data as Prospect | null) ?? null;
+}
+
+/** A prospect by id, its site or its name (loosely) */
+export async function findProspect(db: SupabaseClient, ref: string): Promise<Prospect | null> {
+  const r = ref.trim();
+  if (!r) return null;
+  const byId = await getProspect(db, r);
+  if (byId) return byId;
+  const host = siteHost(r);
+  if (host && /\./.test(r)) {
+    const { data } = await db.from("prospects").select(PROSPECT_COLS).ilike("website", `%${host}%`).limit(1).maybeSingle();
+    if (data) return data as Prospect;
+  }
+  const { data } = await db.from("prospects").select(PROSPECT_COLS).ilike("name", `%${r.replace(/[%_]/g, "")}%`).order("updated_at", { ascending: false }).limit(1).maybeSingle();
+  return (data as Prospect | null) ?? null;
+}
+
+/**
+ * Researches one business into a prospect brief and a Kaizen sales strategy, and keeps it on the prospect (made if
+ * new, found by its site or name otherwise). Takes a minute or two: the web first, then the brief.
+ */
+export async function researchProspect(db: SupabaseClient, admin: Admin, me: { id: string }, input: { name?: string | null; website?: string | null; location?: string | null; question?: string | null; prospectId?: string | null }): Promise<{ ok: true; prospect: Prospect; text: string } | { ok: false; error: string }> {
+  const existing = input.prospectId ? await getProspect(db, input.prospectId) : null;
+  const name = (input.name ?? existing?.name ?? "").trim();
+  const website = cleanSite(input.website) ?? existing?.website ?? null;
+  if (!name && !website) return { ok: false, error: "Which business? Give its name or website." };
+  const location = (input.location ?? existing?.location ?? "").trim() || null;
+  const who = [name, website, location].filter(Boolean).join(" · ");
+
+  const notes = await researchWeb({
+    agent: "sales_research",
+    label: "prospect research",
+    model: "sonnet",
+    maxSearches: 8,
+    maxFetches: 10,
+    system: `You research a business for Kaizen, a paid-ads and creative agency, before anyone reaches out. Gather facts, with the URL each came from. ${RESEARCH_RULES}`,
+    prompt: `Research this business: ${who}.${input.question ? ` They also asked: ${input.question}` : ""}
+Find and note, each with its source URL:
+1. What they sell (products or services, price points or ticket size if shown), and who to.
+2. Their locations (addresses, service area, number of locations).
+3. Positioning: how they describe themselves, what sets them apart, their brand look and tone.
+4. Website: quality (mobile, speed feel, clear calls to action, booking or checkout), current offers or promotions, email or SMS capture (popup, newsletter, lead magnet).
+5. Reviews: Google rating and count, other review sites, what reviewers praise and complain about.
+6. Social: each profile, followers, how often they post, last post date.
+7. Ads: Meta Ad Library (active ads, how many, how long running, formats) and Google Ads Transparency Center (any ads). Say "none found" only after checking.
+8. Owners or decision makers named publicly (the site's About page, press, a public search result), with their title and where seen.
+Plain notes, no recommendations.`,
+  });
+
+  const [rates, proof] = await Promise.all([rateCardText(admin), clientProofText(admin, `${existing?.industry ?? ""} ${notes.slice(0, 1500)}`)]);
+  const raw = await askJson<ProspectBrief & { name: string; website: string; industry: string }>({
+    agent: "sales_research",
+    label: "prospect brief",
+    schema: BRIEF_SCHEMA,
+    maxTokens: 8000,
+    system: `You are Kaizen's Sales agent. Turn the research notes into a prospect brief and a Kaizen sales strategy.
+- name, website (https://domain), industry (a short sub-vertical like "med spa" or "roofing contractor").
+- summary: two sentences: who they are and the opportunity for Kaizen.
+- marketing: what was seen for each (site, offers, reviews, social, meta_ads, google_ads, email_capture); "not visible" when unknown.
+- gaps: the likely gaps Kaizen fixes, most valuable first (at most 6), each tied to the evidence.
+- fit_score 0-100 and fit_reason: real offer, ticket size or margin for paid media to pay back, demand, visible gaps we fix, ability to pay. Under 40 means say plainly why it's a poor fit.
+- strategy.services: only from the rate card below, with its price as written there; why it fits this business.
+- strategy.angle: the pitch about their business (the revenue left on the table, the fastest win), not about Kaizen.
+- strategy.proof: from Kaizen's similar clients below, described by industry and result, never by client name ("a med spa on Meta: leads at $38 against a $45 target"). Empty if none are similar.
+- strategy.talking_points: 3 to 6 first-outreach points specific to this business.
+- contacts: people named publicly, with role and where seen. Never invent one.
+- sources: the URLs the facts came from.
+Only what the notes support; never invent a number, review or fact.`,
+    prompt: `<research_notes>\n${notes.slice(0, 40_000)}\n</research_notes>\n\n<rate_card>\n${rates}\n</rate_card>\n\n<kaizen_clients note="internal proof">\n${proof}\n</kaizen_clients>${input.question ? `\n\n<asked>${input.question}</asked>` : ""}`,
+  });
+  const brief = cleanBrief(raw);
+  const finalName = name || String(raw.name ?? "").trim() || siteHost(website) || "Prospect";
+  const finalSite = website ?? cleanSite(raw.website);
+  const row = {
+    name: finalName.slice(0, 160),
+    website: finalSite,
+    industry: String(raw.industry ?? "").trim().slice(0, 120) || existing?.industry || null,
+    location: location ?? (brief.locations[0] ?? null),
+    contacts: brief.contacts,
+    fit_score: brief.fit_score,
+    fit_reason: brief.fit_reason || null,
+    brief,
+    researched_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  const match = existing ?? (finalSite ? await findProspect(db, finalSite) : null) ?? (finalName ? await findExact(db, finalName) : null);
+  let saved: Prospect | null = null;
+  if (match) {
+    const { data, error } = await db.from("prospects").update({ ...row, status: forwardStatus(match.status, "researched") }).eq("id", match.id).select(PROSPECT_COLS).single();
+    if (error) return { ok: false, error: error.message };
+    saved = data as Prospect;
+  } else {
+    const { data, error } = await db.from("prospects").insert({ ...row, status: "researched", owner_id: me.id, created_by: me.id, source: "research" }).select(PROSPECT_COLS).single();
+    if (error) return { ok: false, error: error.message };
+    saved = data as Prospect;
+  }
+  await db.from("prospect_notes").insert({ prospect_id: saved.id, kind: "research", title: input.question ? `Research: ${input.question.slice(0, 120)}` : "Research", body: { brief }, created_by: me.id });
+  return { ok: true, prospect: saved, text: briefText(saved.name, brief) };
+}
+
+async function findExact(db: SupabaseClient, name: string): Promise<Prospect | null> {
+  const { data } = await db.from("prospects").select(PROSPECT_COLS).ilike("name", name.replace(/[%_]/g, "")).limit(1).maybeSingle();
+  return (data as Prospect | null) ?? null;
+}
+
+const LIST_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["prospects"],
+  properties: {
+    prospects: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "website", "location", "industry", "signals", "fit_score", "fit_reason"],
+        properties: { name: STR, website: STR, location: STR, industry: STR, signals: STR, fit_score: { type: "integer" }, fit_reason: STR },
+      },
+    },
+  },
+};
+
+export type ListedProspect = { id: string | null; name: string; website: string | null; location: string; industry: string; signals: string; fit_score: number | null; fit_reason: string; already: boolean };
+
+/**
+ * Finds businesses matching a profile ("med spas in Tampa running no ads") from public web sources, scores each by fit
+ * and adds the new ones to the pipeline as "new" (one already there is left as it is and marked already).
+ */
+export async function buildProspectList(db: SupabaseClient, admin: Admin, me: { id: string }, input: { profile: string; count?: number | null; save?: boolean }): Promise<{ ok: true; prospects: ListedProspect[]; added: number } | { ok: false; error: string }> {
+  const profile = input.profile.trim().slice(0, 500);
+  if (!profile) return { ok: false, error: "What kind of business, and where? (e.g. med spas in Tampa running no ads)" };
+  const count = Math.max(3, Math.min(15, Math.round(Number(input.count) || 8)));
+  const notes = await researchWeb({
+    agent: "sales_list",
+    label: "prospect list",
+    model: "sonnet",
+    maxSearches: 10,
+    maxFetches: 12,
+    system: `You build prospect lists for Kaizen, a paid-ads and creative agency. Find real, independent businesses (not directories, franchise corporate pages or listicles) that match the profile, each with its own website. ${RESEARCH_RULES}`,
+    prompt: `Find about ${count} businesses matching: ${profile}.
+For each: name, website, location, what they sell, and the signals behind fit: price point or ticket size, number of locations, review count and rating, social activity, whether they run Meta ads (Meta Ad Library) or Google ads (Ads Transparency Center), email capture on their site. When the profile names a condition ("running no ads"), check it for each and keep only those that meet it, or say it couldn't be checked. Plain notes with URLs.`,
+  });
+  const rates = await rateCardText(admin);
+  const out = await askJson<{ prospects: { name: string; website: string; location: string; industry: string; signals: string; fit_score: number; fit_reason: string }[] }>({
+    agent: "sales_list",
+    label: "prospect list scoring",
+    schema: LIST_SCHEMA,
+    maxTokens: 6000,
+    system: `You are Kaizen's Sales agent. From the notes, list the businesses that match the profile, best fit first, at most ${count}. Score fit 0-100 on: a real offer with enough ticket size or margin for paid ads to pay back, demand in their area, visible gaps Kaizen fixes (services on the rate card), and signs they can pay (locations, reviews, an established site). signals: the evidence seen, in one line. fit_reason: why the score, in one line. website as https://domain. Only businesses in the notes; never invent one.`,
+    prompt: `<profile>${profile}</profile>\n\n<notes>\n${notes.slice(0, 40_000)}\n</notes>\n\n<rate_card>\n${rates}\n</rate_card>`,
+  });
+  const listed: ListedProspect[] = [];
+  let added = 0;
+  for (const p of (out.prospects ?? []).slice(0, count)) {
+    const name = String(p.name ?? "").trim().slice(0, 160);
+    if (!name) continue;
+    const website = cleanSite(p.website);
+    const have = (website ? await findProspect(db, website) : null) ?? (await findExact(db, name));
+    const base = { name, website, location: String(p.location ?? "").slice(0, 200), industry: String(p.industry ?? "").slice(0, 120), signals: String(p.signals ?? "").slice(0, 600), fit_score: clampScore(p.fit_score), fit_reason: String(p.fit_reason ?? "").slice(0, 600) };
+    if (have) {
+      listed.push({ ...base, id: have.id, already: true });
+      continue;
+    }
+    if (input.save === false) {
+      listed.push({ ...base, id: null, already: false });
+      continue;
+    }
+    const { data } = await db
+      .from("prospects")
+      .insert({ name, website, location: base.location || null, industry: base.industry || null, fit_score: base.fit_score, fit_reason: [base.fit_reason, base.signals && `Signals: ${base.signals}`].filter(Boolean).join(" · ") || null, status: "new", owner_id: me.id, created_by: me.id, source: `list: ${profile.slice(0, 120)}` })
+      .select("id")
+      .maybeSingle();
+    if (data) added++;
+    listed.push({ ...base, id: (data?.id as string | undefined) ?? null, already: false });
+  }
+  return { ok: true, prospects: listed, added };
+}
+
+const PITCH_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["call_script", "email", "linkedin"],
+  properties: {
+    call_script: {
+      type: "object",
+      additionalProperties: false,
+      required: ["opener", "questions", "angle", "ask", "objections"],
+      properties: { opener: STR, questions: STRS, angle: STR, ask: STR, objections: { type: "array", items: { type: "object", additionalProperties: false, required: ["objection", "answer"], properties: { objection: STR, answer: STR } } } },
+    },
+    email: { type: "object", additionalProperties: false, required: ["subject", "body"], properties: { subject: STR, body: STR } },
+    linkedin: { type: "object", additionalProperties: false, required: ["connection_note", "message"], properties: { connection_note: STR, message: STR } },
+  },
+};
+
+/** The prospect's research and the newest notes, as text for the agent */
+async function prospectContext(db: SupabaseClient, p: Prospect): Promise<string> {
+  const { data: notes } = await db.from("prospect_notes").select("kind, title, body, created_at").eq("prospect_id", p.id).neq("kind", "research").order("created_at", { ascending: false }).limit(4);
+  const head = `${p.name}${p.website ? ` (${p.website})` : ""}${p.industry ? ` · ${p.industry}` : ""}${p.location ? ` · ${p.location}` : ""} · stage: ${p.status}`;
+  const brief = p.brief ? briefText(p.name, cleanBrief(p.brief)) : `Not researched yet.${p.fit_reason ? ` ${p.fit_reason}` : ""}`;
+  const more = (notes ?? []).map((n) => `${n.kind} (${String(n.created_at).slice(0, 10)}): ${n.title ?? ""} ${JSON.stringify(n.body).slice(0, 1500)}`).join("\n");
+  return [head, brief, p.notes ? `Team notes: ${p.notes}` : "", more ? `Earlier work:\n${more}` : ""].filter(Boolean).join("\n\n");
+}
+
+/** Outreach drafts for one prospect: a call script, an email, and a LinkedIn note and message (sent by the person) */
+export async function draftPitch(db: SupabaseClient, admin: Admin, me: { id: string; name?: string | null; role?: string | null }, p: Prospect, opts: { focus?: string | null } = {}): Promise<{ ok: true; drafts: PitchDrafts }> {
+  const [context, rates] = await Promise.all([prospectContext(db, p), rateCardText(admin)]);
+  const raw = await askJson<PitchDrafts>({
+    agent: "sales_pitch",
+    label: "pitch drafts",
+    schema: PITCH_SCHEMA,
+    maxTokens: 5000,
+    system: `You are Kaizen's Sales agent writing first outreach for one prospect, in Kaizen's voice: a real person at a growth agency, direct and warm, specific to this business, one clear ask, no hype, no fake familiarity, no "I hope this finds you well".
+- call_script: opener (who we are and why them, in two sentences), questions (two or three discovery questions), angle (the one insight about their business), ask (a 15-minute call or a free audit), objections (the three most likely, with a short honest answer each).
+- email: subject (short, specific, lower-key), body under 120 words, signed "[Your name]". Use a fact from the research.
+- linkedin: connection_note under 280 characters; message (after they accept) under 600 characters. These are drafts the person sends by hand on LinkedIn.
+Prices only from the rate card, and only if the focus asks for them. Never mention other Kaizen clients by name.`,
+    prompt: `<prospect>\n${context}\n</prospect>\n\n<rate_card>\n${rates}\n</rate_card>${opts.focus ? `\n\n<focus>${opts.focus}</focus>` : ""}`,
+  });
+  const drafts = cleanPitch(raw);
+  await db.from("prospect_notes").insert({ prospect_id: p.id, kind: "pitch", title: opts.focus ? `Pitch: ${opts.focus.slice(0, 100)}` : "Pitch drafts", body: drafts, created_by: me.id });
+  return { ok: true, drafts };
+}
+
+const REVIEW_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["summary", "went_well", "improve", "objections", "next_steps", "proposal", "stage"],
+  properties: {
+    summary: STR,
+    went_well: STRS,
+    improve: STRS,
+    objections: { type: "array", items: { type: "object", additionalProperties: false, required: ["objection", "how_handled", "better_answer"], properties: { objection: STR, how_handled: STR, better_answer: STR } } },
+    next_steps: { type: "array", items: { type: "object", additionalProperties: false, required: ["step", "who", "when"], properties: { step: STR, who: STR, when: STR } } },
+    proposal: { type: "object", additionalProperties: false, required: ["send", "services", "note"], properties: { send: { type: "boolean" }, services: STRS, note: STR } },
+    stage: { type: "string", enum: ["contacted", "talking", "proposal", "won", "lost"] },
+  },
+};
+
+/** A sales call reviewed from its transcript; kept on the prospect when there is one (and its stage moved forward) */
+export async function reviewSalesCall(db: SupabaseClient, admin: Admin, me: { id: string }, input: { transcript: string; prospect: Prospect | null; source?: string | null }): Promise<{ ok: true; review: CallReview; stage: ProspectStatus | null } | { ok: false; error: string }> {
+  const transcript = input.transcript.trim();
+  if (transcript.length < 200) return { ok: false, error: "That transcript is too short to review. Paste the call's transcript, attach it, or give its Google Doc link." };
+  const [context, rates] = await Promise.all([input.prospect ? prospectContext(db, input.prospect) : Promise.resolve(""), rateCardText(admin)]);
+  const raw = await askJson<CallReview>({
+    agent: "sales_call_review",
+    label: "sales call review",
+    schema: REVIEW_SCHEMA,
+    maxTokens: 6000,
+    system: `You are Kaizen's Sales agent reviewing a sales call for the Kaizen person who ran it. Be a good sales coach: specific, honest, short.
+- summary: three sentences: where the deal stands, the prospect's real need, and the risk.
+- went_well / improve: concrete moments, quoting short phrases from the call.
+- objections: each one raised, how it was handled, and a better answer for next time.
+- next_steps: what happens next, who does it (Kaizen or the prospect, by role), and when if said.
+- proposal: send true when a proposal is the right next move; services only from the rate card; note: tiers, scope or pricing angle.
+- stage: where the deal is now (contacted, talking, proposal, won, lost).
+Only what the transcript supports.`,
+    prompt: `${context ? `<prospect>\n${context}\n</prospect>\n\n` : ""}<rate_card>\n${rates}\n</rate_card>\n\n<call_transcript${input.source ? ` source="${input.source.replace(/"/g, "'")}"` : ""}>\n${transcript.slice(0, 120_000)}\n</call_transcript>`,
+  });
+  const review = cleanReview(raw);
+  let stage: ProspectStatus | null = null;
+  if (input.prospect) {
+    await db.from("prospect_notes").insert({ prospect_id: input.prospect.id, kind: "call_review", title: input.source ? `Call review: ${input.source.slice(0, 100)}` : "Call review", body: review, created_by: me.id });
+    // Won and lost are the person's call (they set those themselves); a review only moves an open deal forward
+    if (review.stage && review.stage !== "won" && review.stage !== "lost") {
+      const next = forwardStatus(input.prospect.status, review.stage);
+      if (next !== input.prospect.status) {
+        await db.from("prospects").update({ status: next, updated_at: new Date().toISOString() }).eq("id", input.prospect.id);
+        stage = next;
+      }
+    }
+  }
+  return { ok: true, review, stage };
+}
+
+/** Changes a prospect's stage, owner, notes or details (the person's own session; RLS checks they work sales) */
+export async function updateProspect(db: SupabaseClient, id: string, patch: { status?: unknown; owner_id?: unknown; notes?: unknown; lost_reason?: unknown; name?: unknown; website?: unknown; location?: unknown; industry?: unknown; fit_score?: unknown }): Promise<{ ok: true; prospect: Prospect } | { ok: false; error: string }> {
+  const row: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (patch.status !== undefined) {
+    if (!isProspectStatus(patch.status)) return { ok: false, error: "The stage is one of new, researched, contacted, talking, proposal, won or lost." };
+    row.status = patch.status;
+    if (patch.status === "won") row.won_at = new Date().toISOString();
+  }
+  if (patch.owner_id !== undefined) row.owner_id = typeof patch.owner_id === "string" && /^[0-9a-f-]{36}$/i.test(patch.owner_id) ? patch.owner_id : null;
+  for (const k of ["notes", "lost_reason", "name", "location", "industry"] as const) if (patch[k] !== undefined) row[k] = String(patch[k] ?? "").trim().slice(0, k === "notes" ? 4000 : 300) || null;
+  if (patch.name !== undefined && !row.name) return { ok: false, error: "A prospect needs a name." };
+  if (patch.website !== undefined) row.website = cleanSite(patch.website);
+  if (patch.fit_score !== undefined) row.fit_score = clampScore(patch.fit_score);
+  const { data, error } = await db.from("prospects").update(row).eq("id", id).select(PROSPECT_COLS).maybeSingle();
+  if (error) return { ok: false, error: /prospects_site/.test(error.message) ? "Another prospect already has that website." : error.message };
+  if (!data) return { ok: false, error: "That prospect isn't one you can change." };
+  return { ok: true, prospect: data as Prospect };
+}
+
+/**
+ * A won prospect becomes a client through Kaizen's enrollment (Kaizen Track's enrollment starts onboarding). This finds
+ * the enrolled client (by site or name, or the one named), links it, and points the prospect's Kaizen documents at
+ * the client; moving the files in Drive is asked for separately (the Drive rule). Returns what's left to do.
+ */
+export async function linkWonProspect(db: SupabaseClient, admin: Admin, p: Prospect, clientRef?: string | null): Promise<{ client: { id: string; name: string; slug: string } | null; documents: { id: string; title: string; link: string | null; folder: string | null }[] }> {
+  let client: { id: string; name: string; slug: string; website: string | null } | null = null;
+  if (p.client_id) {
+    const { data } = await admin.from("clients").select("id, name, slug, website").eq("id", p.client_id).maybeSingle();
+    client = (data as typeof client) ?? null;
+  }
+  if (!client) {
+    const { data: clients } = await admin.from("clients").select("id, name, slug, website").is("archived_at", null).order("created_at", { ascending: false }).limit(1000);
+    const ref = String(clientRef ?? "").trim();
+    const list = (clients ?? []) as { id: string; name: string; slug: string; website: string | null }[];
+    client = (ref ? list.find((c) => c.id === ref || c.slug === ref || sameBusiness({ name: ref }, c)) : null) ?? list.find((c) => sameBusiness(p, c)) ?? null;
+  }
+  if (client) {
+    await db.from("prospects").update({ client_id: client.id, status: "won", won_at: p.won_at ?? new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", p.id);
+    await admin.from("kaizen_documents").update({ client_id: client.id }).is("client_id", null).ilike("prospect_name", p.name.replace(/[%_]/g, ""));
+  }
+  const { data: docs } = await admin.from("kaizen_documents").select("id, title, google_url, folder_place, prospect_name, client_id").ilike("prospect_name", p.name.replace(/[%_]/g, "")).order("created_at", { ascending: false }).limit(20);
+  return {
+    client: client ? { id: client.id, name: client.name, slug: client.slug } : null,
+    documents: (docs ?? []).map((d) => ({ id: d.id as string, title: (d.title as string) ?? "Document", link: (d.google_url as string | null) ?? null, folder: (d.folder_place as string | null) ?? null })),
+  };
+}
+
+/**
+ * Hourly: a won prospect not yet linked whose client has since been enrolled is linked, and its owner gets a notice to
+ * move its documents to the client's Headquarters (moving them waits for their yes on the folder).
+ */
+export async function linkEnrolledProspects(admin: Admin) {
+  const { data: won } = await admin.from("prospects").select(PROSPECT_COLS).eq("status", "won").is("client_id", null).limit(50);
+  let linked = 0;
+  for (const p of (won ?? []) as Prospect[]) {
+    const r = await linkWonProspect(admin, admin, p).catch(() => null);
+    if (!r?.client) continue;
+    linked++;
+    if (p.owner_id)
+      await admin.from("notifications").upsert(
+        {
+          profile_id: p.owner_id,
+          kind: "agent",
+          client_id: r.client.id,
+          key: `prospect-won:${p.id}`,
+          title: `${p.name} is now a client`,
+          body: r.documents.length ? `Its ${r.documents.length} document${r.documents.length === 1 ? "" : "s"} can move from Kaizen Sales › Prospects to ${r.client.name}'s Headquarters: ask the assistant to move them.` : `Linked to ${r.client.name}; onboarding runs from the enrollment.`,
+          href: `/sales/${p.id}`,
+          priority: "normal",
+        },
+        { onConflict: "profile_id,key", ignoreDuplicates: true },
+      );
+  }
+  return { linked };
+}

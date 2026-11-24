@@ -24,6 +24,13 @@ export const ROLE_SKILLS: Record<string, readonly string[]> = {
   social_strategist: ["social_audit", "social_desk"],
   // The measurement expert for the tracking specialist and the buyers: a client's tracking check and the tracking desk
   tracking_engineer: ["tracking_audit", "tracking_desk"],
+  // Sales (internal for now): prospect research, lists, pitch drafts, sales-call review and the desk; execs train it
+  sales: ["sales_research", "sales_list", "sales_pitch", "sales_call_review", "sales_desk"],
+};
+
+/** Role agents only some people see and talk to (the rest of the team never sees them): Sales is the execs' and leads' */
+export const RESTRICTED_ROLES: Record<string, (me: Me) => boolean> = {
+  sales: (me) => Boolean(me.isExec || me.isLead),
 };
 
 /** The role agents that ship offline (parked): no AI path calls their skills until an exec brings the role online */
@@ -54,7 +61,7 @@ export function roleOfAgent(key: string | null | undefined): string | null {
   return null;
 }
 
-type Me = { role: string | null | undefined; isExec?: boolean | null };
+type Me = { role: string | null | undefined; isExec?: boolean | null; isLead?: boolean | null };
 
 /** The role agents this person can train: every one for an exec, their line's for a head, none for anyone else */
 export function trainableRoles(me: Me): readonly string[] {
@@ -84,6 +91,7 @@ export function canTalkToAgent(me: Me, roleKey: string | null | undefined): bool
   // The personal assistant (Call my assistant): everyone has their own; nobody trains it
   if (roleKey === "assistant") return Boolean(me.role) || Boolean(me.isExec);
   if (!roleKey || !ROLE_SKILLS[roleKey]) return false;
+  if (RESTRICTED_ROLES[roleKey] && !RESTRICTED_ROLES[roleKey](me)) return false;
   return Boolean(me.role) || Boolean(me.isExec);
 }
 

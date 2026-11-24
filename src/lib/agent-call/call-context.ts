@@ -61,6 +61,7 @@ export const CALL_ROLES: Record<string, { label: string; icon: string }> = {
   market_analyst: { label: "Market Analyst", icon: "eye" },
   account_manager: { label: "Account Manager", icon: "feed" },
   tracking_engineer: { label: "Tracking Engineer", icon: "scan" },
+  sales: { label: "Sales", icon: "target" },
 };
 
 /** The agent for a client's line or service tab: Media Buyer for ads, Email Strategist for email, and so on */
