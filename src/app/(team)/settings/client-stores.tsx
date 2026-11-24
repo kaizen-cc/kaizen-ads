@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { adminConfigured } from "@/lib/supabase/admin";
+import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
 // Settings › Connections › Client stores: every client's Shopify, how far back its history is read, and the clients that
@@ -15,7 +15,7 @@ export async function ClientStores() {
     db.from("client_integrations").select("id, account, label, status, settings, last_synced_at, last_error, clients(name, slug)").eq("kind", "shopify").neq("status", "disconnected").order("created_at"),
     import("@/lib/shopify/store"),
   ]);
-  const todo = await shopifyToConnect(db);
+  const [todo, waiting] = await Promise.all([shopifyToConnect(db), import("@/lib/shopify/store").then((m) => m.pendingInstalls(createAdminClient()))]);
   const ready = Boolean(process.env.SHOPIFY_API_KEY && process.env.SHOPIFY_API_SECRET);
   return (
     <div className="grid gap-6">
@@ -46,6 +46,23 @@ export async function ClientStores() {
           <p className="text-sm text-faint">No store connected yet.</p>
         )}
       </section>
+      {waiting.length > 0 && (
+        <section className="grid gap-3">
+          <div>
+            <h2 className="font-heading text-[18px]">Installed, waiting to be linked</h2>
+            <p className="mt-1 text-sm text-muted">These stores installed the Kaizen OS app from Shopify&apos;s side. Link each on its client&apos;s page (Store revenue › Link to this client).</p>
+          </div>
+          <ul className="grid gap-2">
+            {waiting.map((w) => (
+              <li key={w.shop} className="flex min-h-11 flex-wrap items-center gap-x-3 rounded-[12px] border border-line bg-surface px-3.5 py-2.5 text-sm">
+                <span className="font-medium">{w.name ?? w.shop}</span>
+                <span className="text-[12px] text-faint">{w.shop}</span>
+                <span className="ml-auto text-[12px] text-faint">{day(w.at.slice(0, 10))}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       <section className="grid gap-3">
         <div>
           <h2 className="font-heading text-[18px]">On Shopify, not connected</h2>

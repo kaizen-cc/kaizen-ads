@@ -101,6 +101,7 @@ export async function connectShopify(admin: SupabaseClient, clientId: string, in
 
 /** Shopify told us the app was uninstalled (or the store closed): the token is deleted, what was read stays */
 export async function storeUninstalled(admin: SupabaseClient, shop: string) {
+  await admin.from("shopify_pending_installs").delete().eq("shop", shop);
   const { data } = await admin.from("client_integrations").select("id").eq("kind", "shopify").eq("account", shop).neq("status", "disconnected");
   for (const r of data ?? []) {
     await admin.from("client_integration_secrets").delete().eq("integration_id", r.id);
@@ -522,4 +523,61 @@ export async function storePeriods(admin: SupabaseClient, clientId: string, rang
     const t = totalsFor(store, spend, r);
     return { storeRevenue: t.revenue, storeOrders: t.orders, allSpend: t.adSpend };
   });
+}
+
+/**
+ * Shopify's shop/redact (48 hours after the app is uninstalled), or a merchant's deletion request: everything read from
+ * the store goes. Its daily totals, the recent days mirrored into client_business_daily (unless the client has another
+ * live store), the token and the connection itself. Customer records are never stored, so there's nothing else.
+ */
+export async function eraseStore(admin: SupabaseClient, shop: string) {
+  const { data: conns } = await admin.from("client_integrations").select("id, client_id").eq("kind", "shopify").eq("account", shop);
+  await admin.from("shopify_daily").delete().eq("shop", shop);
+  await admin.from("shopify_pending_installs").delete().eq("shop", shop);
+  for (const c of conns ?? []) {
+    await admin.from("client_integration_secrets").delete().eq("integration_id", c.id);
+    await admin.from("client_integrations").delete().eq("id", c.id);
+    const { count } = await admin.from("client_integrations").select("id", { count: "exact", head: true }).eq("client_id", c.client_id).eq("kind", "shopify").neq("status", "disconnected");
+    if (!count) await admin.from("client_business_daily").delete().eq("client_id", c.client_id).eq("source", "shopify");
+  }
+  return (conns ?? []).length;
+}
+
+// ─── Installs from Shopify's side ──────────────────────────────────────────
+
+/** A store installed the app from Shopify's side: its token waits (encrypted) until it's linked to a client */
+export async function parkInstall(admin: SupabaseClient, shop: string, tokens: ShopTokens) {
+  const info = await shopInfo(shop, tokens.access_token);
+  await admin.from("shopify_pending_installs").upsert({ shop, name: info.name, secret: encryptSecret(JSON.stringify(tokens)), scopes: info.scopes, created_at: new Date().toISOString() });
+  return info.name;
+}
+
+/** A waiting install, linked to a client: connected the usual way (history read next), then no longer waiting */
+export async function linkPending(admin: SupabaseClient, clientId: string, shop: string, by: string | null) {
+  const { data } = await admin.from("shopify_pending_installs").select("secret").eq("shop", shop).maybeSingle();
+  if (!data) return { ok: false as const, error: "That store isn't waiting to be linked." };
+  let tokens: ShopTokens;
+  try {
+    tokens = JSON.parse(decryptSecret(data.secret as string)) as ShopTokens;
+  } catch {
+    return { ok: false as const, error: "Its token can't be unlocked: install the app again from the client page." };
+  }
+  const r = await connectShopify(admin, clientId, { shop, tokens, auth: "oauth", by });
+  if (r.ok) await admin.from("shopify_pending_installs").delete().eq("shop", shop);
+  return r;
+}
+
+/** The one client whose site or onboarding named this store, if exactly one did */
+export async function clientForShop(admin: SupabaseClient, shop: string): Promise<string | null> {
+  // A store that was connected before (reinstalled after an uninstall) goes back to its client
+  const { data: before } = await admin.from("client_integrations").select("client_id").eq("kind", "shopify").eq("account", shop).order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (before) return before.client_id as string;
+  const { data } = await admin.from("client_store_hints").select("client_id, clients!inner(archived_at)").eq("shop_domain", shop).is("clients.archived_at", null).limit(2);
+  return data?.length === 1 ? (data[0].client_id as string) : null;
+}
+
+/** Stores waiting to be linked to a client */
+export async function pendingInstalls(admin: SupabaseClient): Promise<{ shop: string; name: string | null; at: string }[]> {
+  const { data } = await admin.from("shopify_pending_installs").select("shop, name, created_at").order("created_at", { ascending: false });
+  return (data ?? []).map((r) => ({ shop: r.shop as string, name: (r.name as string | null) ?? null, at: r.created_at as string }));
 }

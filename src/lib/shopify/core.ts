@@ -55,8 +55,8 @@ export function validWebhookHmac(rawBody: string, header: string | null, secret:
   return safeEqual(createHmac("sha256", secret).update(rawBody, "utf8").digest("base64"), header);
 }
 
-/** Who started the install: the client, the store, from the team's page or the client's portal, and until when it's good */
-export type InstallState = { client: string; shop: string; from: "team" | "portal"; nonce: string; exp: number };
+/** Who started the install: the client ("" when the store installed from Shopify's side), the store, where from, and until when it's good */
+export type InstallState = { client: string; shop: string; from: "team" | "portal" | "shopify"; nonce: string; exp: number };
 
 export function signState(s: InstallState, secret: string): string {
   const body = Buffer.from(JSON.stringify(s)).toString("base64url");

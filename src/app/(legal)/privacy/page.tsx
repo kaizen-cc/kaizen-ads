@@ -2,10 +2,14 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = { title: "Privacy policy · Kaizen Ads", description: "How Kaizen Ads, by Kaizen Marketing, collects, uses and protects information." };
 
-const UPDATED = "November 4, 2026";
+const UPDATED = "November 24, 2026";
 
-function H({ children }: { children: React.ReactNode }) {
-  return <h2 className="mt-4 font-heading text-[20px]">{children}</h2>;
+function H({ children, id }: { children: React.ReactNode; id?: string }) {
+  return (
+    <h2 id={id} className="mt-4 scroll-mt-6 font-heading text-[20px]">
+      {children}
+    </h2>
+  );
 }
 
 export default function Privacy() {
@@ -22,7 +26,7 @@ export default function Privacy() {
         <li><strong>Account information:</strong> the name and email address of Kaizen team members and of client contacts we invite, used to sign in and to send them their ads, reports and notices.</li>
         <li><strong>Advertising data:</strong> campaign, ad set, ad, keyword and performance data from the Meta and Google Ads accounts our clients have given Kaizen Marketing access to.</li>
         <li><strong>Content our clients share with us:</strong> brand assets, creative, answers to our intake form, comments and approvals in the client portal, and messages in their team channel.</li>
-        <li><strong>Business results our clients connect:</strong> where a client connects a store or CRM, the order, lead and customer counts we use to measure their advertising (without customers&rsquo; names or emails).</li>
+        <li><strong>Business results our clients connect:</strong> where a client connects a store or CRM, the order, lead and customer counts we use to measure their advertising (without customers&rsquo; names or emails). Shopify stores: see <a className="text-brand-text underline" href="#shopify">Shopify stores</a>.</li>
         <li><strong>Usage information:</strong> basic logs of activity in Kaizen Ads, used to keep it secure and working.</li>
       </ul>
 
@@ -44,6 +48,41 @@ export default function Privacy() {
         <li>do not sell Google user data, or use or transfer it for advertising, credit-worthiness or lending purposes;</li>
         <li>do not use Google user data to develop, improve or train generalized artificial intelligence or machine learning models;</li>
         <li>do not allow humans to read Google user data except with the client&rsquo;s permission, to provide the service, for security, or to comply with the law.</li>
+      </ul>
+
+      <H id="shopify">Shopify stores</H>
+      <p>
+        When a merchant connects their Shopify store to Kaizen Ads (the &ldquo;Kaizen OS&rdquo; Shopify app, or an app made in their own store for us), we get <strong>read-only</strong> access. We can&rsquo;t change anything in the store.
+      </p>
+      <ul className="grid gap-1.5">
+        <li>
+          <strong>What we read:</strong> orders (date, amounts, discounts, refunds, taxes, shipping, sales channel, test and cancelled status), the source of the visit that led to each order (UTM tags, referrer, landing page), products, and for each order&rsquo;s customer only an internal ID, when they became a customer and how many orders they&rsquo;ve placed. We do not read or store customers&rsquo; names, email addresses, phone numbers or addresses.
+        </li>
+        <li>
+          <strong>Why:</strong> only to report the merchant&rsquo;s own results to the merchant and to the Kaizen team working on their account: store revenue, orders, average order value, new versus returning customers, and revenue against their ad spend (MER), including before and after they started working with us. It is never used for any other merchant, for advertising profiles, or for automated decisions about people.
+        </li>
+        <li>
+          <strong>What we keep:</strong> daily totals only (for example, &ldquo;42 orders, $3,180 revenue, 30 new customers on March 3&rdquo;). Individual orders and customer details are read to calculate those totals and are not stored.
+        </li>
+        <li>
+          <strong>Security:</strong> access tokens are encrypted at rest (AES-256-GCM) and never shown again; all data is encrypted in transit (TLS) and at rest, and only Kaizen team members and the merchant&rsquo;s own invited contacts can see it.
+        </li>
+        <li>
+          <strong>No selling or sharing:</strong> we don&rsquo;t sell, rent or share Shopify data with anyone. It is processed only by the service providers listed under Sharing, to run Kaizen Ads.
+        </li>
+        <li>
+          <strong>Retention and deletion:</strong> we keep a store&rsquo;s daily totals while the merchant works with us. When the app is uninstalled, its access token is deleted immediately. When Shopify sends its shop deletion request (48 hours after uninstalling), we delete everything we read from that store (its daily totals and the connection) as soon as it arrives. A merchant can ask us to delete it sooner at any time.
+        </li>
+        <li>
+          <strong>Customer privacy requests:</strong> because we store no information about individual customers, a customer data request from Shopify (customers/data_request) has no customer data of ours to report, and a customer deletion request (customers/redact) has nothing of ours to erase. We acknowledge both, and answer any question about them at the address below.
+        </li>
+        <li>
+          <strong>Contact:</strong> questions or requests about Shopify data go to{" "}
+          <a className="text-brand-text underline" href="mailto:santi@kaizenmarketing.agency">
+            santi@kaizenmarketing.agency
+          </a>
+          .
+        </li>
       </ul>
 
       <H>How we use information</H>

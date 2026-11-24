@@ -129,6 +129,7 @@ export async function BusinessStream({ clientId }: { clientId: string }) {
   const me = await requireStaff();
   const [summary, model, overview] = await T("store & CRM", Promise.all([businessSummary(supabase, clientId).catch(() => null), businessModelOf(admin, clientId).catch(() => null), shopify.storeOverview(supabase, admin, clientId).catch(() => null)]));
   const ba = overview?.start.date ? await shopify.storeBeforeAfter(admin, clientId, { pivot: overview.start.date }).catch(() => null) : null;
+  const waiting = !overview && mayEditSetup(me) ? await shopify.pendingInstalls(admin).catch(() => []) : [];
   const split = ba && !("error" in ba) ? { pivot: ba.pivot, source: overview?.start.source ?? null, beforePerMonth: ba.before.perMonth, afterPerMonth: ba.after.perMonth, growthPct: ba.growthPct, beforeMer: ba.before.mer, afterMer: ba.after.mer, beforeDays: ba.before.days, afterDays: ba.after.days, note: ba.note ?? ba.stillReading ?? null } : null;
   return (
     <>
@@ -140,6 +141,7 @@ export async function BusinessStream({ clientId }: { clientId: string }) {
         canEdit={mayEditSetup(me) && !me.viewAs}
         suggest={model?.model === "ecommerce"}
         appReady={Boolean(process.env.SHOPIFY_API_KEY && process.env.SHOPIFY_API_SECRET)}
+        waiting={waiting}
       />
       <IntegrationsPanel
         clientId={clientId}

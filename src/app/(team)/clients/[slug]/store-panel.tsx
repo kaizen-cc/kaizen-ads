@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useTransition } from "react";
 import type { StoreOverview } from "@/lib/shopify/store";
 import { connectStore } from "./integrations-actions";
-import { readStoreNow, setKaizenStart } from "./store-actions";
+import { linkWaitingStore, readStoreNow, setKaizenStart } from "./store-actions";
 
 // The client's real store on their page: Shopify's revenue over the last 30 days against the 30 before, orders, AOV,
 // new customers and MER (store revenue over every ad dollar on Meta, Google and TikTok), the last 90 days by day, 13
@@ -87,7 +87,7 @@ function Months({ months, cur, pivot }: { months: StoreOverview["months"]; cur: 
   );
 }
 
-export function StorePanel({ clientId, overview, split, hint, canEdit, suggest, appReady }: { clientId: string; overview: StoreOverview | null; split: StoreSplit; hint: { shop: string | null; evidence: string[] } | null; canEdit: boolean; /** Shown even with no hint: an ecommerce client */ suggest: boolean; /** The Kaizen OS Shopify app's keys are set */ appReady: boolean }) {
+export function StorePanel({ clientId, overview, split, hint, canEdit, suggest, appReady, waiting = [] }: { clientId: string; overview: StoreOverview | null; split: StoreSplit; hint: { shop: string | null; evidence: string[] } | null; canEdit: boolean; /** Shown even with no hint: an ecommerce client */ suggest: boolean; /** The Kaizen OS Shopify app's keys are set */ appReady: boolean; /** Stores that installed the app from Shopify's side, waiting for a client */ waiting?: { shop: string; name: string | null }[] }) {
   const router = useRouter();
   const sp = useSearchParams();
   const flash = sp.get("shopify");
@@ -209,6 +209,32 @@ export function StorePanel({ clientId, overview, split, hint, canEdit, suggest, 
             </div>
           ) : (
             <p className="text-sm text-faint">No store connected yet.</p>
+          )}
+          {canEdit && waiting.length > 0 && (
+            <div className="grid gap-2 rounded-[12px] border border-line bg-bg p-3.5">
+              <p className="text-[12.5px] text-muted">Installed the Kaizen OS app from Shopify, not linked to a client yet:</p>
+              {waiting.map((w) => (
+                <div key={w.shop} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                  <span className="font-medium">{w.name ?? w.shop}</span>
+                  <span className="text-[12px] text-faint">{w.shop}</span>
+                  <button
+                    type="button"
+                    disabled={pending}
+                    onClick={() =>
+                      start(async () => {
+                        if (!confirm(`Link ${w.name ?? w.shop} to this client?`)) return;
+                        const r = await linkWaitingStore(clientId, w.shop);
+                        if (!r.ok) setError(r.error);
+                        router.refresh();
+                      })
+                    }
+                    className="ml-auto h-11 rounded-full border border-line px-4 text-[13px] hover:border-brand/60 md:h-8"
+                  >
+                    Link to this client
+                  </button>
+                </div>
+              ))}
+            </div>
           )}
           {canEdit ? connect : <p className="text-[12.5px] text-faint">An exec or team lead connects it (or the client, from their onboarding guide).</p>}
         </>

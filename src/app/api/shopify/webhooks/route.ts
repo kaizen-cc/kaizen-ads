@@ -6,7 +6,8 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 //   app/uninstalled                the token is deleted and the store shows as disconnected (what was read stays)
 //   customers/data_request         we keep no customer records (only daily totals), so there's nothing to send
 //   customers/redact               nothing per customer to erase, same reason
-//   shop/redact                    48 hours after an uninstall: the store's days are erased
+//   shop/redact                    48 hours after an uninstall: everything read from the store is erased (eraseStore),
+//                                  as the privacy policy (src/app/(legal)/privacy) promises
 // Every call is checked against the app secret first.
 
 export async function POST(request: Request) {
@@ -17,9 +18,6 @@ export async function POST(request: Request) {
   if (!shop || !adminConfigured()) return new Response("ok");
   const admin = createAdminClient();
   if (topic === "app/uninstalled") await (await import("@/lib/shopify/store")).storeUninstalled(admin, shop);
-  if (topic === "shop/redact") {
-    await (await import("@/lib/shopify/store")).storeUninstalled(admin, shop);
-    await admin.from("shopify_daily").delete().eq("shop", shop);
-  }
+  if (topic === "shop/redact") await (await import("@/lib/shopify/store")).eraseStore(admin, shop);
   return new Response("ok");
 }

@@ -30,10 +30,19 @@ export async function mayInstall(admin: SupabaseClient, viewer: Viewer, clientId
 }
 
 /** The Shopify approval page for this store and client */
-export function installUrl(shopInput: string, clientId: string, from: "team" | "portal"): string | null {
+export function installUrl(shopInput: string, clientId: string, from: "team" | "portal" | "shopify"): string | null {
   const shop = shopDomain(shopInput);
   const secret = appSecret();
   if (!shop || !secret) return null;
   const state = signState({ client: clientId, shop, from, nonce: randomBytes(9).toString("base64url"), exp: Date.now() + 30 * 60_000 }, secret);
   return authorizeUrl(shop, state, redirectUri());
+}
+
+/** A plain page for the merchant (in Shopify's flow, outside Kaizen OS), in their light or dark theme */
+export function shopifyPage(title: string, text: string, status = 400) {
+  const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+  return new Response(
+    `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>${esc(title)} · Kaizen OS</title><style>body{font:16px/1.55 system-ui,sans-serif;max-width:520px;margin:12vh auto;padding:0 20px;background:Canvas;color:CanvasText}h1{font-size:22px}a{color:inherit}</style><body><h1>${esc(title)}</h1><p>${esc(text)}</p><p style="opacity:.6;font-size:14px">Questions: <a href="mailto:santi@kaizenmarketing.agency">santi@kaizenmarketing.agency</a> · <a href="${esc(siteUrl())}/privacy#shopify">Privacy</a></p></body>`,
+    { status, headers: { "content-type": "text/html; charset=utf-8" } },
+  );
 }

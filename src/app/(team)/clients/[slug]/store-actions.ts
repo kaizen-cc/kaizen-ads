@@ -39,3 +39,16 @@ export async function readStoreNow(clientId: string, id: string): Promise<Result
   revalidatePath(`/clients/${l.slug}`);
   return "error" in r && r.error ? { ok: false, error: String(r.error).slice(0, 200) } : { ok: true };
 }
+
+/** A store that installed the app from Shopify's side, linked to this client */
+export async function linkWaitingStore(clientId: string, shop: string): Promise<Result> {
+  const me = await requireStaff();
+  const l = await mine(clientId, true);
+  if ("error" in l) return { ok: false, error: l.error! };
+  const { linkPending, syncShopify } = await import("@/lib/shopify/store");
+  const r = await linkPending(l.admin, clientId, shop, me.id);
+  if (!r.ok) return r;
+  await syncShopify(l.admin, r.id, Date.now() + 60_000).catch(() => undefined);
+  revalidatePath(`/clients/${l.slug}`);
+  return { ok: true };
+}
