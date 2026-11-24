@@ -11,7 +11,7 @@ import { LINES, lineOf } from "./lines";
 
 // The deliverable flow's tools, for the assistant and every agent alike, on a call and in the chat: `deliverable` (start
 // the run, read where it stands and what's next, pull fresh context, record the type, count, topics, approvals),
-// create_copy_doc (the writer's preview document, a card on screen), approve_copy_doc (the Google Doc on its own),
+// create_copy_doc (the writer's preview document, a card on screen), approve_copy_doc (the Google Doc on its own), add_copy_to_google_doc (into a doc the team already keeps),
 // and per line the request (create_email_request: Asana now, Kaizen OS coming soon) and its fixes
 // (update_email_request). Requests run only on the person's own yes.
 
@@ -222,6 +222,30 @@ export function deliverableTools(ctx: DeliverableCtx): LoopTool[] {
         if (!r.ok) return { done: false, error: r.error, ...(r.askForLink ? { note: ASK_HQ } : {}) };
         card({ title: "Approved copy (Google Doc)", detail: `In ${r.folder}`, href: r.docUrl, external: true, cta: "Open the Doc" });
         return { approved: true, doc: r.docUrl, made_as: r.asPerson ? "them" : "the shared Drive user", note: "The Doc's card is on screen." };
+      },
+    },
+    {
+      name: "add_copy_to_google_doc",
+      description: "Types a copy document's emails straight into a Google Doc the team already keeps (the client's \"November campaigns\" copy doc), at the end, in the same layout as the emails already there (heading in the naming convention, Subject Line, Preview Text, Headline, Sub-headline, Hero CTA, blocks, Design Notes), numbered on from the last \"Email #n\" in it. Use it whenever they want the copy in their own doc instead of pasting it: never say you can't write into a Google Doc. doc is its link (find it with search_my_drive when they don't give one). Say which doc and that it adds N emails at the end, ask; confirmed: true only on their yes. If it can't, say the reason it gives in a sentence.",
+      input_schema: {
+        type: "object",
+        properties: {
+          copy_doc_id: { type: "string", description: "The copy document (from create_copy_doc)" },
+          doc: { type: "string", description: "The Google Doc's link" },
+          number_from: { type: "integer", minimum: 1, description: "The first email's number, only when they said one (else it follows the doc's last Email #n)" },
+          confirmed: CONFIRMED,
+        },
+        required: ["copy_doc_id", "doc"],
+        additionalProperties: false,
+      },
+      status: () => "Writing the copy into the Google Doc…",
+      run: async (input) => {
+        if (input.confirmed !== true || !saidYes(ctx.said())) return { done: false, note: NO_YES };
+        const { addCopyToGoogleDoc } = await import("@/lib/copy-docs/server");
+        const r = await addCopyToGoogleDoc(ctx.db, asMe(ctx.me), clip(input.copy_doc_id, 40), String(input.doc ?? "").slice(0, 400), { from: typeof input.number_from === "number" ? input.number_from : null });
+        if (!r.ok) return { done: false, error: r.error };
+        card({ title: r.title, detail: `${r.added} ${r.added === 1 ? "email" : "emails"} added at the end, from #${r.from}`, href: r.docUrl, external: true, cta: "Open the Doc" });
+        return { added: true, doc: r.docUrl, emails: r.added, numbered_from: r.from, written_as: r.asPerson ? "them" : "the shared Drive user", note: "The Doc's card is on screen. Say it's in the doc in a line." };
       },
     },
   ];
