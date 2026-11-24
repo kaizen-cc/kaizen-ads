@@ -441,7 +441,9 @@ async function collectCallsRun(admin: SupabaseClient, budgetMs: number, t: Track
   await settleGroups(admin).catch(() => 0);
   t.tick(null);
   await setCursor(admin, "calls", started, { found: found.length, saved, read, waiting: Math.max(0, (waiting ?? []).length - read), errors, watched, covered, rechecked, grouped, routed });
-  return { found: found.length, saved, read, errors, watched, covered, grouped, routed };
+  // Internal meetings with an executive on them: each action item a task for its owner (once per meeting)
+  const meetingTasks = await import("@/lib/meeting-actions").then((m) => m.sweepMeetingActions(admin)).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+  return { found: found.length, saved, read, errors, watched, covered, grouped, routed, meetingTasks };
 }
 
 // ─── Watch what was promised ───────────────────────────────────────────────
