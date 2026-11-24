@@ -6,6 +6,7 @@ import { tiktokConfigured } from "@/lib/tiktok/core";
 import { Connections } from "./connections";
 import { GoogleAdsCard, KlaviyoSyncCard, SocialSyncCard, summarizeGoogle, summarizeKlaviyo, summarizeSocial, type PlatformSummary } from "./platform-cards";
 import { ConnectorsTab, MyConnectionsTab } from "./connectors-tab";
+import { RateCard, type Rate } from "./rate-card";
 import { ClientStores } from "./client-stores";
 import { DEFAULT_URL_TAGS, metaWriteSetting } from "@/lib/meta-write";
 import Link from "next/link";
@@ -59,6 +60,7 @@ const TABS = [
   ["connections", "Connections"],
   ["errors", "Errors"],
   ["deleted", "Deleted"],
+  ["rates", "Rate card"],
 ] as const;
 // Leads see the team and the deleted log; execs see everything. The heads of Meta, Google and Creative also see
 // AI agents, with only their own line's agent in it (canTrainAgent). Everyone sees Your connections (their own
@@ -1129,8 +1131,16 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
       )}
       {tab === "errors" && <Errors all={sp.show === "all"} />}
       {tab === "deleted" && <Deleted />}
+      {tab === "rates" && <Rates />}
     </div>
   );
+}
+
+/** Settings › Rate card: Kaizen's starting prices (executives) */
+async function Rates() {
+  const db = await createClient();
+  const { data } = await db.from("rate_card").select("id, service, tier, label, cadence, amount, note").eq("active", true).order("service").order("sort_order").order("created_at");
+  return <RateCard rates={(data ?? []).map((r) => ({ ...(r as Rate), amount: Number(r.amount) }))} />;
 }
 
 /** A head's page also lists the agents outside their line, to call and chat with */

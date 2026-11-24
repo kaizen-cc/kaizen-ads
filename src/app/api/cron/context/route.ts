@@ -393,7 +393,9 @@ export async function GET(request: Request) {
       const { sowPass } = await import("@/lib/email-sow");
       // Clients very behind on their email allotment: their strategist and the Head of Email, once a cycle (and in its last week)
       const pace = await (await import("@/lib/email-pace-alerts")).emailPaceAlerts(admin).catch((e) => String(e));
-      return Response.json({ ...(await sowPass(admin, Date.now() + 300_000)), pace });
+      // Prospects' proposals moved into their Headquarters › Proposals & SOWs once they're a client
+      const prospects = await (await import("@/lib/kaizen-docs/server")).fileProspectDocs(admin).catch((e) => String(e));
+      return Response.json({ ...(await sowPass(admin, Date.now() + 300_000)), pace, prospects });
     }
     if (step === "docs") {
       const { watchDocs } = await import("@/lib/context/docs");

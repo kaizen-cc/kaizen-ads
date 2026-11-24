@@ -6,7 +6,8 @@ import { documentText, redrawDocument, type DocText } from "@/app/(team)/assista
 import type { CallDocument } from "@/lib/agent-call/core";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 
-// A Kaizen document the assistant or Kaizen AI made (create_document): what it is, Open (in a new tab), Download, and
+// A Kaizen document the assistant or Kaizen AI made (make_document): a Google Doc or Slides file opens in Google in a new
+// tab (PDF beside it, edited in Google); an older PDF document has Open, Download, and
 // Edit (a sheet with its text: change it and it's drawn again as the next version, prices guarded again). A price
 // that isn't stored shows as a placeholder on the PDF; the card says which. The sheet lives in the address (?doc=),
 // so back closes it.
@@ -28,10 +29,11 @@ export function DocumentCardView({ doc: start, onDismiss, wide = true }: { doc: 
         </span>
         <span className="grid min-w-0 flex-1 gap-0.5">
           <span className="text-[10.5px] font-medium uppercase tracking-[0.14em] text-brand-text">
-            {KIND[doc.kind]} · PDF{doc.version > 1 ? ` · v${doc.version}` : ""}
+            {KIND[doc.kind]} · {doc.google ? (doc.google.kind === "slides" ? "Google Slides" : "Google Doc") : "PDF"}
+            {doc.version > 1 ? ` · v${doc.version}` : ""}
           </span>
           <span className="text-[14px] font-semibold leading-snug text-fg [overflow-wrap:anywhere]">{doc.title}</span>
-          {doc.client && <span className="text-[12px] text-faint">{doc.client} · saved to their documents</span>}
+          {doc.google ? <span className="text-[12px] text-faint [overflow-wrap:anywhere]">In {doc.google.place}</span> : doc.client && <span className="text-[12px] text-faint">{doc.client} · saved to their documents</span>}
         </span>
         {onDismiss && (
           <button type="button" onClick={onDismiss} aria-label={`Hide ${doc.title}`} className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-faint transition-colors hover:bg-surface-2 hover:text-fg">
@@ -44,7 +46,7 @@ export function DocumentCardView({ doc: start, onDismiss, wide = true }: { doc: 
       {doc.placeholders.length > 0 &&
         (doc.placeholders.every((p) => p.startsWith("[")) ? (
           <p className="relative rounded-[10px] bg-warn-soft px-3 py-2 text-[12px] leading-snug text-fg">
-            <span className="font-medium">Still to fill:</span> {doc.placeholders.join(", ")}. The document marks each spot in brackets instead of guessing.
+            <span className="font-medium">Still to fill:</span> {doc.placeholders.join(", ")}. {doc.google ? "Fill them in Google, or tell the assistant." : "The document marks each spot in brackets instead of guessing."}
           </p>
         ) : (
           <p className="relative rounded-[10px] bg-warn-soft px-3 py-2 text-[12px] leading-snug text-fg">
@@ -52,20 +54,24 @@ export function DocumentCardView({ doc: start, onDismiss, wide = true }: { doc: 
           </p>
         ))}
       <div className="relative flex flex-wrap items-center gap-2">
-        <a href={doc.href} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center rounded-full bg-brand px-4 text-[13px] font-medium text-white transition hover:bg-brand-hover active:scale-[0.98] md:min-h-9">
-          Open
+        <a href={doc.google?.url ?? doc.href} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center rounded-full bg-brand px-4 text-[13px] font-medium text-white transition hover:bg-brand-hover active:scale-[0.98] md:min-h-9">
+          {doc.google ? `Open in Google ${doc.google.kind === "slides" ? "Slides" : "Docs"}` : "Open"}
         </a>
-        <a href={doc.download} className="inline-flex min-h-11 items-center rounded-full border border-line px-4 text-[13px] text-muted transition-colors hover:border-faint hover:text-fg md:min-h-9">
-          Download
-        </a>
+        {doc.download !== (doc.google?.url ?? null) && (
+          <a href={doc.download} className="inline-flex min-h-11 items-center rounded-full border border-line px-4 text-[13px] text-muted transition-colors hover:border-faint hover:text-fg md:min-h-9">
+            {doc.google ? "PDF" : "Download"}
+          </a>
+        )}
         {doc.docx && (
           <a href={doc.docx} className="inline-flex min-h-11 items-center rounded-full border border-line px-4 text-[13px] text-muted transition-colors hover:border-faint hover:text-fg md:min-h-9">
             Word file
           </a>
         )}
-        <button type="button" onClick={() => pushParams({ doc: doc.id })} className="inline-flex min-h-11 items-center rounded-full px-3 text-[13px] text-muted transition-colors hover:bg-surface-2 hover:text-fg md:min-h-9">
-          Edit text
-        </button>
+        {!doc.google && (
+          <button type="button" onClick={() => pushParams({ doc: doc.id })} className="inline-flex min-h-11 items-center rounded-full px-3 text-[13px] text-muted transition-colors hover:bg-surface-2 hover:text-fg md:min-h-9">
+            Edit text
+          </button>
+        )}
       </div>
       {editing && <EditSheet doc={doc} onClose={() => closeParams("doc")} onSaved={setDoc} />}
     </li>

@@ -852,7 +852,7 @@ export type CallCopyDoc = {
 };
 
 /** A Kaizen-branded PDF shown on the call or chat */
-export type CallDocument = { id: string; kind: "sow" | "proposal" | "handoff" | "one_pager"; title: string; client: string | null; version: number; href: string; download: string; placeholders: string[]; /** An email SOW's Word file */ docx?: string };
+export type CallDocument = { id: string; kind: "sow" | "proposal" | "handoff" | "one_pager"; title: string; client: string | null; version: number; href: string; download: string; placeholders: string[]; /** An email SOW's Word file */ docx?: string; /** Made in Google: its link, Doc or Slides, and where it's filed */ google?: { url: string; kind: "doc" | "slides"; place: string } };
 
 /** A file attached to a drafted email (a document's PDF) */
 export type CallAttachment = { documentId: string; name: string; download: string };

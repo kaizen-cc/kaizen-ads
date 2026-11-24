@@ -252,6 +252,9 @@ export const SCREEN_PLACES: Record<string, string> = {
   "settings connections": "/settings?tab=connections",
   "settings errors": "/settings?tab=errors",
   "settings deleted": "/settings?tab=deleted",
+  // Kaizen's rate card (executives): the starting prices proposals, quotes and SOWs quote
+  "rate card": "/settings?tab=rates",
+  "settings rate card": "/settings?tab=rates",
   "my assistant": "/assistant",
   "assistant settings": "/assistant#make-it-yours",
   // Ring me or chat only, and quiet hours, for urgent heads-ups

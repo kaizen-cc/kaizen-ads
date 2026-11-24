@@ -1,5 +1,6 @@
 import "server-only";
 import { DOC_KINDS, DOC_LABEL, PRICE_PLACEHOLDER } from "@/lib/documents/core";
+import type { TemplateKey } from "@/lib/kaizen-docs/templates";
 import { clientNamedForTools, type ChatTool, type ToolCtx } from "./tools";
 import type { DocumentCard } from "./types";
 import { seesAccountNumbers, seesMoney } from "@/lib/ai-access-core";
@@ -15,7 +16,7 @@ const CLIENT = { type: "string", description: "The client's name (or slug). Leav
 const r2 = (x: number | null | undefined) => (x == null || !Number.isFinite(x) ? null : Math.round(x * 100) / 100);
 
 /** Every tool name here (the email and social teams get them too) */
-export const DOCUMENT_TOOLS = ["package_details", "client_wins", "create_document", "create_case_study", "upload_to_drive", "run_after_call"] as const;
+export const DOCUMENT_TOOLS = ["package_details", "client_wins", "make_document", "create_document", "rate_card", "set_rate_card", "create_case_study", "upload_to_drive", "run_after_call"] as const;
 
 const ITEMS = { type: "array", items: { type: "string" } };
 
@@ -33,7 +34,81 @@ export function documentTools(ctx: ToolCtx): ChatTool[] {
   };
   const maybeClient = async (input: Record<string, unknown>) => (input.client || ctx.clientId ? await clientNamedForTools(ctx, input) : null);
 
+  /** Makes a Kaizen document in Google and puts its card on screen */
+  const makeDoc = async (o: { template: TemplateKey | null; client: { id: string; name: string } | null; prospect: string | null; ask: string; brief: string; confirmed: { label: string; amount: number; cadence: "one_time" | "month" }[]; line: string | null; title: string | null; replaces?: string | null }) => {
+    if (ctx.me.viewAs) return { made: false, error: "While viewing as someone, nothing is made in their Google Drive." };
+    const { makeKaizenDoc } = await import("@/lib/kaizen-docs/server");
+    const r = await makeKaizenDoc({ admin: ctx.admin, me: { id: ctx.me.id, fullName: ctx.me.fullName, email: ctx.me.email, isExec: ctx.me.isExec, isLead: ctx.me.isLead, role: ctx.me.role }, ask: o.ask, template: o.template, client: o.client, prospect: o.prospect, brief: o.brief, confirmed: o.confirmed, line: o.line, title: o.title });
+    if (!r.ok) return { made: false, error: r.error, ...(r.ask ? { ask_them: r.ask } : {}) };
+    card({ type: "document", id: r.id, kind: r.template === "proposal" ? "proposal" : "sow", title: r.title, client: o.client?.name ?? o.prospect ?? null, version: 1, href: r.url, download: r.pdf ?? r.url, placeholders: r.placeholders, google: { url: r.url, kind: r.kind, place: r.place } });
+    return {
+      made: true,
+      document_id: r.id,
+      google_link: r.url,
+      kind: r.kind === "slides" ? "Google Slides" : "Google Doc",
+      filed_in: r.place,
+      folder: r.folderUrl,
+      ...(r.note ? { filing_note: r.note } : {}),
+      ...(r.placeholders.length ? { still_to_fill: r.placeholders } : {}),
+      ...(r.rateCardEmpty && r.placeholders.some((p) => /price/i.test(p)) ? { prices: "Kaizen's rate card is empty, so the fees are marked [Price to confirm]. Ask them for the prices (one question listing each), then make it again with confirmed_prices." } : {}),
+      ...(o.replaces ? { note_on_versions: "Made as a new Google file; the earlier one stays in Drive." } : {}),
+      note: "The card is on screen with the Google link (it opens in a new tab). Say in a line what it is and where it's filed; mention anything still to fill. To email it, give document_id to draft_message (attach): the PDF goes with it.",
+    };
+  };
+
   return [
+    {
+      name: "make_document",
+      description: `Makes a client-facing Kaizen document as a Google file in the house style, in the person's Google Drive, filed where it belongs (a client's Headquarters › Proposals & SOWs; a prospect's Kaizen Sales › Prospects › <name>; otherwise their own Drive), and returns its link. Templates: proposal (a sales proposal deck, Google Slides: pitch new work), quote (a project quote for a one-time build like a website, Google Doc), sow (a Scope of Work for a retainer, sprint or tier options, Google Doc; an email SOW is written by the Email SOW Generator), doc (any other document: a plan, audit, client brief, recap, in the SOW look) or deck (any other deck, in the proposal look). Leave template out to pick it from what they asked; if it says it's unclear, ask once. Proposals, quotes and SOWs are for the executives and line heads. Look things up first (get_client_context, package_details, client_wins, their KPIs, calls) and put what matters in brief with what they said; never ask what Kaizen OS already knows. Prices: only the rate card (rate_card), the email packages, or prices they confirmed (confirmed_prices, every time); anything else is marked [Price to confirm]. When the rate card is empty, ask for the prices once.`,
+      input_schema: {
+        type: "object",
+        properties: {
+          template: { type: "string", enum: ["proposal", "quote", "sow", "doc", "deck"] },
+          ask: { type: "string", description: "What they asked for, in their words" },
+          client: CLIENT,
+          prospect: { type: "string", description: "A prospect's business name, when it isn't a client yet" },
+          title: { type: "string" },
+          line: { type: "string", description: "The service line it's about: email, meta, google, social, creative, web" },
+          brief: { type: "string", description: "Everything the writer needs: what you looked up (numbers, package, services, call notes), their answers, the scope, timeline and terms they gave" },
+          confirmed_prices: { type: "array", items: { type: "object", properties: { item: { type: "string" }, amount: { type: "number" }, cadence: { type: "string", enum: ["month", "one_time"] } }, required: ["item", "amount"] }, description: "Prices they confirmed in this conversation (relationship pricing). Pass every one, each time." },
+        },
+        required: ["ask"],
+        additionalProperties: false,
+      },
+      status: (input, client) => `Making the ${clip(input.template, 20) || "document"} in Google${clip(input.client, 40) || clip(input.prospect, 40) || client ? ` for ${clip(input.client, 40) || clip(input.prospect, 40) || client}` : ""}…`,
+      run: async (input) => {
+        const c = input.client || ctx.clientId ? await maybeClient(input).catch(() => null) : null;
+        const { confirmedPrices } = await import("@/lib/documents/core");
+        const { isTemplate } = await import("@/lib/kaizen-docs/templates");
+        const confirmed = confirmedPrices(input.confirmed_prices, ctx.said ?? "", Boolean(ctx.me.isExec));
+        return makeDoc({ template: isTemplate(input.template) ? input.template : null, client: c ? { id: c.id, name: c.name } : null, prospect: c ? null : clip(input.prospect, 120) || null, ask: clip(input.ask, 4000), brief: clip(input.brief, 16000), confirmed: confirmed.map((p) => ({ label: p.label, amount: p.amount, cadence: p.cadence === "one_time" ? "one_time" : "month" })), line: clip(input.line, 30) || null, title: clip(input.title, 200) || null });
+      },
+    },
+    {
+      name: "rate_card",
+      description: "Kaizen's rate card: the starting prices documents quote, per service line and tier, one-time or monthly (the executives keep it in Settings › Rate card). Empty means no prices are set yet: ask for the prices instead of guessing.",
+      input_schema: { type: "object", properties: { service: { type: "string", description: "Only this line (email, meta, google, social, creative, web)" } }, additionalProperties: false },
+      status: () => "Reading the rate card…",
+      run: async (input) => {
+        let q = ctx.db.from("rate_card").select("id, service, tier, label, cadence, amount, note").eq("active", true).order("service").order("sort_order");
+        if (input.service) q = q.ilike("service", `${clip(input.service, 30)}%`);
+        const { data } = await q;
+        return (data ?? []).length ? { rates: data, note: "A different price agreed with a client is relationship pricing: pass it in confirmed_prices." } : { rates: [], empty: true, note: "The rate card is empty: ask for the prices (one question listing each)." };
+      },
+    },
+    {
+      name: "set_rate_card",
+      description: "Adds, changes or removes a price on Kaizen's rate card (executives only): service (email, meta, google, social, creative, web), tier (optional, e.g. Basic), label (what it is), cadence (one_time or month), amount. remove: true with its id takes it off. Say it back and ask first; confirmed: true after their yes.",
+      input_schema: { type: "object", properties: { id: { type: "string" }, service: { type: "string" }, tier: { type: "string" }, label: { type: "string" }, cadence: { type: "string", enum: ["one_time", "month"] }, amount: { type: "number" }, note: { type: "string" }, remove: { type: "boolean" }, confirmed: { type: "boolean" } }, additionalProperties: false },
+      status: () => "Updating the rate card…",
+      run: async (input) => {
+        if (!ctx.me.isExec) return { done: false, error: "Only the executives change the rate card." };
+        if (input.confirmed !== true) return { done: false, note: "Say the change back and ask; run again with confirmed: true after their yes." };
+        const { setRate } = await import("@/lib/kaizen-docs/rate-card");
+        const r = await setRate(ctx.db, ctx.me.id, input);
+        return r.ok ? { done: true, ...r } : { done: false, error: r.error };
+      },
+    },
     {
       name: "package_details",
       description:
@@ -109,7 +184,7 @@ export function documentTools(ctx: ToolCtx): ChatTool[] {
     },
     {
       name: "create_document",
-      description: `Makes a Kaizen-branded PDF (the look of Kaizen's reports: Kaizen's mark beside the client's logo, a period band, clean sections and tables) from content you write: sow (a Scope of Work), proposal, handoff (a handoff or recap of what we did and the wins) or one_pager. It's kept with the client's documents and shown as a card to open, download, or edit the text and draw again. Write the finished content in one call. An email SOW or pitch (service email, kind sow or proposal) is written by Kaizen's Email SOW Generator in Kaizen's Sprint Recap and Ongoing Management SOW structure, from the client's own numbers: give it the starting tier, any add-on scope, what was built and anything the person said (in summary, sections or stats); it draws a PDF and a Word file. For any other Scope of Work, read package_details first and build deliverables, cadence, inclusions and exclusions from it; pricing lines only carry a price that's stored (package_details has every tier's) or one the person confirmed in this conversation (also list those in confirmed_prices, every time); leave price out otherwise: it's drawn as "${PRICE_PLACEHOLDER}". Read what they asked for: an SOW "to pitch" ongoing work is a pitch proposal (lead with the tier they'd start on, the milestones as the path to the next tier), not a record of a signed scope. For a handoff, read client_wins and the handoff doc first; put the headline numbers in stats and list them in data_figures. Plain words, no em dashes, roles not names. To change one you made, pass its document_id with the whole new content. To attach it to an email, give its document_id to draft_message (attach).`,
+      description: `The older name for make_document (it makes the same Google file): sow is a Scope of Work, proposal a sales proposal deck, handoff and one_pager a Kaizen document. Prefer make_document. Plain words, no em dashes, roles not names.`,
       input_schema: {
         type: "object",
         properties: {
@@ -144,40 +219,11 @@ export function documentTools(ctx: ToolCtx): ChatTool[] {
           const { data: mine } = await ctx.db.from("kaizen_documents").select("id").eq("id", id).maybeSingle();
           if (!mine) return { made: false, error: "That document isn't one you can change. Make a new one instead." };
         }
-        const figures = (Array.isArray(input.data_figures) ? input.data_figures : []).map(Number).filter((n) => Number.isFinite(n) && n > 0).slice(0, 30);
-        const { makeDocument } = await import("@/lib/documents/server");
+        // Every document is made in Google now (src/lib/kaizen-docs): the content written here is the brief
         const { confirmedPrices } = await import("@/lib/documents/core");
         const confirmed = confirmedPrices(input.confirmed_prices, ctx.said ?? "", Boolean(ctx.me.isExec));
-        const { isEmailSow } = await import("@/lib/email-sow/core");
-        if (isEmailSow(input.kind, input.service)) {
-          // Every email SOW and pitch comes from the Email SOW Generator, in Kaizen's Sprint Recap & SOW structure
-          if (!c) return { made: false, error: "An email SOW is for a client: say which client." };
-          const { generateEmailSow } = await import("@/lib/email-sow/server");
-          const sow = await generateEmailSow({ admin: ctx.admin, me: { id: ctx.me.id, fullName: ctx.me.fullName }, client: { id: c.id, name: c.name }, brief: sowBrief(input, ctx.said), confirmed, id });
-          card({ type: "document", id: sow.id, kind: sow.kind, title: sow.title, client: sow.client, version: sow.version, href: sow.href, download: sow.download, placeholders: sow.placeholders, docx: sow.docx });
-          return {
-            made: true,
-            document_id: sow.id,
-            version: sow.version,
-            open: sow.href,
-            word_file: sow.docx,
-            file: sow.fileName,
-            generator: "Kaizen's Email SOW Generator (Sprint Recap and Ongoing Management SOW structure; prices from the email packages and any confirmed in this conversation)",
-            ...(sow.placeholders.length ? { still_to_fill: sow.placeholders, note: "These spots are bracketed in the document because the data isn't known (say so in a line, ask for any you can't look up)." } : { note: "The card is on screen (Open, Download, Edit). Say what's in it in a line." }),
-            filed: `In ${c.name}'s documents`,
-          };
-        }
-        const made = await makeDocument({ admin: ctx.admin, me: { id: ctx.me.id, fullName: ctx.me.fullName }, client: c ? { id: c.id, name: c.name } : null, loose: input, service: input.service, dataFigures: figures, id, confirmed });
-        card({ type: "document", id: made.id, kind: made.kind, title: made.title, client: made.client, version: made.version, href: made.href, download: made.download, placeholders: made.placeholders });
-        return {
-          made: true,
-          document_id: made.id,
-          version: made.version,
-          open: made.href,
-          file: made.fileName,
-          ...(made.placeholders.length ? { placeholders: made.placeholders, note: `These are drawn as "${PRICE_PLACEHOLDER}" because no price is stored for them: say so in a line. The card is on screen.` } : { note: "The card is on screen (Open, Download, Edit). Say what's in it in a line; don't repeat it." }),
-          ...(c ? { filed: `In ${c.name}'s documents` } : {}),
-        };
+        const template = input.kind === "sow" ? "sow" : input.kind === "proposal" ? "proposal" : "doc";
+        return makeDoc({ template, client: c, prospect: null, ask: `${clip(input.title, 200)}${ctx.said ? `. They said: ${clip(ctx.said, 1500)}` : ""}`, brief: sowBrief(input, ctx.said), confirmed: confirmed.map((p) => ({ label: p.label, amount: p.amount, cadence: p.cadence === "one_time" ? "one_time" : "month" })), line: String(input.service ?? "") || null, title: clip(input.title, 200) || null, replaces: id });
       },
     },
     {

@@ -97,28 +97,16 @@ export function revenueFigures(facts: unknown): number[] {
 
 export type MadeSow = MadeDocument & { docx: string; placeholdersText: string[] };
 
-/**
- * Writes and keeps an email SOW: a new one, or a new version of `id`. `brief` is what the person asked for and anything
- * they said (the starting tier, add-ons, the pitch, facts from a doc); `prior` is the earlier version's text to revise.
- */
-export async function generateEmailSow(opts: {
-  admin: SupabaseClient;
-  me: { id: string; fullName: string };
-  client: { id: string; name: string };
-  brief: string;
-  confirmed?: readonly SowPrice[];
-  id?: string | null;
-  contact?: string | null;
-}): Promise<MadeSow> {
-  const { admin, me, client } = opts;
-  const [facts, { data: pkgs }, prior] = await Promise.all([
+/** The generator's writing step: the client's facts and the AI's document, cleaned and priced (no files drawn) */
+export async function writeEmailSow(opts: { admin: SupabaseClient; client: { id: string; name: string }; brief: string; confirmed?: readonly SowPrice[]; prior?: EmailSow | null; contact?: string | null }): Promise<{ sow: EmailSow }> {
+  const { admin, client } = opts;
+  const [facts, { data: pkgs }] = await Promise.all([
     emailSowFacts(admin, client.id),
     admin.from("email_packages").select("key, label, kind, price_monthly, campaigns_min, campaigns, flow_emails_min, flow_emails, sms_min, sms, design_hours, note").eq("active", true).order("sort_order"),
-    opts.id ? admin.from("kaizen_documents").select("id, version, client_document_id, profile_id, content").eq("id", opts.id).maybeSingle() : Promise.resolve({ data: null }),
   ]);
   const packages = (pkgs ?? []) as SowPackage[];
   const confirmed = [...(opts.confirmed ?? [])];
-  const priorSow = (prior.data?.content as { sow?: EmailSow } | null)?.sow ?? null;
+  const priorSow = opts.prior ?? null;
   const today = new Date();
   const dated = today.toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "America/New_York" });
   const factsJson = JSON.stringify(facts);
@@ -144,7 +132,27 @@ export async function generateEmailSow(opts: {
       .join("\n\n"),
   });
 
-  const sow = cleanSow(raw, { client: client.name, contact: opts.contact ?? null, dated, packages, confirmed, dataFigures: [...revenueFigures(facts), ...dollarsIn(opts.brief)], platform });
+  return { sow: cleanSow(raw, { client: client.name, contact: opts.contact ?? null, dated, packages, confirmed, dataFigures: [...revenueFigures(facts), ...dollarsIn(opts.brief)], platform }) };
+}
+
+/**
+ * Writes and keeps an email SOW: a new one, or a new version of `id`. `brief` is what the person asked for and anything
+ * they said (the starting tier, add-ons, the pitch, facts from a doc); `prior` is the earlier version's text to revise.
+ */
+export async function generateEmailSow(opts: {
+  admin: SupabaseClient;
+  me: { id: string; fullName: string };
+  client: { id: string; name: string };
+  brief: string;
+  confirmed?: readonly SowPrice[];
+  id?: string | null;
+  contact?: string | null;
+}): Promise<MadeSow> {
+  const { admin, me, client } = opts;
+  const prior = opts.id ? await admin.from("kaizen_documents").select("id, version, client_document_id, profile_id, content").eq("id", opts.id).maybeSingle() : { data: null };
+  const priorSow = (prior.data?.content as { sow?: EmailSow } | null)?.sow ?? null;
+  const confirmed = [...(opts.confirmed ?? [])];
+  const { sow } = await writeEmailSow({ admin, client, brief: opts.brief, confirmed, prior: priorSow, contact: opts.contact ?? null });
 
   const { agencyLogo, reportBrand } = await import("@/lib/reports/brand-server");
   const [brand, mark] = await Promise.all([reportBrand(admin, client.id).catch(() => null), agencyLogo()]);

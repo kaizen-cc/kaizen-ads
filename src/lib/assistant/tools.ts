@@ -811,7 +811,7 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
   const comms = commsTools({ me: ctx.me, db: ctx.db, admin: ctx.admin, callId: ctx.callId, said: () => ctx.said, emit: ctx.emit, roleKey: ASSISTANT_KEY, label: "assistant", path: ctx.path, screen: ctx.screen, clientId: ctx.clientId });
   // A document made here shows as its own card on the call or in the chat: Open, Download, Edit its text
   const docCards = (t: LoopTool): LoopTool =>
-    t.name !== "create_document"
+    t.name !== "create_document" && t.name !== "make_document"
       ? t
       : {
           ...t,
@@ -820,8 +820,8 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
             const out = await t.run(input);
             for (const c of tctx.cards.slice(before)) {
               if (c.type !== "document") continue;
-              const document = { id: c.id, kind: c.kind, title: c.title, client: c.client, version: c.version, href: c.href, download: c.download, placeholders: c.placeholders, ...(c.docx ? { docx: c.docx } : {}) };
-              ctx.emit({ t: "card", card: { id: `doc-${c.id}`, title: c.title, detail: c.client ?? "", href: c.href, external: true, cta: "Open", document } });
+              const document = { id: c.id, kind: c.kind, title: c.title, client: c.client, version: c.version, href: c.href, download: c.download, placeholders: c.placeholders, ...(c.docx ? { docx: c.docx } : {}), ...(c.google ? { google: c.google } : {}) };
+              ctx.emit({ t: "card", card: { id: `doc-${c.id}`, title: c.title, detail: c.client ?? "", href: c.google?.url ?? c.href, external: true, cta: c.google ? `Open in Google ${c.google.kind === "slides" ? "Slides" : "Docs"}` : "Open", document } });
             }
             return out;
           },
