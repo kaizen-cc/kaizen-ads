@@ -28,7 +28,18 @@ const encodeHeader = (s: string) => (/^[\x20-\x7e]*$/.test(s) ? s : `=?UTF-8?B?$
 /** A file on an email: its name, type and bytes */
 export type MailAttachment = { name: string; mime: string; data: Uint8Array };
 
-export type MailParts = { from: string; to: string; cc?: string | null; subject: string; body: string; inReplyTo?: string | null; references?: string | null; attachments?: readonly MailAttachment[] };
+export type MailParts = {
+  from: string;
+  to: string;
+  cc?: string | null;
+  subject: string;
+  body: string;
+  inReplyTo?: string | null;
+  references?: string | null;
+  attachments?: readonly MailAttachment[];
+  /** Their own Gmail signature (HTML, as Gmail's settings give it), added under the text */
+  signature?: string | null;
+};
 
 const CRLF = "\r\n";
 
@@ -46,9 +57,90 @@ function fileParam(key: "filename" | "name", name: string): string {
   return `${key}*=UTF-8''${encodeURIComponent(clean)}`;
 }
 
+const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/** Linked words the way the assistant writes them ("[pick a time here](https://…)"), and a bare web address */
+const LINKS = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<>]*[^\s<>.,!?;:'")\]])/g;
+/** Words in **bold** */
+const BOLD = /\*\*([^*\n]+)\*\*/g;
+
+/** Whether the text needs HTML to read right: linked words or bold (a bare address Gmail links by itself) */
+const hasMarkup = (text: string) => /\[[^\]\n]+\]\(https?:\/\/[^\s)]+\)/.test(text) || /\*\*[^*\n]+\*\*/.test(text);
+
+/** The plain text part: linked words read "words (address)", bold marks dropped */
+export function plainBody(text: string): string {
+  return text.replace(LINKS, (m, label: string | undefined, href: string | undefined) => (label && href ? `${label} (${href})` : m)).replace(BOLD, "$1");
+}
+
+/** The HTML part: the text escaped, linked words as real links, bold as bold, each line break kept */
+export function htmlBody(text: string): string {
+  let out = "";
+  let at = 0;
+  const inline = (s: string) => escapeHtml(s).replace(BOLD, "<b>$1</b>");
+  for (const m of text.matchAll(LINKS)) {
+    out += inline(text.slice(at, m.index));
+    const href = m[2] ?? m[3];
+    out += `<a href="${escapeHtml(href)}">${m[1] ? inline(m[1]) : escapeHtml(href)}</a>`;
+    at = m.index + m[0].length;
+  }
+  out += inline(text.slice(at));
+  return out.replace(/\r?\n/g, "<br>\r\n");
+}
+
+/** A Gmail signature (HTML) as plain text, for the plain part */
+export function signatureText(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(?:div|p|li|tr|h[1-6])>/gi, "\n")
+    .replace(/<a\s[^>]*href="(https?:[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (_m, href: string, label: string) => {
+      const l = label.replace(/<[^>]+>/g, "").trim();
+      return l && l !== href ? `${l} (${href})` : href;
+    })
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&")
+    .split("\n")
+    .map((l) => l.trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 /**
- * The whole message as MIME text: plain text when there's nothing attached, else multipart/mixed with the text first
- * and each file as a base64 attachment. `boundary` is fixed in tests; a random one otherwise.
+ * The body as MIME: plain text alone when it's just words, else multipart/alternative with an HTML part (real links,
+ * their Gmail signature where Gmail puts it) after the plain one. The HTML in base64, so long lines are safe.
+ */
+function bodyPart(m: MailParts, boundary: string): string[] {
+  const sig = m.signature?.trim() || "";
+  const sigText = sig ? signatureText(sig) : "";
+  const plain = (plainBody(m.body) + (sigText ? `\n\n${sigText}` : "")).replace(/\r?\n/g, CRLF);
+  if (!sig && !hasMarkup(m.body)) return ['Content-Type: text/plain; charset="UTF-8"', "Content-Transfer-Encoding: 8bit", "", plain];
+  const html = `<div dir="ltr">${htmlBody(m.body)}${sig ? `<br><br><div dir="ltr" class="gmail_signature" data-smartmail="gmail_signature">${sig}</div>` : ""}</div>`;
+  const b = `${boundary}_alt`;
+  return [
+    `Content-Type: multipart/alternative; boundary="${b}"`,
+    "",
+    `--${b}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    "Content-Transfer-Encoding: 8bit",
+    "",
+    plain,
+    `--${b}`,
+    'Content-Type: text/html; charset="UTF-8"',
+    "Content-Transfer-Encoding: base64",
+    "",
+    wrap76(Buffer.from(html, "utf8").toString("base64")),
+    `--${b}--`,
+  ];
+}
+
+/**
+ * The whole message as MIME text: the body (plain text, or plain and HTML when it has links or a signature) alone
+ * when there's nothing attached, else multipart/mixed with the body first and each file as a base64 attachment. `boundary` is fixed in tests; a random one otherwise.
  */
 export function mimeMessage(m: MailParts, boundary = `kaizen_${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`): string {
   const head = [
@@ -60,12 +152,11 @@ export function mimeMessage(m: MailParts, boundary = `kaizen_${Math.random().toS
     ...(m.inReplyTo || m.references ? [`References: ${headerSafe([m.references, m.inReplyTo].filter(Boolean).join(" "))}`] : []),
     "MIME-Version: 1.0",
   ];
-  const text = m.body.replace(/\r?\n/g, CRLF);
   const files = (m.attachments ?? []).filter((a) => a.data.length > 0);
-  if (!files.length) return [...head, 'Content-Type: text/plain; charset="UTF-8"', "Content-Transfer-Encoding: 8bit", "", text].join(CRLF);
   const b = boundary.replace(/[^A-Za-z0-9'()+_,./:=?-]/g, "");
+  if (!files.length) return [...head, ...bodyPart(m, b)].join(CRLF);
   const parts = [
-    [`--${b}`, 'Content-Type: text/plain; charset="UTF-8"', "Content-Transfer-Encoding: 8bit", "", text].join(CRLF),
+    [`--${b}`, ...bodyPart(m, b)].join(CRLF),
     ...files.map((f) =>
       [`--${b}`, `Content-Type: ${headerSafe(f.mime) || "application/octet-stream"}; ${fileParam("name", f.name)}`, `Content-Disposition: attachment; ${fileParam("filename", f.name)}`, "Content-Transfer-Encoding: base64", "", wrap76(Buffer.from(f.data).toString("base64"))].join(CRLF),
     ),
