@@ -302,7 +302,8 @@ export function deliverableTools(ctx: DeliverableCtx): LoopTool[] {
           const { updateRequest } = await import("./server");
           const fields = (Array.isArray(input.fields) ? (input.fields as { name: string; value: string }[]) : []).map((f) => ({ name: clip(f.name, 80), value: String(f.value ?? "").slice(0, 1000) })).filter((f) => f.name);
           try {
-            const r = await updateRequest(ctx.admin, cfg, gid, { fields, description: typeof input.description === "string" ? input.description : undefined, append: input.append === true, name: typeof input.name === "string" ? input.name : undefined, section: typeof input.section === "string" ? input.section : undefined });
+            const { asanaAsPerson } = await import("@/lib/asana-user");
+            const r = await asanaAsPerson(ctx.admin, ctx.me.id, () => updateRequest(ctx.admin, cfg, gid, { fields, description: typeof input.description === "string" ? input.description : undefined, append: input.append === true, name: typeof input.name === "string" ? input.name : undefined, section: typeof input.section === "string" ? input.section : undefined }));
             if (!r.ok) return { updated: false, error: r.error };
             return { updated: true, changed: r.changed, moved: r.moved, ...(r.missing.length ? { not_in_project: r.missing } : {}), note: "Say what you fixed in a few words." };
           } catch (e) {

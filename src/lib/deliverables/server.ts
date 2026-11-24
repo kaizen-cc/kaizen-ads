@@ -197,7 +197,13 @@ export type RequestsResult = { ok: true; doc: string; tasks: Request[]; fieldsMi
  * The requests for an approved run: the Google Doc (made now if it isn't), then one task per item or one for the
  * document, in the line's project and column, fields by name, no assignee or due date, the strategist following.
  */
-export async function createRequests(admin: Admin, db: SupabaseClient, me: Me, run: Run, opts: { urgency?: "urgent" | "high" | "normal" | "low"; /** A Headquarters folder link the person pasted */ hqLink?: string | null; /** Each step as it starts, for the progress bar ("Building the doc", "Creating task 2 of 3") */ onStep?: (step: string, i: number, n: number) => void } = {}): Promise<RequestsResult> {
+/** The run's requests made in Asana as the person (their own Asana; without it they're asked to connect first) */
+export async function createRequests(admin: Admin, db: SupabaseClient, me: Me, run: Run, opts: Parameters<typeof createRequestsAs>[4] = {}): Promise<RequestsResult> {
+  const { asanaAsPerson } = await import("@/lib/asana-user");
+  return asanaAsPerson(admin, me.id, () => createRequestsAs(admin, db, me, run, opts));
+}
+
+async function createRequestsAs(admin: Admin, db: SupabaseClient, me: Me, run: Run, opts: { urgency?: "urgent" | "high" | "normal" | "low"; /** A Headquarters folder link the person pasted */ hqLink?: string | null; /** Each step as it starts, for the progress bar ("Building the doc", "Creating task 2 of 3") */ onStep?: (step: string, i: number, n: number) => void } = {}): Promise<RequestsResult> {
   const { cfg, state } = run;
   if (!state.docId) return { ok: false, error: "There's no copy yet." };
   if (state.requests.length) return { ok: true, doc: "", tasks: state.requests, fieldsMissing: [], followerMissing: state.requests[0]?.followerMissing ?? null };
@@ -327,7 +333,13 @@ export type SuppliedResult = { ok: true; task: Request; designer: string | null;
  * sheet in the description. It counts against the allotment from its name ("(N)") like any batch, and the mirror tracks
  * its moves through the board.
  */
-export async function createSuppliedRequest(
+/** A supplied-content request made in Asana as the person (their own Asana; without it they're asked to connect) */
+export async function createSuppliedRequest(...args: Parameters<typeof createSuppliedRequestAs>): ReturnType<typeof createSuppliedRequestAs> {
+  const { asanaAsPerson } = await import("@/lib/asana-user");
+  return asanaAsPerson(args[0], args[1].id, () => createSuppliedRequestAs(...args));
+}
+
+async function createSuppliedRequestAs(
   admin: Admin,
   me: Me,
   p: { clientId: string; sheetUrl: string; count: number; channel: "email" | "sms"; shortName: string; note: string | null; urgency: "urgent" | "high" | "normal" | "low"; emailsText: string | null; summary: string | null },

@@ -555,10 +555,20 @@ export async function heldRequestIds(admin: Db): Promise<Set<string>> {
 // ─── Acting ──────────────────────────────────────────────────────────────────
 
 export type ActHow = "send_back" | "keep" | "stop";
-export type ActResult = { ok: true; done: number; failed: { title: string; error: string }[]; handled: boolean } | { ok: false; error: string };
+export type ActResult = { ok: true; done: number; failed: { title: string; error: string }[]; handled: boolean; /** The tasks acted on, for Undo */ acted: string[] } | { ok: false; error: string; /** They haven't connected their own Asana: show Connect */ connect?: boolean };
 
 /** Moves an Asana Creative task to the column for a stage, and the mirror with it */
 async function moveAsanaCreative(admin: Db, gid: string, stage: string) {
+  return moveAsanaCreativeTo(admin, gid, stage);
+}
+
+/** The stage an Asana task sits in now (from the mirror), so Undo can put it back */
+async function asanaStageOf(admin: Db, kind: TaskKind, gid: string): Promise<string | null> {
+  const { data } = await admin.from(kind === "asana_email" ? "email_asana_tasks" : "asana_tasks").select("stage").eq("gid", gid).maybeSingle();
+  return (data?.stage as string | null) ?? null;
+}
+
+async function moveAsanaCreativeTo(admin: Db, gid: string, stage: string) {
   const { asana, asanaWrite, projectGid, stageForColumn } = await import("@/lib/asana");
   const project = await projectGid(admin);
   const { data: sections } = await asana<{ gid: string; name: string }[]>(`/projects/${project}/sections`, { opt_fields: "name" });
@@ -570,10 +580,18 @@ async function moveAsanaCreative(admin: Db, gid: string, stage: string) {
   await admin.from("asana_tasks").update({ section: to.name, stage, moves, synced_at: new Date().toISOString() }).eq("gid", gid);
 }
 
-/** A comment on the Asana task, so the maker sees it inside Asana */
-async function asanaStory(gid: string, text: string) {
+/** A comment on the Asana task, so the maker sees it inside Asana; its id comes back (Undo takes it off) */
+async function asanaStory(gid: string, text: string): Promise<string | null> {
   const { asanaWrite } = await import("@/lib/asana");
-  await asanaWrite(`/tasks/${gid}/stories`, { text: text.slice(0, 6000) });
+  const s = await asanaWrite<{ gid?: string }>(`/tasks/${gid}/stories`, { text: text.slice(0, 6000) });
+  return s?.gid ?? null;
+}
+
+/** The comment in Asana's rich text (the client's feedback quoted, links clickable); its id comes back */
+async function asanaRichStory(gid: string, html: string): Promise<string | null> {
+  const { asanaWrite } = await import("@/lib/asana");
+  const s = await asanaWrite<{ gid?: string }>(`/tasks/${gid}/stories`, { html_text: html.slice(0, 60000) });
+  return s?.gid ?? null;
 }
 
 /**
@@ -585,19 +603,39 @@ async function asanaStory(gid: string, text: string) {
 export async function actOnTasks(db: Db, admin: Db, me: Staff, taskIds: string[], how: ActHow, opts: { to?: Record<string, string>; note?: string | null } = {}): Promise<ActResult> {
   const ids = [...new Set(taskIds.filter((x) => /^[0-9a-f-]{36}$/i.test(x)))].slice(0, 60);
   if (!ids.length) return { ok: false, error: "Pick the tasks first." };
-  const { data: rows } = await db.from("direction_change_tasks").select("*, change:client_direction_changes!inner(id, summary, quote, was_text, now_text, status, scope)").in("id", ids);
+  const { data: rows } = await db.from("direction_change_tasks").select("*, change:client_direction_changes!inner(id, summary, quote, was_text, now_text, status, scope, source_ref, url, said_at)").in("id", ids);
   const tasks = rows ?? [];
   if (!tasks.length) return { ok: false, error: "Those tasks aren't ones you can see." };
+  // Asana comments and moves go in as the person (their own Asana), never as someone else: connect first
+  const { asanaAsPerson, hasMyAsana } = await import("@/lib/asana-user");
+  if (how !== "keep" && tasks.some((t) => isAsana(t.task_kind as TaskKind)) && !(await hasMyAsana(admin, me.id))) {
+    const { ASANA_CONNECT_SAY } = await import("@/lib/asana-connect");
+    return { ok: false, error: ASANA_CONNECT_SAY, connect: true };
+  }
+  return asanaAsPerson(admin, me.id, () => actOnTasksAs(db, admin, me, tasks, how, opts));
+}
+
+async function actOnTasksAs(db: Db, admin: Db, me: Staff, tasks: Record<string, unknown>[], how: ActHow, opts: { to?: Record<string, string>; note?: string | null }): Promise<ActResult> {
   const note = clip(opts.note, 600) || null;
   const failed: { title: string; error: string }[] = [];
+  const acted: string[] = [];
   let done = 0;
+  // The client's own message behind each change, read once: quoted whole with its links and files in every comment
+  const { loadFeedback, attachSlackFiles } = await import("@/lib/direction-feedback");
+  const { feedbackCommentHtml, feedbackCommentText } = await import("@/lib/direction-feedback-core");
+  const feedbacks = new Map<string, Awaited<ReturnType<typeof loadFeedback>>>();
+  const feedbackFor = async (ch: { id: string; source_ref?: string | null; url?: string | null; said_at?: string | null; quote: string | null }) => {
+    if (!feedbacks.has(ch.id)) feedbacks.set(ch.id, await loadFeedback(admin, { source_ref: ch.source_ref ?? null, url: ch.url ?? null, said_at: ch.said_at ?? null, quote: ch.quote }).catch(() => null));
+    return feedbacks.get(ch.id) ?? null;
+  };
   const now = new Date().toISOString();
   const { asanaConfigured } = await import("@/lib/asana");
   for (const t of tasks) {
     const kind = t.task_kind as TaskKind;
     const ref = t.task_ref as string;
-    const ch = t.change as unknown as { id: string; summary: string; quote: string | null; was_text: string | null; now_text: string | null; scope: string | null };
+    const ch = t.change as unknown as { id: string; summary: string; quote: string | null; was_text: string | null; now_text: string | null; scope: string | null; source_ref: string | null; url: string | null; said_at: string | null };
     const fix = t.fix as Fix;
+    const undo: { stories: string[]; attachments: string[]; from: string | null; kind: TaskKind; at: string } = { stories: [], attachments: [], from: null, kind, at: now };
     const text = directionNote({ summary: ch.summary, quote: ch.quote, was: ch.was_text, now: ch.now_text, scope: ch.scope }, { fix: how === "stop" ? "stop" : fix, why: t.why as string | null }, note);
     const picked = opts.to?.[t.id as string] ?? null;
     const line = lineOf(kind);
@@ -607,6 +645,7 @@ export async function actOnTasks(db: Db, admin: Db, me: Staff, taskIds: string[]
       if (how === "send_back") {
         if (isAsana(kind)) {
           if (!asanaConfigured()) throw new Error("Asana isn't connected here.");
+          undo.from = await asanaStageOf(admin, kind, ref);
           if (target) {
             if (kind === "asana_creative") await moveAsanaCreative(admin, ref, target);
             else {
@@ -614,27 +653,42 @@ export async function actOnTasks(db: Db, admin: Db, me: Staff, taskIds: string[]
               await moveEmailTaskInAsana(admin, ref, target as never);
             }
           }
-          await asanaStory(ref, `${text}\n\nFrom Kaizen OS${target ? `: moved back to ${stageLabel(kind, target)}` : ""}.`).catch(() => undefined);
+          // The direction and the client's full feedback (links clickable, files attached), as the person
+          const fb = await feedbackFor(ch);
+          const files = fb?.slackFiles.length ? await attachSlackFiles(ref, fb.slackFiles) : { attached: [], ids: [] };
+          undo.attachments.push(...files.ids);
+          const story = await asanaRichStory(ref, feedbackCommentHtml(text, fb, files.attached, target ? `Moved back to ${stageLabel(kind, target)} from Kaizen OS.` : null)).catch(async (e) => {
+            const { isAsanaConnectNeeded } = await import("@/lib/asana-connect");
+            if (isAsanaConnectNeeded(e)) throw e;
+            // Asana refused the rich text: the same as plain text
+            return asanaStory(ref, `${feedbackCommentText(text, fb)}${target ? `\n\nMoved back to ${stageLabel(kind, target)} from Kaizen OS.` : ""}`);
+          });
+          if (story) undo.stories.push(story);
         } else if (kind === "creative") {
           const { data: r } = await db.from("requests").select("id, stage, client_id").eq("id", ref).maybeSingle();
           if (!r) throw new Error("That ticket isn't on the board any more.");
+          undo.from = r.stage as string;
           if (target && r.stage !== target) {
             const { moveTicket } = await import("@/app/(team)/board/actions");
             const res = await moveTicket(ref, target as never, text);
             if (!res.ok) throw new Error(res.error);
           }
-          await admin.from("request_events").insert({ request_id: ref, kind: "direction", actor_id: me.id, body: text, data: { change: ch.id, to: target } });
+          await admin.from("request_events").insert({ request_id: ref, kind: "direction", actor_id: me.id, body: feedbackCommentText(text, await feedbackFor(ch)), data: { change: ch.id, to: target } });
         } else {
           const { data: e } = await db.from("email_tickets").select("id, stage, client_id").eq("id", ref).is("deleted_at", null).maybeSingle();
           if (!e) throw new Error("That ticket isn't on the board any more.");
+          undo.from = e.stage as string;
           const { moveEmailTicket, logEvent } = await import("@/lib/email-board");
           if (target && e.stage !== target) await moveEmailTicket(admin, ref, target as never, { id: me.id, name: me.fullName }, text);
-          await logEvent(admin, { ticketId: ref, clientId: e.client_id as string, kind: "direction", actorId: me.id, actorName: me.fullName, body: text, data: { change: ch.id, to: target } });
+          await logEvent(admin, { ticketId: ref, clientId: e.client_id as string, kind: "direction", actorId: me.id, actorName: me.fullName, body: feedbackCommentText(text, await feedbackFor(ch)), data: { change: ch.id, to: target } });
         }
       } else if (how === "stop") {
         const reason = `Client changed direction: ${ch.summary}`.slice(0, 300);
         if (isAsana(kind)) {
-          if (asanaConfigured()) await asanaStory(ref, `The client stopped this: ${ch.summary}.${ch.quote ? ` In their words: "${ch.quote}"` : ""}\nCheck before finishing it. Left open in Asana for its owner to close.`).catch(() => undefined);
+          if (asanaConfigured()) {
+            const story = await asanaRichStory(ref, feedbackCommentHtml(`The client stopped this: ${ch.summary}.\nCheck before finishing it. Left open in Asana for its owner to close.`, await feedbackFor(ch))).catch(() => null);
+            if (story) undo.stories.push(story);
+          }
         } else if (kind === "creative") {
           const { deleteTicket } = await import("@/app/(team)/board/actions");
           const res = await deleteTicket(ref, reason);
@@ -650,9 +704,12 @@ export async function actOnTasks(db: Db, admin: Db, me: Staff, taskIds: string[]
         }
       }
       const action: TaskAction = how === "send_back" ? "sent_back" : how === "keep" ? "kept" : "stopped";
-      await db.from("direction_change_tasks").update({ action, to_stage: target, acted_by: me.id, acted_at: now }).eq("id", t.id);
+      await db.from("direction_change_tasks").update({ action, to_stage: target, acted_by: me.id, acted_at: now, undo }).eq("id", t.id);
+      acted.push(t.id as string);
       done++;
     } catch (e) {
+      const { isAsanaConnectNeeded, ASANA_CONNECT_SAY } = await import("@/lib/asana-connect");
+      if (isAsanaConnectNeeded(e)) return { ok: false, error: ASANA_CONNECT_SAY, connect: true };
       failed.push({ title: t.title as string, error: e instanceof Error ? e.message.replace(/^Asana: /, "Asana said: ") : "It didn't go through." });
     }
   }
@@ -662,7 +719,65 @@ export async function actOnTasks(db: Db, admin: Db, me: Staff, taskIds: string[]
   const { revalidatePath } = await import("next/cache");
   revalidatePath("/board");
   revalidatePath("/board/email");
-  return { ok: true, done, failed, handled };
+  return { ok: true, done, failed, handled, acted };
+}
+
+/**
+ * Undo, right after applying: the comments and files Kaizen OS posted on Asana tasks are taken off and each task goes
+ * back to the stage it was in (as the person who applied it), Kaizen tickets go back too, and the tasks are flagged
+ * again. Only the person who applied it, within an hour.
+ */
+export async function undoActs(db: Db, admin: Db, me: Staff, taskIds: string[]): Promise<{ ok: true; undone: number; failed: string[] } | { ok: false; error: string; connect?: boolean }> {
+  const ids = [...new Set(taskIds.filter((x) => /^[0-9a-f-]{36}$/i.test(x)))].slice(0, 60);
+  const since = new Date(Date.now() - 3_600_000).toISOString();
+  const { data: rows } = ids.length ? await db.from("direction_change_tasks").select("id, change_id, task_kind, task_ref, title, undo, to_stage, acted_by, acted_at").in("id", ids).eq("acted_by", me.id).gte("acted_at", since) : { data: [] };
+  const tasks = rows ?? [];
+  if (!tasks.length) return { ok: false, error: "There's nothing of yours to undo here any more (Undo works for an hour)." };
+  const { asanaAsPerson, hasMyAsana } = await import("@/lib/asana-user");
+  if (tasks.some((t) => isAsana(t.task_kind as TaskKind)) && !(await hasMyAsana(admin, me.id))) {
+    const { ASANA_CONNECT_SAY } = await import("@/lib/asana-connect");
+    return { ok: false, error: ASANA_CONNECT_SAY, connect: true };
+  }
+  return asanaAsPerson(admin, me.id, async () => {
+    const { asanaRemove } = await import("@/lib/asana");
+    const failed: string[] = [];
+    let undone = 0;
+    for (const t of tasks) {
+      const u0 = (t.undo ?? {}) as { stories?: string[]; attachments?: string[]; from?: string | null };
+      // Moved only when it was moved: a note left in place goes back to nothing
+      const u = { ...u0, from: t.to_stage ? (u0.from ?? null) : null };
+      const kind = t.task_kind as TaskKind;
+      const ref = t.task_ref as string;
+      try {
+        if (isAsana(kind)) {
+          for (const s of u.stories ?? []) await asanaRemove(`/stories/${s}`).catch(() => undefined);
+          for (const a of u.attachments ?? []) await asanaRemove(`/attachments/${a}`).catch(() => undefined);
+          if (u.from) {
+            if (kind === "asana_creative") await moveAsanaCreativeTo(admin, ref, u.from);
+            else {
+              const { moveEmailTaskInAsana } = await import("@/lib/asana-email");
+              await moveEmailTaskInAsana(admin, ref, u.from as never);
+            }
+          }
+        } else if (kind === "creative" && u.from) {
+          const { moveTicket } = await import("@/app/(team)/board/actions");
+          await moveTicket(ref, u.from as never, "Undone: back where it was before the client's feedback was applied.");
+        } else if (kind === "email" && u.from) {
+          const { moveEmailTicket } = await import("@/lib/email-board");
+          await moveEmailTicket(admin, ref, u.from as never, { id: me.id, name: me.fullName }, "Undone: back where it was before the client's feedback was applied.");
+        }
+        await db.from("direction_change_tasks").update({ action: "pending", to_stage: null, acted_by: null, acted_at: null, undo: null }).eq("id", t.id);
+        await db.from("client_direction_changes").update({ status: "open", handled_by: null, handled_at: null }).eq("id", t.change_id as string).eq("status", "handled");
+        undone++;
+      } catch (e) {
+        failed.push(`${t.title as string}: ${e instanceof Error ? e.message : "it couldn't be undone"}`);
+      }
+    }
+    const { revalidatePath } = await import("next/cache");
+    revalidatePath("/board");
+    revalidatePath("/board/email");
+    return { ok: true as const, undone, failed };
+  });
 }
 
 /** Every task acted on: the change is handled */

@@ -267,7 +267,12 @@ export async function reopen(admin: Admin, key: string, by: string): Promise<{ o
   if (r.kind === "ask") await admin.from("agent_asks").update({ status: "open", done_at: null }).eq("id", String(r.key).slice(4));
   if (r.kind === "asana" && prev.asana) {
     const { asanaConfigured, asanaUpdate } = await import("@/lib/asana");
-    if (asanaConfigured()) await asanaUpdate(`/tasks/${String(prev.asana)}`, { completed: false }).catch(() => null);
+    const { asanaAsPerson, hasMyAsana } = await import("@/lib/asana-user");
+    if (asanaConfigured() && !(await hasMyAsana(admin, by))) {
+      const { ASANA_CONNECT_SAY } = await import("@/lib/asana-connect");
+      return { ok: false, error: ASANA_CONNECT_SAY };
+    }
+    if (asanaConfigured()) await asanaAsPerson(admin, by, () => asanaUpdate(`/tasks/${String(prev.asana)}`, { completed: false })).catch(() => null);
     await admin.from("asana_tasks").update({ open: true, completed_at: null }).eq("gid", String(prev.asana));
   }
   await admin.from("done_checks").update({ reopened_at: now, reopened_by: by, state: "moving" }).eq("key", key);

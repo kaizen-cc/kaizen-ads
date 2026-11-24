@@ -663,8 +663,16 @@ export async function swapIn(db: Db, admin: Db, me: SwapMe, newId: string, targe
     else {
       const { asanaConfigured, asanaUpdate, asanaWrite } = await import("@/lib/asana");
       if (asanaConfigured()) {
-        await asanaWrite(`/tasks/${t.ref}/stories`, { text: `Swapped before it started for "${title}" (${me.fullName}, in Kaizen OS). Nothing to make here.` }).catch(() => null);
-        await asanaUpdate(`/tasks/${t.ref}`, { completed: true }).catch(() => null);
+        // As the person (their own Asana); without it they're asked to connect, nothing posted as someone else
+        const { asanaAsPerson, hasMyAsana } = await import("@/lib/asana-user");
+        if (!(await hasMyAsana(admin, me.id))) {
+          const { ASANA_CONNECT_SAY } = await import("@/lib/asana-connect");
+          return { ok: false as const, error: ASANA_CONNECT_SAY, connect: true };
+        }
+        await asanaAsPerson(admin, me.id, async () => {
+          await asanaWrite(`/tasks/${t.ref}/stories`, { text: `Swapped before it started for "${title}". Nothing to make here.` }).catch(() => null);
+          await asanaUpdate(`/tasks/${t.ref}`, { completed: true }).catch(() => null);
+        });
       }
       await admin.from("asana_tasks").update({ open: false, completed_at: now }).eq("gid", t.ref);
     }

@@ -1,6 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { asanaAsUser } from "@/lib/asana";
+import { asanaAsUser, asanaForPerson } from "@/lib/asana";
 
 // Each person's own Asana (owner, Nov 23 2026): they connect it once (OAuth, /api/asana/connect), and from then on
 // "Next for me in Asana" reads exactly their Asana > My tasks (private tasks too) and every change they make from
@@ -78,7 +78,22 @@ export async function asanaTokenFor(admin: SupabaseClient, profileId: string): P
   }
 }
 
-/** Runs fn as the person in Asana when they've connected (their token), else with the shared token */
+/**
+ * Work the person asked for: every Asana write inside goes out as them (their own token). Reads still work without it
+ * (the shared connection), but a write without their token is refused with AsanaConnectNeeded, so the screen asks
+ * them to connect instead of posting as someone else.
+ */
+export async function asanaAsPerson<T>(admin: SupabaseClient, profileId: string, fn: () => Promise<T>): Promise<T> {
+  const row = await asanaTokenFor(admin, profileId).catch(() => null);
+  return asanaForPerson(profileId, row?.access_token ?? null, fn);
+}
+
+/** Whether the person has their own Asana connected (and usable) */
+export async function hasMyAsana(admin: SupabaseClient, profileId: string): Promise<boolean> {
+  return Boolean(await asanaTokenFor(admin, profileId).catch(() => null));
+}
+
+/** Runs fn as the person in Asana when they've connected (their token), else with the shared token (reads only: writes inside asanaAsPerson) */
 export async function withMyAsana<T>(admin: SupabaseClient, profileId: string, fn: (connected: boolean) => Promise<T>): Promise<T> {
   const row = await asanaTokenFor(admin, profileId).catch(() => null);
   return row ? asanaAsUser(row.access_token, () => fn(true)) : fn(false);

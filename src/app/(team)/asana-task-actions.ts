@@ -10,7 +10,14 @@ import type { AsanaPatch, TaskDetail } from "@/lib/asana-live-core";
 // comments, all written straight back to Asana. Every write is checked here: the task is theirs, on a client they can
 // see, or assigned to someone on their team (src/lib/asana-live.ts mayEditTask).
 
-type R<T> = ({ ok: true } & T) | { ok: false; error: string };
+type R<T> = ({ ok: true } & T) | { ok: false; error: string; /** They haven't connected their own Asana: show Connect */ connect?: boolean };
+
+/** A failed write: "connect your Asana first" when that's why, else the plain message */
+async function failed(e: unknown, plain: string): Promise<{ ok: false; error: string; connect?: boolean }> {
+  const { isAsanaConnectNeeded, ASANA_CONNECT_SAY } = await import("@/lib/asana-connect");
+  if (isAsanaConnectNeeded(e)) return { ok: false, error: ASANA_CONNECT_SAY, connect: true };
+  return { ok: false, error: plain };
+}
 
 async function guard(gid: string) {
   const me = await requireStaff();
@@ -43,7 +50,7 @@ async function saveAsanaTaskInner(gid: string, patch: AsanaPatch): Promise<R<{ t
     if (p.section && !p.sectionName) p.sectionName = g.detail.sections.find((s) => s.gid === p.section)?.name;
     await updateTask(createAdminClient(), g.me, gid, p, g.detail);
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message.replace(/^Asana: /, "Asana said: ") : "Asana didn't take it. Try again." };
+    return failed(e, e instanceof Error ? e.message.replace(/^Asana: /, "Asana said: ") : "Asana didn't take it. Try again.");
   }
   revalidatePath("/pipeline");
   return { ok: true, task: await taskDetail(gid) };
@@ -57,8 +64,8 @@ async function commentAsanaTaskInner(gid: string, text: string): Promise<R<{ tas
   const { addComment, taskDetail } = await import("@/lib/asana-live");
   try {
     await addComment(g.me, gid, text);
-  } catch {
-    return { ok: false, error: "Asana didn't take the comment. Try again." };
+  } catch (e) {
+    return failed(e, "Asana didn't take the comment. Try again.");
   }
   return { ok: true, task: await taskDetail(gid) };
 }
@@ -75,18 +82,18 @@ async function subtaskAsanaTaskInner(gid: string, op: { add?: string; tick?: { g
       if (!sub) return { ok: false, error: "That subtask isn't on this task." };
       await tickSubtask(g.me, gid, sub.gid, op.tick.done, sub.name);
     }
-  } catch {
-    return { ok: false, error: "Asana didn't take it. Try again." };
+  } catch (e) {
+    return failed(e, "Asana didn't take it. Try again.");
   }
   return { ok: true, task: await taskDetail(gid) };
 }
 
-// Each one runs as the person in Asana when they've connected their own (src/lib/asana-user.ts): they see their
-// private tasks and what they change is theirs; otherwise the shared connection, as before
+// Each one runs as the person in Asana (src/lib/asana-user.ts asanaAsPerson): they see their private tasks and every
+// change goes in as them. Without their own Asana connected, reading still works but a change asks them to connect
 async function asMe<T>(fn: () => Promise<T>): Promise<T> {
   const me = await requireStaff();
-  const { withMyAsana } = await import("@/lib/asana-user");
-  return withMyAsana(createAdminClient(), me.id, () => fn());
+  const { asanaAsPerson } = await import("@/lib/asana-user");
+  return asanaAsPerson(createAdminClient(), me.id, fn);
 }
 
 export async function asanaTask(gid: string) {

@@ -480,7 +480,8 @@ export async function moveEmailAsana(gid: string, stage: EmailStage): Promise<Re
     const { asanaConfigured } = await import("@/lib/asana");
     if (!asanaConfigured()) return { ok: false, error: "Asana isn't connected here." };
     const { moveEmailTaskInAsana } = await import("@/lib/asana-email");
-    await moveEmailTaskInAsana(admin, gid, stage);
+    const { asanaAsPerson } = await import("@/lib/asana-user");
+    await asanaAsPerson(admin, me.id, () => moveEmailTaskInAsana(admin, gid, stage));
     return done();
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message.replace(/^Asana: /, "Asana said: ") : "Asana didn't take the move." };

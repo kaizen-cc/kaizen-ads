@@ -299,7 +299,8 @@ export async function migrateEmailTask(admin: Admin, gid: string, by: { id: stri
   await admin.from("email_asana_tasks").update({ ticket_id: ticket.id }).eq("gid", gid);
   try {
     const { siteUrl } = await import("@/lib/site");
-    await asanaWrite(`/tasks/${gid}/stories`, { text: `Moved to Kaizen: ${siteUrl()}/board/email?t=${ticket.number}` });
+    const { asanaAsPerson } = await import("@/lib/asana-user");
+    await asanaAsPerson(admin, by.id, () => asanaWrite(`/tasks/${gid}/stories`, { text: `Moved to Kaizen: ${siteUrl()}/board/email?t=${ticket.number}` }));
   } catch {
     // The link back is a nicety
   }

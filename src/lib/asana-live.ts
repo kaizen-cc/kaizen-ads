@@ -214,18 +214,22 @@ export async function updateTask(admin: SupabaseClient, me: Staff, gid: string, 
 }
 
 export async function addComment(me: Staff, gid: string, text: string) {
-  await asanaWrite(`/tasks/${gid}/stories`, { text: `${text.trim().slice(0, 5000)}\n\n(${me.fullName} via Kaizen OS)` });
+  // As the person (their own Asana): Asana shows it's theirs
+  void me;
+  await asanaWrite(`/tasks/${gid}/stories`, { text: text.trim().slice(0, 5000) });
 }
 
 export async function addSubtask(me: Staff, gid: string, name: string) {
   const sub = await asanaWrite<{ gid: string }>(`/tasks/${gid}/subtasks`, { name: name.trim().slice(0, 500) });
-  await asanaWrite(`/tasks/${gid}/stories`, { text: `Subtask "${name.trim().slice(0, 200)}" added by ${me.fullName} via Kaizen OS` }).catch(() => null);
+  const { asanaIsUser } = await import("@/lib/asana");
+  if (!asanaIsUser()) await asanaWrite(`/tasks/${gid}/stories`, { text: `Subtask "${name.trim().slice(0, 200)}" added by ${me.fullName} via Kaizen OS` }).catch(() => null);
   return sub.gid;
 }
 
 export async function tickSubtask(me: Staff, parent: string, gid: string, done: boolean, name: string) {
   await asanaUpdate(`/tasks/${gid}`, { completed: done });
-  await asanaWrite(`/tasks/${parent}/stories`, { text: `Subtask "${name.slice(0, 200)}" ${done ? "ticked" : "unticked"} by ${me.fullName} via Kaizen OS` }).catch(() => null);
+  const { asanaIsUser } = await import("@/lib/asana");
+  if (!asanaIsUser()) await asanaWrite(`/tasks/${parent}/stories`, { text: `Subtask "${name.slice(0, 200)}" ${done ? "ticked" : "unticked"} by ${me.fullName} via Kaizen OS` }).catch(() => null);
 }
 
 /** A teammate's Asana user, by their work email, for a reassignment */

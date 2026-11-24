@@ -1,5 +1,6 @@
 "use client";
 
+import { ASANA_CONNECT_SAY, asanaConnectHref } from "@/lib/asana-connect";
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { asanaTask, commentAsanaTask, saveAsanaTask, subtaskAsanaTask } from "@/app/(team)/asana-task-actions";
@@ -95,7 +96,16 @@ function Sheet({ gid }: { gid: string }) {
           </button>
         </header>
         <div className="grid content-start gap-5 overflow-y-auto px-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-4">
-          {error && <p className="rounded-[12px] bg-bad-soft px-3 py-2 text-[13px] text-bad">{error}</p>}
+          {error && (
+            <p className="flex flex-wrap items-center gap-2 rounded-[12px] bg-bad-soft px-3 py-2 text-[13px] text-bad">
+              <span className="min-w-0 flex-1">{error}</span>
+              {error === ASANA_CONNECT_SAY && (
+                <a href={asanaConnectHref(`${window.location.pathname}${window.location.search}`)} className="inline-flex h-11 items-center rounded-full bg-brand px-4 text-[13px] font-medium text-white hover:bg-brand-hover md:h-9">
+                  Connect Asana
+                </a>
+              )}
+            </p>
+          )}
           {task && (
             <>
               {/* Due date in one tap */}

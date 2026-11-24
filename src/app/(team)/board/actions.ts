@@ -217,7 +217,9 @@ export async function moveAsanaTask(gid: string, stage: Stage): Promise<ActionRe
     const { data: sections } = await asana<{ gid: string; name: string }[]>(`/projects/${project}/sections`, { opt_fields: "name" });
     const to = sections.find((x) => stageForColumn(x.name) === stage);
     if (!to) return { ok: false, error: `The Creative board in Asana has no column for ${stage.replace(/_/g, " ")}.` };
-    await asanaWrite(`/sections/${to.gid}/addTask`, { task: gid });
+    // As the person who dragged it (their own Asana), never the shared connection
+    const { asanaAsPerson } = await import("@/lib/asana-user");
+    await asanaAsPerson(admin, me.id, () => asanaWrite(`/sections/${to.gid}/addTask`, { task: gid }));
     const moves = [...((task.moves ?? []) as { from: string | null; to: string | null; at: string }[]), { from: task.section as string | null, to: to.name, at: new Date().toISOString() }].slice(-30);
     await admin.from("asana_tasks").update({ section: to.name, stage, moves, synced_at: new Date().toISOString() }).eq("gid", gid);
     return done();

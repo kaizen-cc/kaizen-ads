@@ -1,5 +1,6 @@
 import "server-only";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { AsanaConnectNeeded, isStoryPath, stampSystemStory } from "@/lib/asana-connect";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Stage } from "@/lib/stages";
 import { changedRows } from "@/lib/unchanged";
@@ -22,6 +23,19 @@ export const asanaConfigured = () => Boolean(process.env.ASANA_TOKEN) || Boolean
  */
 const asanaAs = new AsyncLocalStorage<string>();
 export const asanaAsUser = <T>(token: string, fn: () => Promise<T>): Promise<T> => asanaAs.run(token, fn);
+/**
+ * Work a person asked for (src/lib/asana-user.ts asanaAsPerson): reads may use the shared connection when they haven't
+ * connected their own Asana, but every write must go out as them, so a write without their token is refused
+ * (AsanaConnectNeeded: the screen offers Connect). Outside it, writes are the system's and say "Posted by Kaizen OS".
+ */
+const asanaPerson = new AsyncLocalStorage<{ profileId: string }>();
+export const asanaForPerson = <T>(profileId: string, token: string | null, fn: () => Promise<T>): Promise<T> => asanaPerson.run({ profileId }, () => (token ? asanaAs.run(token, fn) : fn()));
+/** Before any write: refused for a person without their own token; a system comment says it's from Kaizen OS */
+function writeAs(path: string, data: Record<string, unknown>): Record<string, unknown> {
+  if (asanaAs.getStore()) return data;
+  if (asanaPerson.getStore()) throw new AsanaConnectNeeded();
+  return isStoryPath(path) ? stampSystemStory(data) : data;
+}
 /** Whether this call runs as a person (their own token), not the shared one */
 export const asanaIsUser = () => Boolean(asanaAs.getStore());
 const bearer = () => asanaAs.getStore() ?? process.env.ASANA_TOKEN;
@@ -68,7 +82,8 @@ export async function asana<T>(path: string, params: Record<string, string> = {}
   throw new Error("Asana: rate limited");
 }
 
-export async function asanaWrite<T>(path: string, data: Record<string, unknown>): Promise<T> {
+export async function asanaWrite<T>(path: string, input: Record<string, unknown>): Promise<T> {
+  const data = writeAs(path, input);
   for (let attempt = 0; attempt < 4; attempt++) {
     const res = await fetch(`${API}${path}`, { method: "POST", headers: { Authorization: `Bearer ${bearer()}`, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ data }), cache: "no-store" });
     if (res.status === 429) {
@@ -83,7 +98,8 @@ export async function asanaWrite<T>(path: string, data: Record<string, unknown>)
 }
 
 /** A change to something in Asana (PUT): a task's name, notes, fields. Never a delete. */
-export async function asanaUpdate<T>(path: string, data: Record<string, unknown>): Promise<T> {
+export async function asanaUpdate<T>(path: string, input: Record<string, unknown>): Promise<T> {
+  const data = writeAs(path, input);
   for (let attempt = 0; attempt < 4; attempt++) {
     const res = await fetch(`${API}${path}`, { method: "PUT", headers: { Authorization: `Bearer ${bearer()}`, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ data }), cache: "no-store" });
     if (res.status === 429) {
@@ -95,6 +111,26 @@ export async function asanaUpdate<T>(path: string, data: Record<string, unknown>
     return body.data;
   }
   throw new Error("Asana: rate limited");
+}
+
+/** Takes back a comment or an attachment Kaizen OS posted (Undo), under the same rules as every write; nothing else is ever deleted */
+export async function asanaRemove(path: string): Promise<void> {
+  if (!/^\/(stories|attachments)\/\d+$/.test(path)) throw new Error("Asana: only a comment or attachment Kaizen OS posted can be taken back.");
+  writeAs(path, {});
+  const res = await fetch(`${API}${path}`, { method: "DELETE", headers: { Authorization: `Bearer ${bearer()}`, Accept: "application/json" }, cache: "no-store" });
+  if (!res.ok && res.status !== 404) throw new Error(`Asana: ${res.status}`);
+}
+
+/** A file attached to a task (multipart upload), under the same rules as every write */
+export async function asanaAttach(taskGid: string, name: string, bytes: Buffer, mime: string): Promise<{ gid: string; permanent_url?: string }> {
+  writeAs(`/tasks/${taskGid}/attachments`, {});
+  const form = new FormData();
+  form.append("parent", taskGid);
+  form.append("file", new Blob([new Uint8Array(bytes)], { type: mime || "application/octet-stream" }), name.slice(0, 200) || "file");
+  const res = await fetch(`${API}/attachments`, { method: "POST", headers: { Authorization: `Bearer ${bearer()}`, Accept: "application/json" }, body: form, cache: "no-store" });
+  const body = (await res.json()) as { data: { gid: string; permanent_url?: string }; errors?: { message: string }[] };
+  if (!res.ok) throw new Error(`Asana: ${body.errors?.[0]?.message ?? res.status}`);
+  return body.data;
 }
 
 /**

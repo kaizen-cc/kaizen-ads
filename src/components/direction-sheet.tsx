@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
-import { applyDirection, closeDirection, loadDirectionChange, type Choice } from "@/app/(team)/direction/actions";
+import { applyDirection, closeDirection, loadDirectionChange, myAsanaReady, undoDirection, type Choice } from "@/app/(team)/direction/actions";
+import { asanaConnectHref } from "@/lib/asana-connect";
+import { applyPreview } from "@/lib/direction-feedback-core";
 import { BACK_STAGES, CHANGE_KIND_LABEL, SOURCE_LABEL, actionLabel, lineOf, stageLabel, isAsana, type TaskKind } from "@/lib/direction-core";
 import type { ChangeTask, ChangeView } from "@/lib/direction-changes";
 import { closeParams, useParam } from "@/lib/url-state";
@@ -12,7 +14,8 @@ import { toast } from "./toasts";
 // A client changed direction: what changed (was, now, in their words, where and when), every open task it touches
 // grouped by where it sits, each with why and what to do (send back to a stage, add the note, keep, stop) chosen
 // already, and one Apply. Opened from anywhere by ?direction=<id> (a notification, Next for me, a board flag, the client
-// page), so back closes it.
+// page), so back closes it. Apply all first says what it will do (comments posted as you in Asana with the client's full
+// feedback, where each task goes back to, nothing to the client), asks to connect Asana when theirs isn't, and offers Undo.
 
 const when = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" }) : null;
@@ -43,6 +46,8 @@ function Sheet({ id }: { id: string }) {
   const [note, setNote] = useState("");
   const [busy, start] = useTransition();
   const [rowBusy, setRowBusy] = useState<string | null>(null);
+  const [preview, setPreview] = useState<Choice[] | null>(null);
+  const [asanaReady, setAsanaReady] = useState<boolean | null>(null);
 
   const reload = () => loadDirectionChange(id).then((c) => setChange(c));
   useEffect(() => {
@@ -74,19 +79,37 @@ function Sheet({ id }: { id: string }) {
   }, [change]);
   const pick = (t: ChangeTask) => picks[t.id] ?? defaultFor(t);
 
+  const here = () => (typeof window === "undefined" ? "/pipeline" : `${window.location.pathname}${window.location.search}`);
+  const undo = (ids: string[]) =>
+    start(async () => {
+      const r = await undoDirection(ids);
+      if (!r.ok) return toast({ tone: "bad", title: "Couldn't undo it", body: r.error, ...("connect" in r && r.connect ? { actions: [{ label: "Connect Asana", href: asanaConnectHref(here()), primary: true }] } : {}) });
+      toast({ tone: r.failed.length ? "warn" : "ok", title: r.undone === 1 ? "Undone" : `${r.undone} undone`, body: r.failed.length ? r.failed.join(" · ").slice(0, 300) : "The comments are off and every task is back where it was." });
+      await reload();
+      router.refresh();
+    });
   const run = (choices: Choice[], row: string | null) => {
     if (!choices.length) return;
     setRowBusy(row);
     start(async () => {
       const r = await applyDirection(choices, note || null);
       setRowBusy(null);
-      if (!r.ok) return toast({ tone: "bad", title: "Couldn't apply it", body: r.error });
-      if (r.failed.length) toast({ tone: "bad", title: `${r.failed.length === 1 ? "One task" : `${r.failed.length} tasks`} didn't go through`, body: r.failed.map((f) => `${f.title}: ${f.error}`).join(" · ").slice(0, 300) });
-      else if (r.handled) toast({ tone: "ok", title: "All handled", body: "Every flagged task has its new direction." });
-      else toast({ tone: "ok", title: r.done === 1 ? "Done" : `${r.done} done` });
+      setPreview(null);
+      if (!r.ok) return toast({ tone: "bad", title: "Couldn't apply it", body: r.error, ...(r.connect ? { actions: [{ label: "Connect Asana", href: asanaConnectHref(here()), primary: true }] } : {}) });
+      const again = r.acted.length ? [{ label: "Undo", run: () => undo(r.acted) }] : [];
+      if (r.failed.length) toast({ tone: "bad", title: `${r.failed.length === 1 ? "One task" : `${r.failed.length} tasks`} didn't go through`, body: r.failed.map((f) => `${f.title}: ${f.error}`).join(" · ").slice(0, 300), actions: again, ms: 15000 });
+      else if (r.handled) toast({ tone: "ok", title: "All handled", body: "Every flagged task has its new direction.", actions: again, ms: 15000 });
+      else toast({ tone: "ok", title: r.done === 1 ? "Done" : `${r.done} done`, actions: again, ms: 15000 });
       await reload();
       router.refresh();
     });
+  };
+  // Apply all: say what it will do first; Asana work needs their own Asana connected
+  const askApply = (choices: Choice[]) => {
+    setPreview(choices);
+    const hasAsana = (change?.tasks ?? []).some((t) => isAsana(t.kind) && choices.some((c) => c.taskId === t.id && c.how !== "keep"));
+    setAsanaReady(hasAsana ? null : true);
+    if (hasAsana) void myAsanaReady().then(setAsanaReady);
   };
   const close = (status: "dismissed" | "handled") =>
     start(async () => {
@@ -205,7 +228,19 @@ function Sheet({ id }: { id: string }) {
             </div>
 
             <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-5 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-4 md:px-7">
-              {change.status === "open" ? (
+              {preview && change.status === "open" ? (
+                <ApplyPreview
+                  tasks={preview.map((c) => {
+                    const t = (change.tasks ?? []).find((x) => x.id === c.taskId);
+                    return { title: t?.title ?? "", asana: t ? isAsana(t.kind) : false, how: c.how, to: c.to && t ? stageLabel(t.kind, c.to) : null };
+                  })}
+                  asanaReady={asanaReady}
+                  connectHref={asanaConnectHref(here())}
+                  busy={busy}
+                  onApply={() => run(preview, null)}
+                  onBack={() => setPreview(null)}
+                />
+              ) : change.status === "open" ? (
                 <>
                   <button type="button" disabled={busy} onClick={() => close(pending.length ? "dismissed" : "handled")} className="h-11 rounded-full px-3 text-sm text-muted hover:text-fg disabled:opacity-50">
                     {pending.length ? "Not a change: dismiss" : "Mark handled"}
@@ -214,7 +249,7 @@ function Sheet({ id }: { id: string }) {
                     <button
                       type="button"
                       disabled={busy}
-                      onClick={() => run(pending.map((t) => toChoice(t.id, pick(t))), null)}
+                      onClick={() => askApply(pending.map((t) => toChoice(t.id, pick(t))))}
                       className="h-12 min-w-[10rem] rounded-full bg-brand px-6 text-sm font-medium text-white shadow-[0_10px_30px_-12px_var(--color-brand)] transition hover:bg-brand-hover active:scale-[0.98] disabled:opacity-60 max-sm:flex-1"
                     >
                       {busy && !rowBusy ? "Applying…" : `Apply ${pending.length === 1 ? "it" : `all ${pending.length}`}`}
@@ -230,6 +265,53 @@ function Sheet({ id }: { id: string }) {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/** What Apply all will do, said before it happens; Connect when their own Asana isn't connected */
+function ApplyPreview({ tasks, asanaReady, connectHref, busy, onApply, onBack }: { tasks: { title: string; asana: boolean; how: "send_back" | "keep" | "stop"; to: string | null }[]; asanaReady: boolean | null; connectHref: string; busy: boolean; onApply: () => void; onBack: () => void }) {
+  const lines = applyPreview(tasks);
+  const asana = tasks.some((t) => t.asana && t.how !== "keep");
+  const blocked = asana && asanaReady === false;
+  return (
+    <div className="grid w-full gap-3 animate-[step-in_.25s_cubic-bezier(.2,.8,.2,1)]">
+      <div className="grid gap-1.5">
+        <p className="text-sm font-semibold text-fg">This will:</p>
+        <ul className="grid gap-1 text-sm text-muted">
+          {lines.map((l) => (
+            <li key={l} className="flex gap-2">
+              <span aria-hidden className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-brand" />
+              <span className={l === "Nothing goes to the client" ? "font-medium text-fg" : ""}>{l}</span>
+            </li>
+          ))}
+        </ul>
+        <p className="text-xs text-faint [overflow-wrap:anywhere]">
+          {tasks
+            .filter((t) => t.how !== "keep")
+            .map((t) => t.title)
+            .slice(0, 6)
+            .join(" · ")}
+          {tasks.filter((t) => t.how !== "keep").length > 6 ? ` · and ${tasks.filter((t) => t.how !== "keep").length - 6} more` : ""}
+        </p>
+      </div>
+      {blocked && (
+        <div className="flex flex-wrap items-center gap-2 rounded-[14px] border border-warn/40 bg-warn-soft px-3 py-2.5 text-sm">
+          <span className="min-w-0 flex-1">Connect your Asana first, so the comments go in as you.</span>
+          <a href={connectHref} className="inline-flex h-11 items-center rounded-full bg-brand px-4 text-sm font-medium text-white hover:bg-brand-hover md:h-9">
+            Connect Asana
+          </a>
+        </div>
+      )}
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <button type="button" onClick={onBack} disabled={busy} className="h-11 rounded-full px-4 text-sm text-muted hover:text-fg disabled:opacity-50">
+          Back
+        </button>
+        <button type="button" onClick={onApply} disabled={busy || blocked || (asana && asanaReady === null)} className="h-12 min-w-[10rem] rounded-full bg-brand px-6 text-sm font-medium text-white shadow-[0_10px_30px_-12px_var(--color-brand)] transition hover:bg-brand-hover active:scale-[0.98] disabled:opacity-60 max-sm:flex-1">
+          {busy ? "Applying…" : asana && asanaReady === null ? "Checking Asana…" : "Apply"}
+        </button>
+      </div>
+      <p className="text-xs text-faint">You can undo it right after.</p>
     </div>
   );
 }

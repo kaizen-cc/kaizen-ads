@@ -154,7 +154,13 @@ async function fieldValues(project: string, fields: PlannedTask["fields"]) {
  * fields, assignee (by email; created unassigned if Asana doesn't know them) and the sender as a follower. Kept as a sent
  * request, and put on the mirror straight away (marked as made in Kaizen OS) so the Board shows it now.
  */
-export async function sendAsanaRequest(admin: SupabaseClient, d: AsanaDraft, by: { id: string; email: string | null }, extra: { suggestionId?: string | null; origin?: Record<string, unknown> | null; /** Others added as followers beside the sender (emails): the client's buyer, the head of creative */ followers?: string[] } = {}) {
+/** Sends the request to Asana as the sender (their own Asana; without it, they're asked to connect first) */
+export async function sendAsanaRequest(admin: SupabaseClient, d: AsanaDraft, by: { id: string; email: string | null }, extra: { suggestionId?: string | null; origin?: Record<string, unknown> | null; followers?: string[] } = {}) {
+  const { asanaAsPerson } = await import("@/lib/asana-user");
+  return asanaAsPerson(admin, by.id, () => sendAsanaRequestAs(admin, d, by, extra));
+}
+
+async function sendAsanaRequestAs(admin: SupabaseClient, d: AsanaDraft, by: { id: string; email: string | null }, extra: { suggestionId?: string | null; origin?: Record<string, unknown> | null; /** Others added as followers beside the sender (emails): the client's buyer, the head of creative */ followers?: string[] } = {}) {
   const planned = await planAsanaRequest(admin, d);
   if (!planned.length) throw new Error("Pick at least one format.");
   const project = await projectGid(admin);
@@ -176,6 +182,8 @@ export async function sendAsanaRequest(admin: SupabaseClient, d: AsanaDraft, by:
     try {
       task = await asanaWrite<{ gid: string; permalink_url?: string }>("/tasks?opt_fields=permalink_url", { ...base, ...(p.assignee?.email ? { assignee: p.assignee.email } : {}) });
     } catch (e) {
+      const { isAsanaConnectNeeded } = await import("@/lib/asana-connect");
+      if (isAsanaConnectNeeded(e)) throw e;
       // Someone Asana doesn't know by that email (or a follower it can't add): made without them, never lost
       if (!p.assignee?.email && !by.email && !extra.followers?.length) throw e;
       const { followers: _f, ...rest } = base;

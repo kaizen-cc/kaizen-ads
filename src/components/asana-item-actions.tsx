@@ -1,5 +1,6 @@
 "use client";
 
+import { ASANA_CONNECT_SAY, asanaConnectHref } from "@/lib/asana-connect";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
@@ -252,7 +253,16 @@ export function AsanaItemActions({ itemKey, gid, url, title, clientSlug = null, 
           </button>
         </div>
       )}
-      {note && <p className={`text-[12.5px] ${c.muted}`}>{note}</p>}
+      {note && (
+        <p className={`flex flex-wrap items-center gap-2 text-[12.5px] ${c.muted}`}>
+          <span className="min-w-0 flex-1">{note}</span>
+          {note === ASANA_CONNECT_SAY && (
+            <a href={asanaConnectHref(`${window.location.pathname}${window.location.search}`)} className="inline-flex h-11 items-center rounded-full bg-brand px-4 text-[12.5px] font-medium text-white hover:bg-brand-hover md:h-9">
+              Connect Asana
+            </a>
+          )}
+        </p>
+      )}
       <span className="sr-only">{title}</span>
     </div>
   );
