@@ -9,7 +9,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 export async function tellTeammate(admin: SupabaseClient, n: { ownerId: string; askId: string; title: string; body: string }) {
   await admin
     .from("notifications")
-    .upsert({ profile_id: n.ownerId, kind: "agent", title: n.title.slice(0, 300), body: n.body.slice(0, 1000), href: "/pipeline#next", key: `agent-ask:${n.askId}`, priority: "normal", read_at: null }, { onConflict: "profile_id,key" })
+    .upsert({ profile_id: n.ownerId, kind: "agent", title: n.title.slice(0, 300), body: n.body.slice(0, 1000), href: `/pipeline?block=needs&item=ask%3A${n.askId}`, key: `agent-ask:${n.askId}`, priority: "normal", read_at: null }, { onConflict: "profile_id,key" })
     .then(({ error }) => error && console.error("[handoff] notice", error.message));
   let slack = false;
   try {

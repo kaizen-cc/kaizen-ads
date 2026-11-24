@@ -203,7 +203,8 @@ async function trackingItems(admin: SupabaseClient, me: Staff): Promise<Draft[]>
       story: a.detail || a.title,
       why: picked ? "A tracking request picked up from a message, a task, a call or meeting notes" : `From ${a.asker?.full_name ?? "a teammate"}${a.urgent ? ", marked urgent" : ""}`,
       evidence: [],
-      action: { label: "Open your work", href: "/pipeline#next" },
+      // The client's page, else its own sheet on the Overview (the old Next for me list is gone)
+      action: a.clients?.slug ? { label: "Open the client", href: `/clients/${a.clients.slug}` } : { label: "Open it", href: `/pipeline?block=work&item=ask%3A${a.id}` },
     });
   }
   return out;

@@ -213,16 +213,26 @@ export async function closeCallPromise(id: string, how: "done" | "dropped") {
 export async function closeSubItem(key: string, how: "done" | "dismissed"): Promise<{ ok: true } | { ok: false; error: string }> {
   const me = await requireStaff();
   if (me.viewAs) return { ok: false, error: "You're viewing as someone else: nothing changes." };
+  // Marked on their day too, so the saved day drops it and its group recounts on the next read (today-counts applyMarks)
+  const mark = async () => markItem(await createClient(), me.id, key, how, { topic: "needs", client: "", title: "", clientId: null }, {});
   if (key.startsWith("safety:")) {
     const { dismissSafetyAlert } = await import("@/app/(team)/safety/[callId]/actions");
-    return dismissSafetyAlert(key.slice("safety:".length), how === "done" ? "Reviewed from the Overview" : undefined);
+    const r = await dismissSafetyAlert(key.slice("safety:".length), how === "done" ? "Reviewed from the Overview" : undefined);
+    if (r.ok) await mark();
+    return r;
   }
   if (key.startsWith("ask:")) {
     if (!adminConfigured()) return { ok: false, error: "Not available here." };
-    const { closeAsk } = await import("@/lib/agent-asks");
-    const id = key.slice("ask:".length);
-    await markItem(await createClient(), me.id, key, how, { topic: "needs", client: "", title: "", clientId: null }, {});
-    return (await closeAsk(createAdminClient(), me, id, how)) ? { ok: true } : { ok: false, error: "That one isn't open any more." };
+    const { askRefOf } = await import("@/lib/agent-call/ask-rules");
+    const ref = askRefOf(key);
+    if (!ref) return { ok: false, error: "Can't close that here." };
+    const admin = createAdminClient();
+    const { closeAsk, closeAskLine } = await import("@/lib/agent-asks");
+    // One line of a reminder's checklist: ticked (or taken off); the last one closes the reminder itself
+    const ok = ref.line != null ? await closeAskLine(admin, me, ref.id, ref.line) : await closeAsk(admin, me, ref.id, how);
+    if (!ok) return { ok: false, error: "That one isn't open any more." };
+    await mark();
+    return { ok: true };
   }
   return { ok: false, error: "Can't close that here." };
 }

@@ -1,4 +1,5 @@
 import type { Tier, TodayItem, TopicKey } from "@/lib/today";
+import { subsLeft, type ExecCard, type SubItem, type SubsTitle } from "@/lib/exec-overview-core";
 
 // How the daily recap is counted, in one place for every screen that shows its numbers (the recap itself, the "Your
 // day" card on the Overview and the theme cards under it). Everything about one client in a topic is one look: three
@@ -229,7 +230,23 @@ export function applyMarks<T extends { items: (Countable & { key: string; state:
     }
     const state = m === "saved" ? "saved" : i.state === "saved" ? "seen" : i.state;
     if (state !== i.state) changed = true;
-    return [state === i.state ? i : { ...i, state }];
+    // A group card's own items closed since it was saved: what's left, counted again (src/lib/exec-overview-core.ts)
+    let it = state === i.state ? i : { ...i, state };
+    type Group = { title: string; detail?: string; story?: string; stat?: { value: string; label: string }; subs?: SubItem[] | null; subsTitle?: SubsTitle | null; exec?: ExecCard };
+    const g = it as unknown as Group;
+    if (g.subs?.length) {
+      const closed = { has: (k: string) => ["done", "dismissed"].includes(marks.get(k) ?? "") };
+      const next = subsLeft(g, closed);
+      if (!next) {
+        changed = true;
+        return [];
+      }
+      if (next !== g) {
+        changed = true;
+        it = { ...it, ...next, ...(g.exec ? { exec: subsLeft(g.exec, closed) ?? g.exec } : {}) } as typeof it;
+      }
+    }
+    return [it];
   });
   return changed ? { ...t, items, looks: countLooks(items) } : t;
 }

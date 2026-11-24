@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore, useTransition } from "react";
 import { ItemQuickActions } from "@/components/item-quick-actions";
-import { capTab, TAB_LABEL, type ExecCard, type ExecTab } from "@/lib/exec-overview-core";
+import { capTab, primaryHref, subsLeft, TAB_LABEL, type ExecCard, type ExecTab } from "@/lib/exec-overview-core";
+import { TranscriptButton } from "@/components/assistant-call-parts";
+import { useVisualViewport } from "@/lib/use-visual-viewport";
 import { asanaLabel, BLURB, TONE, chips, type Tone } from "./exec-blocks";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { nudgeLead, takeItOver } from "../../exec-actions";
@@ -12,6 +14,7 @@ import { openAsanaTask } from "@/components/asana-task-sheet";
 import { DraftActions } from "./emails-ready";
 import { ItemContext } from "@/components/item-context";
 import { SubItems } from "@/components/sub-items";
+import { closeLocally, useClosed } from "@/lib/closed-items";
 
 // The executive Overview's blocks (owner, Nov 23 2026), under the Wrapped hero: Needs me, Escalated, Accounts, Pulse
 // and (the owner) System, each a designed block with its own color, a big number, one line and its sub-chips. A tap
@@ -78,6 +81,8 @@ export function Blocks({ blocks }: { blocks: BlockDef[] }) {
   const anchor = useSyncExternalStore(subscribeHash, () => window.location.hash.slice(1) || null, () => null);
   const [leftAnchor, setLeftAnchor] = useState(false);
   const hash = leftAnchor ? null : anchor;
+  // What closed on this page counts at once (a Done, a group's last item): src/lib/closed-items.ts
+  const closed = useClosed();
   const ids = blocks.map((b) => b.id);
   const alias = (x: string | null) => (x ? (ids.includes(x) ? x : ids.includes(`p-${x}`) ? `p-${x}` : null) : null);
   const open = asked ?? alias(tab) ?? (hash ? ((HASH_BLOCK[hash] ?? []).find((id) => ids.includes(id)) ?? null) : null);
@@ -92,11 +97,17 @@ export function Blocks({ blocks }: { blocks: BlockDef[] }) {
       else pushParams({ tab: null, all: null });
     } else pushParams({ block: id, all: null, tab: null });
   };
+  // An item opened on its own (?item=<key>): its sheet, whichever block or "more" it's in
+  const itemKey = useParam("item");
+  const sheetCard = itemKey && !closed.has(itemKey) ? blocks.flatMap((b) => b.cards ?? []).find((c) => c.key === itemKey) : undefined;
+  const sheetView = sheetCard ? subsLeft(sheetCard, closed) : null;
   return (
     <div className="grid gap-3 md:grid-cols-2">
+      {sheetView && <ItemSheet card={sheetView} />}
       <style>{`@keyframes block-in { from { opacity: 0; transform: translateY(10px) } to { opacity: 1; transform: none } }`}</style>
       {blocks.map((bl, i) => {
-        const count = bl.count ?? bl.cards?.length;
+        const listed = bl.cards && (bl.count == null || bl.count === bl.cards.length);
+        const count = listed ? (bl.cards ?? []).filter((c) => !closed.has(c.key) && subsLeft(c, closed) !== null).length : (bl.count ?? bl.cards?.length);
         const calm = count === 0 && !bl.bigLabel;
         const tone = calm ? CALM : bl.tone;
         const isOpen = open === bl.id;
@@ -179,6 +190,13 @@ export function ExecBlocks({ tabs, owner }: { tabs: Record<ExecTab, ExecCard[]>;
 function BlockItems({ id, cards, empty, note }: { id: string; cards: ExecCard[]; empty: string; note?: string }) {
   // "N more" lives in the address too (?all=<block>)
   const all = useParam("all") === id;
+  // Closed on this page: gone now, a group recounted (src/lib/closed-items.ts)
+  const closed = useClosed();
+  cards = cards.flatMap((c) => {
+    if (closed.has(c.key)) return [];
+    const v = subsLeft(c, closed);
+    return v ? [v] : [];
+  });
   const { shown, more } = capTab(cards);
   const list = all ? cards : shown;
   if (!cards.length) return <p className="px-2 py-4 text-sm text-ink/60">{empty}</p>;
@@ -201,12 +219,59 @@ function BlockItems({ id, cards, empty, note }: { id: string; cards: ExecCard[];
   );
 }
 
-function Card({ card }: { card: ExecCard }) {
-  const [gone, setGone] = useState(false);
+/**
+ * One item opened on its own (owner, Nov 24 2026: "Open it" landed back on the Overview): everything on it (the full
+ * ask, who asked and where, the call's transcript when allowed, the conversation, its own items), comments, Done, Later,
+ * transfer and due date. Full screen on a phone, a panel on a computer; it lives in the address (?item=), so Back closes it.
+ */
+function ItemSheet({ card }: { card: ExecCard }) {
+  const vv = useVisualViewport();
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && closeParams("item");
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, []);
+  return (
+    <div className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/50 md:items-center md:p-6" role="dialog" aria-modal="true" aria-label={card.title} onClick={() => closeParams("item")}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={vv ? { height: vv.height, marginTop: vv.top } : undefined}
+        className="flex h-[100dvh] w-full flex-col overflow-hidden bg-bg md:h-auto md:max-h-[85vh] md:max-w-2xl md:rounded-[24px] md:border md:border-line"
+      >
+        <div className="flex items-center justify-between gap-3 border-b border-line px-4 pb-3 pt-[max(12px,env(safe-area-inset-top))] md:px-5 md:pt-4">
+          <span className="text-[12px] font-semibold uppercase tracking-[0.14em] text-faint">{TAB_LABEL[card.tab] ?? "Item"}</span>
+          <button type="button" onClick={() => closeParams("item")} aria-label="Close" className="grid h-11 w-11 place-items-center rounded-full text-[18px] text-muted hover:bg-surface-2 hover:text-fg">
+            ✕
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 pb-[max(16px,env(safe-area-inset-bottom))] md:p-5">
+          <Card card={card} sheet />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Card({ card, sheet = false }: { card: ExecCard; sheet?: boolean }) {
+  const [gone, setGoneState] = useState(false);
+  // Gone here counts at once in the block's number too
+  const setGone = (v: boolean) => {
+    setGoneState(v);
+    if (v) closeLocally(card.key);
+  };
   const [composing, setComposing] = useState(false);
   if (gone) return null;
   const readOnly = card.tab === "pulse";
   const escalated = card.tab === "escalated";
+  // Its main action: a real destination, else its own sheet (opened in place here; nothing when it's the sheet already)
+  const href = primaryHref(card);
+  const ownSheet = href.includes(`item=${encodeURIComponent(card.key)}`);
+  const hasAction = Boolean(card.action.label || card.action.href);
   return (
     <article className="relative overflow-hidden rounded-[22px] border border-line bg-surface p-4 pl-5 md:p-5 md:pl-6">
       <span aria-hidden className={`absolute inset-y-0 left-0 w-1 ${ACCENT[card.severity]}`} />
@@ -215,6 +280,17 @@ function Card({ card }: { card: ExecCard }) {
           {card.client && card.kind !== "fire" && card.kind !== "stuck" && <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-faint">{card.client}</p>}
           <h3 className={`text-[15.5px] font-medium leading-snug ${card.severity === "fire" ? "text-bad" : "text-fg"}`}>{card.title}</h3>
           <p className="mt-1 text-[13.5px] leading-relaxed text-muted">{card.detail}</p>
+          {sheet && card.source && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-[13px] text-muted">
+              {card.source.label !== card.detail && <span>{card.source.label}</span>}
+              {card.source.href && (
+                <Link href={card.source.href} className="text-fg underline underline-offset-2">
+                  Open the conversation
+                </Link>
+              )}
+              {card.source.transcriptCallId && <TranscriptButton callId={card.source.transcriptCallId} label="The call's transcript" className="min-h-11 rounded-full border border-line px-3 text-[13px] text-fg hover:bg-surface-2 sm:min-h-8 sm:text-[12px]" />}
+            </div>
+          )}
           {card.context?.length ? (
             <div className="mt-3">
               <ItemContext lines={card.context} />
@@ -239,15 +315,27 @@ function Card({ card }: { card: ExecCard }) {
               {composing ? "Close" : "Nudge the lead"}
             </button>
           ) : (
-            card.action.href && (
-              <Go href={card.action.href} label={card.action.label} />
-            )
+            hasAction &&
+            (ownSheet ? (
+              !sheet && (
+                <button type="button" onClick={() => pushParams({ item: card.key })} className="inline-flex min-h-11 items-center rounded-full bg-brand px-4 text-[13px] font-medium text-white hover:bg-brand/90 sm:min-h-8 sm:text-[12px]">
+                  {card.action.label || "Open it"}
+                </button>
+              )
+            ) : (
+              <Go href={href} label={card.action.label || "Open it"} />
+            ))
           )}
           <ItemQuickActions
             inline
             item={{ key: card.key, snap: { topic: card.tab, client: card.client ?? "", title: card.title, clientId: card.clientId }, href: card.action.href }}
             hide={escalated ? ["delegate"] : []}
-            onGone={(how) => how !== "comment" && how !== "delegate" && setGone(true)}
+            onGone={(how) => {
+              if (how === "comment" || how === "delegate") return;
+              setGone(true);
+              // Done from its sheet: back to the Overview
+              if (sheet) closeParams("item");
+            }}
             extra={<Extras card={card} onTaken={() => setGone(true)} />}
           />
           {composing && card.lead && card.draft && <Compose card={card} onSent={() => setComposing(false)} />}

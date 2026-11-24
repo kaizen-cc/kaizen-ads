@@ -62,7 +62,7 @@ export async function addTodo(db: SupabaseClient, admin: SupabaseClient, me: Pic
     const when = due ? ` by ${new Date(`${due}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })}` : "";
     await admin
       .from("notifications")
-      .upsert({ profile_id: t.assigneeId, kind: "assistant", title: `From the account review: ${title}`, body: `${me.fullName.split(" ")[0]} assigned this to you${when}.`, href: "/pipeline", client_id: t.clientId ?? null, key: `review-todo:${data.id}`, priority: "normal", actor_id: me.id }, { onConflict: "profile_id,key", ignoreDuplicates: true })
+      .upsert({ profile_id: t.assigneeId, kind: "assistant", title: `From the account review: ${title}`, body: `${me.fullName.split(" ")[0]} assigned this to you${when}.`, href: `/pipeline?block=needs&item=todo%3A${data.id}`, client_id: t.clientId ?? null, key: `review-todo:${data.id}`, priority: "normal", actor_id: me.id }, { onConflict: "profile_id,key", ignoreDuplicates: true })
       .then(
         () => undefined,
         () => undefined,

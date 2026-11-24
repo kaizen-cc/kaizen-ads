@@ -50,13 +50,78 @@ export type ExecCard = {
   callee?: { id: string; name: string } | null;
   /** A group's own items, each reviewed on its own (each flagged call, each reminder saved from a call) */
   subs?: SubItem[] | null;
+  /** How a group card's title counts what's left ("5 reminders you saved...", "1 call safety review..."), redone as they close */
+  subsTitle?: SubsTitle | null;
+  /** Where it came from (a task asked on a call or in a chat): said on its sheet, with the call's transcript when allowed */
+  source?: { label: string; href?: string | null; transcriptCallId?: string | null } | null;
 };
+
+/** Address parameters that open something on the Overview (a sheet, a composer, a filtered list): a real destination */
+const OPENERS = ["item", "nudge", "task", "draft", "sent", "client", "cl", "stepins", "sub", "edit"];
+
+/**
+ * Whether an item's main action would only land back on the Overview (or the recap) it's already on: nothing, "#",
+ * /pipeline or /today, a block of it, an anchor in it (owner, Nov 24 2026: "Open it" showed "Opening..." and landed
+ * back on the Overview). An address that opens something there (?item=, ?nudge=, ?task=...) is a destination.
+ */
+export function pointsAtOverview(href: string | null | undefined): boolean {
+  const h = String(href ?? "").trim();
+  if (!h || h === "#" || h.startsWith("#")) return true;
+  if (/^https?:/i.test(h)) return false;
+  const u = new URL(h, "https://os.local");
+  if (u.pathname !== "/pipeline" && u.pathname !== "/today" && u.pathname !== "/") return false;
+  return !OPENERS.some((p) => u.searchParams.has(p));
+}
+
+/** The item's own sheet on the Overview (?item=<key>, Back closes it), from anywhere (the recap opens it there) */
+export const itemSheetHref = (c: { key: string; tab: string }) => `/pipeline?block=${encodeURIComponent(c.tab)}&item=${encodeURIComponent(c.key)}`;
+
+/** An item's main action: its real destination, else its own sheet (never the Overview it's on) */
+export function primaryHref(c: { key: string; tab: string; action: { href: string | null } }): string {
+  return pointsAtOverview(c.action.href) ? itemSheetHref(c) : (c.action.href as string);
+}
+
+export type SubsTitle = { one: string; many: string };
 
 /**
  * One item inside a group card: opens on its own page, Done or Dismiss on its own. key: what closing it closes
  * ("safety:<call id>" resolves that call's review for every exec; "ask:<id>" closes that reminder or task).
  */
-export type SubItem = { key: string; title: string; meta: string; detail?: string | null; href: string | null };
+export type SubItem = {
+  key: string;
+  title: string;
+  meta: string;
+  detail?: string | null;
+  href: string | null;
+  /** The reminder a line belongs to ("3 follow-ups from your call"): lines of one reminder show under it */
+  group?: string | null;
+  /** Past its due date (the card counts what's overdue) */
+  overdue?: boolean;
+};
+
+/**
+ * A group card with some of its own items closed: what's left, its title and detail counted again, and nothing when
+ * none are left (the card itself is done). A reminder whose lines are all closed goes with them. The Overview does this
+ * the moment one closes, and a saved day does it on read, so the counts agree before the day is built again.
+ */
+export function subsLeft<C extends { title: string; detail?: string; story?: string; subs?: SubItem[] | null; subsTitle?: SubsTitle | null; stat?: { value: string; label: string } | string | null }>(c: C, closed: { has: (k: string) => boolean }): C | null {
+  if (!c.subs?.length) return c;
+  const left = c.subs.filter((s) => !closed.has(s.key) && !closed.has(s.key.split("#")[0]));
+  if (left.length === c.subs.length) return c;
+  if (!left.length) return null;
+  const n = left.length;
+  const late = left.filter((s) => s.overdue).length;
+  const title = c.subsTitle ? `${n} ${n === 1 ? c.subsTitle.one : c.subsTitle.many}` : c.title;
+  const recount = (t: string | undefined) => (t == null ? t : t.replace(/^\d+ overdue · /, late ? `${late} overdue · ` : ""));
+  const stat = c.stat && typeof c.stat === "object" && /^\d+$/.test(c.stat.value) ? { ...c.stat, value: String(n) } : c.stat;
+  return { ...c, subs: left, title, ...(c.detail != null ? { detail: recount(c.detail) } : {}), ...(c.story != null ? { story: recount(c.story) } : {}), ...(stat !== undefined ? { stat } : {}) };
+}
+
+/** Every line of one reminder closed: the reminder itself is done (its parent auto-completes) */
+export function reminderDone(subs: readonly SubItem[], closed: { has: (k: string) => boolean }, askId: string): boolean {
+  const lines = subs.filter((s) => s.key.startsWith(`ask:${askId}#`));
+  return lines.length > 0 && lines.every((s) => closed.has(s.key));
+}
 
 const ROLE_WORD = (r: string | null | undefined) => (r ? r.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()) : "Someone");
 const mmss = (s: number) => `${Math.floor(Math.max(0, s) / 60)}:${String(Math.floor(Math.max(0, s) % 60)).padStart(2, "0")}`;

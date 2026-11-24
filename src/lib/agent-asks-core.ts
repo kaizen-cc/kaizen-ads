@@ -28,6 +28,11 @@ export function dedupeAsks<T extends AskLike>(rows: readonly T[]): T[] {
   return out;
 }
 
+/** A reminder's checklist after one line closed: nothing open left, the reminder itself is done (the parent auto-completes) */
+export function lineClosed(items: { text: string; done: boolean }[]): { items: { text: string; done: boolean }[]; close: boolean } {
+  return { items, close: items.length > 0 && items.every((i) => i.done) };
+}
+
 /** Where it was asked: a call opens its notes, a chat (or anything else) the assistant */
 export function askSource(a: { call_id: string | null; role_key: string | null }): { label: string; href: string } {
   if (a.call_id) return { label: "From a call", href: `/assistant?call=${a.call_id}` };

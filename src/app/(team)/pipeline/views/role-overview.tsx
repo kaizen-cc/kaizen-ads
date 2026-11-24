@@ -59,6 +59,8 @@ function cardOf(i: TodayItem): ExecCard {
     emailDraft: i.emailDraft ?? null,
     context: i.context ?? null,
     subs: i.subs ?? null,
+    subsTitle: i.subsTitle ?? null,
+    source: i.source ?? null,
   };
 }
 

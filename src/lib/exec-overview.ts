@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
 import type { TodayDraft, TopicKey } from "@/lib/today";
 import { isInternalClient } from "@/lib/internal-clients";
-import { execHears, groupEscalated, safetySub, sortCards, sortNeeds, type ExecCard, type ExecTab, type FireRow, type Rung3Row } from "@/lib/exec-overview-core";
+import { execHears, groupEscalated, primaryHref, safetySub, sortCards, sortNeeds, type ExecCard, type ExecTab, type FireRow, type Rung3Row } from "@/lib/exec-overview-core";
 
 // The executive Overview and morning recap (owner, Nov 23 2026; the rules in ./exec-overview-core.ts). One model, built
 // with the recap: Needs me (what's on the exec personally), Escalated (rung 3 of the ladder and fires), Accounts (their
@@ -83,6 +83,7 @@ async function needsMe(db: SupabaseClient, admin: SupabaseClient, me: Staff, dra
       due: flagged[flagged.length - 1].reviewed_at,
       action: { label: "Review", href: `/safety/${flagged[0].call_id}` },
       subs,
+      subsTitle: { one: "call safety review to look at", many: "call safety reviews to look at" },
     });
   // Only the agents on lines this exec oversees (by the agent's role, never a name); unassigned and cross-line ones
   // are the owner's (src/lib/youtube-core.ts decidesScoped)
@@ -451,10 +452,11 @@ export function cardToDraft(c: ExecCard): TodayDraft {
     why: c.tab === "asana" ? "Yours in Asana" : c.tab === "escalated" ? (c.severity === "fire" ? "A fire: every exec sees it at once" : "48 hours with the lead and nothing moving") : c.tab === "accounts" ? "Off target with nothing in motion" : c.tab === "needs" ? "On you" : c.tab === "system" ? "Kaizen OS itself" : "For the picture",
     evidence: [],
     // A card with no link of its own (Nudge the lead) opens on the Overview, where its composer is
-    action: { label: c.action.label, href: c.action.href ?? `/pipeline?block=${c.tab}` },
+    // No destination of its own (or only the Overview): its own sheet there (src/lib/exec-overview-core.ts primaryHref)
+    action: { label: c.action.label || "Open it", href: primaryHref(c) },
     due: c.due ?? null,
     // The story recap lists a group's own items too
-    ...(c.subs?.length ? { subs: c.subs } : {}),
+    ...(c.subs?.length ? { subs: c.subs, subsTitle: c.subsTitle ?? null } : {}),
     ...(c.context?.length ? { context: c.context } : {}),
     exec: c,
   };

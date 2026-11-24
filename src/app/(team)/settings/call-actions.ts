@@ -521,7 +521,9 @@ export async function callTranscript(callId: string): Promise<{ ok: true; name: 
   if (!/^[0-9a-f-]{36}$/.test(callId)) return { ok: false, error: "That call isn't there." };
   const admin = createAdminClient();
   const { data: call } = await admin.from("ai_role_calls").select("id, role_key, profile_id, started_at, ended_at").eq("id", callId).maybeSingle();
-  if (!call || (call.profile_id !== me.id && !me.isExec)) return { ok: false, error: "That call isn't yours." };
+  // Someone else's call: an exec, or the person a task from it was sent to with its transcript
+  const sentWith = call && call.profile_id !== me.id && !me.isExec ? Boolean((await admin.from("agent_asks").select("id").eq("call_id", callId).eq("owner_id", me.id).eq("with_transcript", true).limit(1)).data?.length) : false;
+  if (!call || (call.profile_id !== me.id && !me.isExec && !sentWith)) return { ok: false, error: "That call isn't yours." };
   const [{ data: rows }, { data: roles }, { data: who }, mineName] = await Promise.all([
     admin.from("ai_role_chats").select("role, content, role_key, created_at").eq("call_id", callId).order("created_at").limit(2000),
     admin.from("ai_roles").select("key, label"),

@@ -77,6 +77,10 @@ export type TodayItem = {
   context?: import("@/lib/exec-overview-core").ItemContextLine[] | null;
   /** A group's own items, each reviewed on its own (src/lib/exec-overview-core.ts SubItem) */
   subs?: import("@/lib/exec-overview-core").SubItem[] | null;
+  /** Where it came from (src/lib/exec-overview-core.ts ExecCard source) */
+  source?: import("@/lib/exec-overview-core").ExecCard["source"];
+  /** How the group's title counts what's left (src/lib/exec-overview-core.ts subsLeft) */
+  subsTitle?: import("@/lib/exec-overview-core").SubsTitle | null;
   /** A message waiting on this person: the reply drafted for them */
   reply?: { id: string; source: "slack" | "gmail"; url: string | null; draft: string | null; channel: string | null; kind?: "owed" | "said" | "call" };
   /** Under "Everything else" (an exec's day, outside their focus): the topic it came from */
@@ -843,14 +847,14 @@ async function withAsks(db: SupabaseClient, me: Staff, drafts: Draft[]): Promise
   const admin = adminConfigured() ? createAdminClient() : db;
   const { data, error } = await admin
     .from("agent_asks")
-    .select("id, kind, title, detail, due_on, created_at, asked_by, owner_id, call_id, role_key, checklist, urgent, source_ref, asker:profiles!agent_asks_asked_by_fkey(full_name), clients(id, name, slug)")
+    .select("id, kind, title, detail, due_on, created_at, asked_by, owner_id, call_id, role_key, checklist, urgent, source_ref, with_transcript, asker:profiles!agent_asks_asked_by_fkey(full_name), clients(id, name, slug)")
     .eq("owner_id", me.id)
     .eq("status", "open")
     .order("created_at", { ascending: false })
     .limit(120);
   if (error || !data?.length) return drafts;
   const { dedupeAsks, askSource } = await import("@/lib/agent-asks-core");
-  type Row = { id: string; kind: string; title: string; detail: string | null; due_on: string | null; created_at: string; asked_by: string | null; owner_id: string; call_id: string | null; role_key: string | null; checklist: { text: string; done: boolean }[] | null; urgent: boolean | null; source_ref: string | null; asker: { full_name: string } | null; clients: { id: string; name: string; slug: string } | null };
+  type Row = { id: string; kind: string; title: string; detail: string | null; due_on: string | null; created_at: string; asked_by: string | null; owner_id: string; call_id: string | null; role_key: string | null; checklist: { text: string; done: boolean }[] | null; urgent: boolean | null; source_ref: string | null; with_transcript?: boolean | null; asker: { full_name: string } | null; clients: { id: string; name: string; slug: string } | null };
   const rows = dedupeAsks((data as unknown as Row[]).filter((r) => !String(r.source_ref ?? "").startsWith("trk:")));
   const have = new Map(drafts.map((d, i) => [d.key, i]));
   const out = [...drafts];
@@ -877,9 +881,11 @@ async function withAsks(db: SupabaseClient, me: Staff, drafts: Draft[]): Promise
       detail: `Asked by ${asker} ${where}, ${when(r.created_at)}${r.due_on ? ` · due ${day(due!)}` : ""}${r.urgent ? " · urgent" : ""}`,
       severity: (overdue || r.urgent ? "critical" : "high") as "critical" | "high",
       due,
-      // The asker's call is theirs: the words said on it come with the item instead
-      action: r.clients?.slug ? { label: "Open the client", href: `/clients/${r.clients.slug}` } : { label: "Open it", href: `/pipeline?block=needs` },
+      // Its destination when it has one (the client); else its own sheet: the full ask, who asked, where, comments, Done
+      action: r.clients?.slug ? { label: "Open the client", href: `/clients/${r.clients.slug}` } : { label: "Open it", href: `/pipeline?block=needs&item=${encodeURIComponent(key)}` },
       context,
+      // The call it came from: the asker's own, so its transcript only when they sent it along (or to an exec)
+      source: { label: `Asked by ${asker} ${where}, ${when(r.created_at)}`, transcriptCallId: r.call_id && (r.with_transcript || me.isExec) ? r.call_id : null },
     };
     const item: Draft = {
       key,
@@ -896,6 +902,7 @@ async function withAsks(db: SupabaseClient, me: Staff, drafts: Draft[]): Promise
       action: { label: card.action.label, href: card.action.href },
       due,
       context,
+      source: card.source,
       ...(me.isExec ? { exec: card } : {}),
     };
     // Transferred here already (its snapshot) or on the tracking day: this one, with everything it carries, stands
@@ -906,24 +913,26 @@ async function withAsks(db: SupabaseClient, me: Staff, drafts: Draft[]): Promise
   // Their own reminders and tasks saved from their calls and chats: one card, each inside it on its own
   const own = rows.filter((x) => !x.asked_by || x.asked_by === me.id).filter((r) => !have.has(`ask:${r.id}`));
   if (own.length) {
-    const subs = own.map((r) => {
+    // Each line of a reminder's checklist is its own item ("ask:<id>#<n>", n from 1), under the reminder it belongs to;
+    // a reminder without one is a single item. Every line done: the reminder is done (src/app/today/actions.ts)
+    const subs = own.flatMap((r): import("@/lib/exec-overview-core").SubItem[] => {
       const src = askSource(r);
-      const left = todo(r);
-      return {
-        key: `ask:${r.id}`,
-        title: r.title,
-        meta: [`${src.label}, ${when(r.created_at)}`, r.clients?.name, r.due_on ? `due ${day(`${r.due_on}T21:00:00Z`)}` : null].filter(Boolean).join(" · "),
-        detail: left.length ? left.slice(0, 6).join("\n") : r.detail ? String(r.detail).slice(0, 400) : null,
-        href: src.href,
-      };
+      const meta = [`${src.label}, ${when(r.created_at)}`, r.clients?.name, r.due_on ? `due ${day(`${r.due_on}T21:00:00Z`)}` : null].filter(Boolean).join(" · ");
+      const overdue = Boolean(r.due_on && Date.parse(`${r.due_on}T21:00:00Z`) < Date.now());
+      const lines = (Array.isArray(r.checklist) ? r.checklist : []).map((c, i) => ({ c, n: i + 1 })).filter(({ c }) => !c.done && String(c.text ?? "").trim());
+      if (lines.length) return lines.map(({ c, n }) => ({ key: `ask:${r.id}#${n}`, title: String(c.text).trim(), meta, detail: null, href: src.href, group: r.title, overdue }));
+      return [{ key: `ask:${r.id}`, title: r.title, meta, detail: r.detail ? String(r.detail).slice(0, 400) : null, href: src.href, group: null, overdue }];
     });
-    const overdue = own.filter((r) => r.due_on && Date.parse(`${r.due_on}T21:00:00Z`) < Date.now()).length;
+    if (!subs.length) return out;
+    const n = subs.length;
+    const overdue = subs.filter((x) => x.overdue).length;
     const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
     const key = `asks:mine:${today}`;
-    const title = `${own.length} ${own.length === 1 ? "reminder" : "reminders"} you saved from your calls and chats`;
+    const subsTitle = { one: "reminder you saved from your calls and chats", many: "reminders you saved from your calls and chats" };
+    const title = `${n} ${n === 1 ? subsTitle.one : subsTitle.many}`;
     const detail = `${overdue ? `${overdue} overdue · ` : ""}Open each, or mark it done right here`;
-    const card = { key, tab: "needs" as const, kind: "mine" as const, client: null, clientId: null, title, detail, severity: (overdue ? "critical" : "normal") as "critical" | "normal", due: null, action: { label: "Open your calls", href: "/assistant" }, subs };
-    out.push({ key, topic: "needs", score: overdue ? 80 : 58, client: "Team", clientSlug: "", clientId: null, stat: { value: String(own.length), label: own.length === 1 ? "reminder" : "reminders" }, title, story: detail, why: "You asked your assistant to remember these", evidence: [], action: { label: "Open your calls", href: "/assistant" }, subs, ...(me.isExec ? { exec: card } : {}) });
+    const card = { key, tab: "needs" as const, kind: "mine" as const, client: null, clientId: null, title, detail, severity: (overdue ? "critical" : "normal") as "critical" | "normal", due: null, action: { label: "Open your calls", href: "/assistant" }, subs, subsTitle };
+    out.push({ key, topic: "needs", score: overdue ? 80 : 58, client: "Team", clientSlug: "", clientId: null, stat: { value: String(n), label: n === 1 ? "reminder" : "reminders" }, title, story: detail, why: "You asked your assistant to remember these", evidence: [], action: { label: "Open your calls", href: "/assistant" }, subs, subsTitle, ...(me.isExec ? { exec: card } : {}) });
   }
   return out;
 }

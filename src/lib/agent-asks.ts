@@ -32,6 +32,26 @@ export async function closeAsk(admin: SupabaseClient, me: { id: string; fullName
   return true;
 }
 
+/**
+ * One line of a reminder's checklist closed from its group card (n from 1): Done or Dismiss closes that line (in place,
+ * so the other lines keep their numbers). When nothing open is left, the reminder itself is done, as if closed whole.
+ */
+export async function closeAskLine(admin: SupabaseClient, me: { id: string; fullName: string }, id: string, n: number): Promise<boolean> {
+  const { data } = await admin.from("agent_asks").select("checklist, status").eq("id", id).eq("owner_id", me.id).maybeSingle();
+  if (!data || data.status !== "open") return false;
+  const { cleanItems, tickItem } = await import("@/lib/agent-call/ask-rules");
+  const items = cleanItems(data.checklist);
+  if (!items[n - 1]) return false;
+  const { lineClosed } = await import("@/lib/agent-asks-core");
+  const r = lineClosed(tickItem(items, n - 1, true));
+  if (r.close) {
+    await admin.from("agent_asks").update({ checklist: r.items }).eq("id", id).eq("owner_id", me.id);
+    return closeAsk(admin, me, id, "done");
+  }
+  await admin.from("agent_asks").update({ checklist: r.items }).eq("id", id).eq("owner_id", me.id);
+  return true;
+}
+
 /** Done on the card of their own saved reminders: every one of them still open is done */
 export async function closeOwnReminders(admin: SupabaseClient, me: string): Promise<void> {
   const { data } = await admin.from("agent_asks").select("id, source_ref").eq("owner_id", me).eq("asked_by", me).eq("status", "open").limit(200);

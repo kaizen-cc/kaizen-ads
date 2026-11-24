@@ -13,6 +13,8 @@ import { acknowledge, setItem } from "./actions";
 import { DoneBurst } from "@/components/done-burst";
 import { ItemContext } from "@/components/item-context";
 import { SubItems } from "@/components/sub-items";
+import { useClosed } from "@/lib/closed-items";
+import { subsLeft } from "@/lib/exec-overview-core";
 import { ItemQuickActions } from "@/components/item-quick-actions";
 import { ScorecardView } from "@/components/production";
 import type { Scorecard } from "@/lib/production";
@@ -792,7 +794,10 @@ function Overview({ b, mine, dive, onChoose, onAct, onNext }: { b: Bucket; mine:
 }
 
 /** One item: the story, the evidence, a drafted reply, why it's here, and what to do. */
-function ItemBody({ i, status, big = false, onChoose, onAct, onNext }: { i: TodayItem; status?: Mark; big?: boolean; onChoose: (s: "saved" | "done" | "dismissed") => void; onAct: () => void; onNext: (() => void) | null }) {
+function ItemBody({ i: item, status, big = false, onChoose, onAct, onNext }: { i: TodayItem; status?: Mark; big?: boolean; onChoose: (s: "saved" | "done" | "dismissed") => void; onAct: () => void; onNext: (() => void) | null }) {
+  // A group whose own items closed on this page: its title and number counted again at once
+  const closed = useClosed();
+  const i = subsLeft(item, closed) ?? { ...item, subs: [] };
   const t = TIER[i.tier];
   const primary = "inline-flex h-12 w-full items-center justify-center rounded-full bg-white px-5 text-[15px] font-semibold text-black hover:bg-white/90 md:h-11 md:w-auto md:justify-start md:text-sm";
   return (
