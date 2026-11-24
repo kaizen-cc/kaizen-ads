@@ -21,7 +21,7 @@ export const WORKSPACE_MCP_SCOPES: Record<WorkspaceServer, { read: string[]; wri
   gmail: { read: [`${S}gmail.readonly`], write: [`${S}gmail.compose`] },
   drive: { read: [`${S}drive.readonly`], write: [`${S}drive`] },
   calendar: {
-    read: [`${S}calendar.events.readonly`, `${S}calendar.calendarlist.readonly`],
+    read: [`${S}calendar.readonly`],
     write: [`${S}calendar.events`],
   },
   docs: {

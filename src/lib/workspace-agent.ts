@@ -97,3 +97,39 @@ export const mcpReadDriveFile = (email: string, fileId: string, link: string) =>
     const text = typeof got === "string" ? got : field((got ?? {}) as Record<string, unknown>, "content", "text", "body") || JSON.stringify(got ?? "");
     return { ...base, text, folder: false };
   });
+
+export type DriveHit = { name: string; type: string; changed: string | null; owner: string | null; link: string };
+
+/** search_my_drive: files they can open, by name and text, newest first (search_files with Drive's query syntax) */
+export const mcpSearchDrive = (email: string, driveQ: string, limit: number) =>
+  attempt("search_my_drive", async () => {
+    const got = await workspaceCall("drive", email, "search_files", { q: { names: ["query", "q"], value: driveQ }, n: { names: ["pageSize", "maxResults"], value: limit }, order: { names: ["orderBy"], value: "modifiedTime desc" } });
+    const files: DriveHit[] = listOf(got, "files", "results", "items")
+      .slice(0, limit)
+      .map((f) => {
+        const owners = listOf(f.owners);
+        return {
+          name: field(f, "name", "title"),
+          type: field(f, "mimeType").replace("application/vnd.google-apps.", "google ").replace("application/", ""),
+          changed: field(f, "modifiedTime").slice(0, 10) || null,
+          owner: field(owners[0], "displayName") || null,
+          link: field(f, "webViewLink", "url") || `https://drive.google.com/open?id=${field(f, "id")}`,
+        };
+      });
+    return files;
+  });
+
+/** my_calendar: their primary calendar's events between two moments (list_events), as Calendar's own event objects */
+export const mcpCalendarEvents = (email: string, timeMin: string, timeMax: string, search: string | null) =>
+  attempt("my_calendar", async () => {
+    const got = await workspaceCall("calendar", email, "list_events", {
+      cal: { names: ["calendarId", "calendar_id"], value: "primary" },
+      min: { names: ["timeMin", "startTime", "time_min"], value: timeMin },
+      max: { names: ["timeMax", "endTime", "time_max"], value: timeMax },
+      q: { names: ["q", "query"], value: search ?? undefined },
+      single: { names: ["singleEvents"], value: true },
+      order: { names: ["orderBy"], value: "startTime" },
+      n: { names: ["maxResults", "pageSize"], value: 100 },
+    });
+    return listOf(got, "items", "events");
+  });

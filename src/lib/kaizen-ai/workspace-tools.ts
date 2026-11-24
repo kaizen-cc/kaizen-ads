@@ -42,6 +42,9 @@ export function workspaceTools(ctx: ToolCtx): ChatTool[] {
         const { gmailToken, google, googleConfigured } = await import("@/lib/context/google");
         if (!googleConfigured()) return { error: "Google isn't connected to Kaizen OS yet." };
         return googleOrHelp(async () => {
+          // Through Google's Gmail MCP server when WORKSPACE_MCP is on (an AI agent's Workspace access must use MCP)
+          const viaMcp = await (await import("@/lib/workspace-agent")).mcpSearchEmail(ctx.me.email, clip(input.query, 300), Math.min(20, Number(input.limit) || 10));
+          if (viaMcp) return { found: viaMcp.emails.length, emails: viaMcp.emails, note: viaMcp.emails.length ? "Read one whole with read_gmail_thread (thread_id)." : "Nothing matched: try other words or a wider date." };
           const token = await gmailToken(ctx.me.email);
           const list = await google<{ messages?: { id: string }[] }>(token, `${GMAIL}/messages`, { q: clip(input.query, 300), maxResults: String(Math.min(20, Number(input.limit) || 10)) });
           // Each one's headers and snippet (metadata only: never the body here)
@@ -61,6 +64,9 @@ export function workspaceTools(ctx: ToolCtx): ChatTool[] {
         if (!id) return { error: "Which thread? Give a thread_id from search_my_gmail." };
         const { gmailToken, google, plainText, withoutQuotes } = await import("@/lib/context/google");
         return googleOrHelp(async () => {
+          const link = `https://mail.google.com/mail/?authuser=${encodeURIComponent(ctx.me.email)}#all/${id}`;
+          const viaMcp = await (await import("@/lib/workspace-agent")).mcpThreadLines(ctx.me.email, id);
+          if (viaMcp) return { messages: viaMcp.length, link, ...textAnswer(viaMcp.join("\n\n---\n\n") || "(empty)", input) };
           const token = await gmailToken(ctx.me.email);
           const t = await google<{ messages?: { id: string; internalDate?: string; payload: Parameters<typeof plainText>[0] & { headers?: { name: string; value: string }[] } }[] }>(token, `${GMAIL}/threads/${id}`, { format: "full" });
           const msgs = (t.messages ?? []).map((m) => {
@@ -84,6 +90,9 @@ export function workspaceTools(ctx: ToolCtx): ChatTool[] {
         if (!words) return { error: "What should I look for?" };
         const { googleDriveToken, google } = await import("@/lib/context/google");
         return googleOrHelp(async () => {
+          const limit = Math.min(25, Number(input.limit) || 12);
+          const viaMcp = await (await import("@/lib/workspace-agent")).mcpSearchDrive(ctx.me.email, driveQuery(words), limit);
+          if (viaMcp) return { found: viaMcp.length, files: viaMcp, note: viaMcp.length ? "Open one with read_google_file (its link)." : "Nothing matched: try fewer or other words." };
           const token = await googleDriveToken(ctx.me.email);
           const r = await google<{ files?: { id: string; name: string; mimeType: string; modifiedTime?: string; webViewLink?: string; owners?: { displayName?: string }[] }[] }>(token, "https://www.googleapis.com/drive/v3/files", {
             q: driveQuery(words),
@@ -113,6 +122,11 @@ export function workspaceTools(ctx: ToolCtx): ChatTool[] {
         const to = day(input.to) ?? new Date(Date.parse(`${from}T12:00:00Z`) + 7 * 86_400_000).toISOString().slice(0, 10);
         const { googleCalendarToken, google, CALENDAR_SCOPE } = await import("@/lib/context/google");
         return googleOrHelp(async () => {
+          const viaMcp = await (await import("@/lib/workspace-agent")).mcpCalendarEvents(ctx.me.email, `${from}T00:00:00-05:00`, `${to}T23:59:59-05:00`, clip(input.search, 80) || null);
+          if (viaMcp) {
+            const events = viaMcp.map((e) => eventRow(e as Parameters<typeof eventRow>[0]));
+            return { from, to, count: events.length, events };
+          }
           const token = await googleCalendarToken(ctx.me.email);
           const r = await google<{ items?: Parameters<typeof eventRow>[0][] }>(token, "https://www.googleapis.com/calendar/v3/calendars/primary/events", {
             timeMin: `${from}T00:00:00-05:00`,

@@ -64,6 +64,10 @@ Every Workspace call uses the Workspace service account (`GOOGLE_SERVICE_ACCOUNT
 | `read_my_email_thread` | lib/assistant/lookup-tools.ts | Gmail REST threads.get | Gmail MCP `get_thread` |
 | `save_draft` and every agent-made Gmail draft | lib/assistant/platform-drafts.ts | Gmail REST drafts.create | Gmail MCP `create_draft` (REST when the draft has files) |
 | `read_google_file` (Kaizen AI, assistant) and the SOW reader | lib/assistant/read-file.ts | Drive REST files.get/export | Drive MCP `get_file_metadata` and `read_file_content` |
+| `search_my_gmail` / `read_gmail_thread` (Kaizen AI) | lib/kaizen-ai/workspace-tools.ts | Gmail REST | Gmail MCP `search_threads` / `get_thread` |
+| `search_my_drive` (Kaizen AI) | lib/kaizen-ai/workspace-tools.ts | Drive REST files.list | Drive MCP `search_files` |
+| `my_calendar` (Kaizen AI) | lib/kaizen-ai/workspace-tools.ts | Calendar REST events.list | Calendar MCP `list_events` |
+| `find_meeting_time`, `book_meeting`, `reschedule_meeting`, `cancel_meeting` | lib/assistant/calendar-tools.ts, calendar-server.ts | Calendar REST freeBusy + events | Still REST. Next slice: Calendar MCP `suggest_time`, `create_event`, `update_event`, `delete_event`. Free/busy across teammates may not map one to one, so check with the check route first. |
 | `send_message` (email, on a spoken yes) | lib/assistant/comms-tools.ts | Gmail REST messages.send | **Still REST. Gmail MCP has no send.** Needs your decision (below). |
 | `export_to_google_doc` / `export_to_google_sheet` | lib/kaizen-ai/tools.ts | Drive REST multipart upload | Still REST. Next slice: Drive MCP `create_file` |
 | `fill_recap_deck` | lib/ai-tools/recap-deck.ts | Drive copy + Slides batchUpdate | Still REST. Next slice: Drive `copy_file` + Slides `update_presentation` |
