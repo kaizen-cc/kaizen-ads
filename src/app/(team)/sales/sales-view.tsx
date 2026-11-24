@@ -140,7 +140,7 @@ export function SalesView({ prospects, meId }: { prospects: ProspectRow[]; meId:
                 [true, "Everyone's"],
               ] as const
             ).map(([v, label]) => (
-              <button key={label} type="button" role="tab" aria-selected={all === v} onClick={() => pushParams({ all: v ? "1" : null })} className={`h-9 rounded-full px-4 text-[13px] transition-colors ${all === v ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
+              <button key={label} type="button" role="tab" aria-selected={all === v} onClick={() => pushParams({ all: v ? "1" : null })} className={`h-11 rounded-full px-4 text-[14px] transition-colors md:h-9 md:text-[13px] ${all === v ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
                 {label}
               </button>
             ))}
@@ -170,7 +170,7 @@ export function SalesView({ prospects, meId }: { prospects: ProspectRow[]; meId:
               <li key={p.id} className="grid min-w-0 gap-3 rounded-[20px] border border-line bg-surface p-4 md:p-5">
                 <div className="flex min-w-0 items-start gap-3">
                   <div className="grid min-w-0 flex-1 gap-0.5">
-                    <Link href={`/sales/${p.id}`} className="break-words font-heading text-[18px] leading-snug text-fg hover:underline">
+                    <Link href={`/sales/${p.id}`} className="inline-flex min-h-11 items-center break-words font-heading text-[18px] leading-snug text-fg hover:underline md:min-h-0">
                       {p.name}
                     </Link>
                     <p className="break-words text-[12.5px] text-muted">{[p.industry, p.location].filter(Boolean).join(" · ") || "Not researched yet"}</p>

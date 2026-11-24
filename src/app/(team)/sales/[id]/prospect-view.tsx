@@ -336,7 +336,7 @@ function BriefTab({ p, brief }: { p: P; brief: ProspectBrief | null }) {
             {brief.sources.map((s, i) => (
               <li key={i} className="min-w-0 break-all text-[13px]">
                 {/^https?:\/\//.test(s) ? (
-                  <a href={s} target="_blank" rel="noopener noreferrer" className="text-brand-text hover:underline">
+                  <a href={s} target="_blank" rel="noopener noreferrer" className="inline-block py-2.5 text-brand-text hover:underline md:py-0">
                     {s}
                   </a>
                 ) : (
