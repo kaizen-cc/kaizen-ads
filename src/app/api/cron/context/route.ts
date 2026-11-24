@@ -71,7 +71,9 @@ function nyNow() {
  * - calls: every 30 minutes on weekdays 8am to 7pm, every 3 hours otherwise (Gemini and Fireflies notes, promises watched)
  * - clients: every hour (new, archived and upgraded clients from Kaizen Track)
  * - suggest: weekdays at 8:30am (the strategist's suggested briefs, ready for the morning)
- * - integrations: every hour (each client's Shopify, WooCommerce, GoHighLevel or HubSpot read; at 9am, the buyers' notes)
+ * - integrations: every hour (each client's WooCommerce, GoHighLevel or HubSpot read; at 9am, the buyers' notes)
+ * - shopify: every 10 minutes (stores whose full history is still being read go first, every store refreshed hourly with
+ *   only changed days written; a few clients checked for a Shopify store nobody connected)
  * - bible_upkeep: every hour (the Bible's pages checked every 90 days, website issues read from new Bibles, each
  *   client's onboarding sheet read when it's new or changed, brand guidelines clients shared read for the Head of
  *   Creative to approve; at 9am, clients paid for creative and given nothing)
@@ -125,6 +127,7 @@ function due(step: string | null) {
   if (step === "presentation_write") return true; // started once a Bible is written (?client=<id>): its client presentation, drafted (never sent)
   if (step === "presentations") return true; // every 10 minutes (vercel.json): a new client's presentation, written and sent
   if (step === "integrations") return true; // hourly (vercel.json): stores and CRMs read, and at 9am the notes to the buyers
+  if (step === "shopify") return true; // every 10 minutes (vercel.json): history reads first, each store refreshed hourly (the step itself skips stores read in the last 50 minutes)
   if (step === "patterns") return weekday === "Mon" && hour >= 5 && hour <= 10; // Mondays early (vercel.json): patterns across clients, a group or two a run
   if (step === "bible_upkeep") return true; // hourly (vercel.json): links, website issues, creative packages with nothing made
   if (step === "learnings") return true; // nightly (vercel.json): the team's learnings classified, merged, settled and retired
@@ -470,6 +473,7 @@ export async function GET(request: Request) {
       return Response.json({ result: await (await import("@/lib/presentation")).writePresentation(admin, id) });
     }
     if (step === "integrations") return Response.json(await (await import("@/lib/integrations")).keepIntegrations(admin));
+    if (step === "shopify") return Response.json(await (await import("@/lib/shopify/store")).keepShopify(admin));
     if (step === "bible_upkeep") {
       const links = await (await import("@/lib/bible-links")).keepLinks(admin).catch((e) => String(e));
       const issues = await (await import("@/lib/website-issues")).keepIssues(admin).catch((e) => String(e));

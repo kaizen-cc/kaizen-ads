@@ -62,6 +62,11 @@ export default async function StartPage({ params }: { params: Promise<{ slug: st
           intake={{ done: (intakes ?? 0) > 0 || form?.status === "submitted", clientId: (client.kaizen_id as number | null) ?? null, slug: client.slug, started: Object.keys((form?.answers ?? {}) as object).length > 0, booked: form?.status === "submitted" ? Boolean(form.call_booked_at) : null }}
           presentation={deck && ["sent", "approved"].includes(deck.status as string) ? (deck.status as string) : null}
           chat={client.slack_channel_id && process.env.SLACK_BOT_TOKEN ? { slack: `https://slack.com/app_redirect?channel=${client.slack_channel_id}` } : null}
+          shopify={{
+            clientId: client.id as string,
+            connected: Boolean((await admin.from("client_integrations").select("id").eq("client_id", client.id).eq("kind", "shopify").eq("status", "connected").limit(1).maybeSingle()).data),
+            ready: Boolean(process.env.SHOPIFY_API_KEY && process.env.SHOPIFY_API_SECRET),
+          }}
         />
       </main>
     </div>

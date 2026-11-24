@@ -1,5 +1,6 @@
 import "server-only";
 import { conversionFor } from "@/lib/kpi/conversions";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { campaignIncluded, type CampaignScope } from "@/lib/kpi/calc";
 import { historyRange } from "@/lib/kaizen-ai/meta-history";
 import { byOffer, changeWindows, compareSides, aggregate, fromInsight, rankCreatives, resultTypeOf, type AdRow, type MatchOn, type OfferGroup } from "./custom-core";
@@ -18,7 +19,7 @@ export type CustomSpec = {
   change?: { date: string; label?: string | null; days?: number | null } | null;
   creatives?: { top?: number; worst?: number; minSpend?: number | null } | null;
 };
-export type MetaTarget = CampaignScope & { ad_account_id: string | null; conversion?: string | null };
+export type MetaTarget = CampaignScope & { ad_account_id: string | null; conversion?: string | null; /** Their Shopify's real revenue rides along when a store is connected */ client_id?: string | null };
 
 const FIELDS = "ad_id,ad_name,adset_name,campaign_id,campaign_name,spend,impressions,inline_link_clicks,actions,action_values";
 const MAX_ROWS = 20_000;
@@ -86,7 +87,26 @@ export async function customAnalysis(target: MetaTarget, spec: CustomSpec, today
         ...(spec.offers?.length ? { by_offer: spec.offers.map((g) => ({ offer: g.label, before: byOffer(before.rows, [g], type, roas, spec.offersOn ?? "any").groups[0], after: byOffer(after.rows, [g], type, roas, spec.offersOn ?? "any").groups[0] })) } : {}),
         note: "The change day counts as after. Conversion rates don't depend on spend, so read them first; a big shift in spend or audience on either side also moves them.",
       };
+      // The store's own side of it (Shopify, the whole store): revenue, orders and MER before and after the change
+      if (target.client_id) {
+        const store = await import("@/lib/shopify/store").then((m) => m.storePeriods(createAdminClient(), target.client_id!, [w.before, w.after])).catch(() => null);
+        if (store) {
+          const mer = (x: { storeRevenue: number; allSpend: number }) => (x.allSpend > 0 ? Math.round((x.storeRevenue / x.allSpend) * 100) / 100 : null);
+          (out.change as Record<string, unknown>).store = {
+            before: { ...store[0], mer: mer(store[0]) },
+            after: { ...store[1], mer: mer(store[1]) },
+            revenue_change_pct: store[0].storeRevenue > 0 ? Math.round(((store[1].storeRevenue - store[0].storeRevenue) / store[0].storeRevenue) * 1000) / 10 : null,
+            note: "From their Shopify: the whole store's revenue (less refunds) and every ad dollar (Meta, Google, TikTok) under MER.",
+          };
+        }
+      }
     }
+  }
+
+  // The whole range's real store revenue and MER (Shopify), next to what Meta reports
+  if (target.client_id) {
+    const store = await import("@/lib/shopify/store").then((m) => m.storePeriods(createAdminClient(), target.client_id!, [{ start: since, end: range.until }])).catch(() => null);
+    if (store) out.store = { ...store[0], mer: store[0].allSpend > 0 ? Math.round((store[0].storeRevenue / store[0].allSpend) * 100) / 100 : null, note: "Shopify: store revenue less refunds; MER over Meta + Google + TikTok spend." };
   }
 
   if (spec.creatives) {

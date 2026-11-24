@@ -219,7 +219,7 @@ export async function reportTools(admin: SupabaseClient, r: { client_id: string;
           const ch = input.change as { date?: unknown; label?: unknown; days?: unknown } | undefined;
           const cr = input.creatives as { top?: unknown; worst?: unknown } | undefined;
           const out = await customAnalysis(
-            { ...(t as CampaignScope), ad_account_id: account, conversion: (t as { conversion?: string | null } | null)?.conversion ?? null },
+            { ...(t as CampaignScope), ad_account_id: account, conversion: (t as { conversion?: string | null } | null)?.conversion ?? null, client_id: (t as { client_id?: string | null } | null)?.client_id ?? null },
             { since: String(input.since ?? ""), until: input.until ? String(input.until) : null, offers, byMonth: input.by_month === true, change: ch?.date ? { date: String(ch.date), label: ch.label ? String(ch.label).slice(0, 120) : null, days: Number(ch.days) || null } : null, creatives: cr ? { top: Number(cr.top ?? 5), worst: Number(cr.worst ?? 5) } : null },
             todayIn(),
           );

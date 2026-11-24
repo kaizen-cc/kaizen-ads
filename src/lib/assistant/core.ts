@@ -115,6 +115,7 @@ const APP_PREFIXES = ["/pipeline", "/board", "/clients", "/kpis", "/reports", "/
  * page: a Settings tab, the Email or Social KPI board, the assistant's settings or what it knows)
  */
 export const SCREEN_PLACES: Record<string, string> = {
+  "client stores": "/settings?tab=connections&section=stores",
   overview: "/pipeline",
   // The Overview as a list (the person's own layout; the overview_layout tool switches it)
   "overview list": "/pipeline",

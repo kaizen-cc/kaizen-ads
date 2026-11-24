@@ -15,11 +15,12 @@ const NAMES: Record<IntegrationKind, string> = { shopify: "Shopify", woocommerce
 const HOW: Record<IntegrationKind, { account: string; secret: string; secret2?: string; steps: string[] }> = {
   shopify: {
     account: "Store address (the .myshopify.com one)",
-    secret: "Admin API access token",
+    secret: "Admin API access token, or the app's client ID",
+    secret2: "Client secret (only with a client ID)",
     steps: [
-      "Once our collaborator access is accepted, open the store's admin: Settings › Apps and sales channels › Develop apps.",
-      "Create an app named \"Kaizen OS\", then Configure Admin API scopes: read_orders and read_customers (read_all_orders too, to read further back than 60 days).",
-      "Install the app and reveal the Admin API access token (Shopify shows it once). Paste it here.",
+      "Through our collaborator access (needs Manage and install apps and channels + Enable development): Settings › Apps and sales channels › Develop apps › Create an app named Kaizen OS, scopes read_orders, read_all_orders, read_products, read_customers, install, and paste the Admin API access token (leave the secret empty).",
+      "Or the store owner makes the app in their own Shopify Dev Dashboard with the same scopes, installs it, and sends its client ID (first box) and secret (second box).",
+      "The Store revenue card above walks through both.",
     ],
   },
   woocommerce: {

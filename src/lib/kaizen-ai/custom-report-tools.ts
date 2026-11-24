@@ -64,7 +64,7 @@ export function customReportTools(ctx: ToolCtx): ChatTool[] {
         const cr = input.creatives as { top?: unknown; worst?: unknown; min_spend?: unknown } | undefined;
         const { customAnalysis } = await import("@/lib/reports/custom-analysis");
         const out = await customAnalysis(
-          t,
+          { ...t, client_id: c.id },
           {
             since: String(input.since ?? ""),
             until: input.until ? String(input.until) : null,

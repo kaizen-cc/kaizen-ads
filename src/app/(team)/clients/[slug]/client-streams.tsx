@@ -110,25 +110,44 @@ export async function BusinessAuditStream({ clientId, meId, canRun = true, chann
   );
 }
 
-/** Their store and CRM: the real customers and lead outcomes, and the team's connections */
+/** Their store and CRM: the real customers and lead outcomes, and the team's connections; Shopify's revenue and MER first */
 export async function BusinessStream({ clientId }: { clientId: string }) {
   if (!adminConfigured()) return null;
   const admin = createAdminClient();
   const supabase = await createClient();
-  const [{ data: conns }, { businessSummary }, { businessModelOf }, { IntegrationsPanel }] = await Promise.all([
+  const [{ data: conns }, { businessSummary }, { businessModelOf }, { IntegrationsPanel }, { StorePanel }, shopify, { requireStaff }, { mayEditSetup }, { data: hint }] = await Promise.all([
     supabase.from("client_integrations").select("id, kind, account, label, status, last_synced_at, last_error").eq("client_id", clientId).order("created_at"),
     import("@/lib/integrations"),
     import("@/lib/business-model"),
     import("./integrations-panel"),
+    import("./store-panel"),
+    import("@/lib/shopify/store"),
+    import("@/lib/auth"),
+    import("@/lib/setup-access"),
+    supabase.from("client_store_hints").select("shop_domain, evidence").eq("client_id", clientId).eq("platform", "shopify").maybeSingle(),
   ]);
-  const [summary, model] = await T("store & CRM", Promise.all([businessSummary(supabase, clientId).catch(() => null), businessModelOf(admin, clientId).catch(() => null)]));
+  const me = await requireStaff();
+  const [summary, model, overview] = await T("store & CRM", Promise.all([businessSummary(supabase, clientId).catch(() => null), businessModelOf(admin, clientId).catch(() => null), shopify.storeOverview(supabase, admin, clientId).catch(() => null)]));
+  const ba = overview?.start.date ? await shopify.storeBeforeAfter(admin, clientId, { pivot: overview.start.date }).catch(() => null) : null;
+  const split = ba && !("error" in ba) ? { pivot: ba.pivot, source: overview?.start.source ?? null, beforePerMonth: ba.before.perMonth, afterPerMonth: ba.after.perMonth, growthPct: ba.growthPct, beforeMer: ba.before.mer, afterMer: ba.after.mer, beforeDays: ba.before.days, afterDays: ba.after.days, note: ba.note ?? ba.stillReading ?? null } : null;
   return (
-    <IntegrationsPanel
-      clientId={clientId}
-      connections={(conns ?? []).map((c) => ({ id: c.id as string, kind: c.kind as never, account: c.account as string, label: (c.label as string | null) ?? null, status: c.status as string, lastSyncedAt: (c.last_synced_at as string | null) ?? null, lastError: (c.last_error as string | null) ?? null }))}
-      summary={summary}
-      suggest={model?.model === "ecommerce" ? "shopify" : "gohighlevel"}
-    />
+    <>
+      <StorePanel
+        clientId={clientId}
+        overview={overview}
+        split={split}
+        hint={hint ? { shop: (hint.shop_domain as string | null) ?? null, evidence: (hint.evidence as string[]) ?? [] } : null}
+        canEdit={mayEditSetup(me) && !me.viewAs}
+        suggest={model?.model === "ecommerce"}
+        appReady={Boolean(process.env.SHOPIFY_API_KEY && process.env.SHOPIFY_API_SECRET)}
+      />
+      <IntegrationsPanel
+        clientId={clientId}
+        connections={(conns ?? []).map((c) => ({ id: c.id as string, kind: c.kind as never, account: c.account as string, label: (c.label as string | null) ?? null, status: c.status as string, lastSyncedAt: (c.last_synced_at as string | null) ?? null, lastError: (c.last_error as string | null) ?? null }))}
+        summary={summary}
+        suggest={model?.model === "ecommerce" ? "shopify" : "gohighlevel"}
+      />
+    </>
   );
 }
 

@@ -1,6 +1,7 @@
 import "server-only";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { encryptionKey, seal, unseal } from "@/lib/meta-token-core";
 
 // Each client's store and CRM: Shopify, WooCommerce, GoHighLevel, HubSpot. The team connects them on the client page
 // with a key made for us (a Shopify custom app token once our collaborator access is in, WooCommerce REST keys, a
@@ -16,31 +17,46 @@ export const INTEGRATION_NAMES: Record<IntegrationKind, string> = { shopify: "Sh
 type Event = { kind: "order" | "subscription" | "lead" | "booked" | "won" | "lost"; external_id: string; occurred_at: string; value?: number | null; first_order?: boolean | null; attribution?: "meta" | "google" | "other" | null; detail?: Record<string, unknown> };
 
 // ─── Keys, encrypted at rest ───────────────────────────────────────────────
+// TOKEN_ENCRYPTION_KEY, like every other connector's token ("v2"); keys saved earlier under KAIZEN_SECRETS_KEY ("v1")
+// still open.
 
-const keyOf = () => {
+const oldKey = () => {
   const raw = process.env.KAIZEN_SECRETS_KEY;
   if (!raw) return null;
   return createHash("sha256").update(raw).digest();
 };
-export const secretsConfigured = () => Boolean(process.env.KAIZEN_SECRETS_KEY);
+const tokenKey = () => encryptionKey(process.env.TOKEN_ENCRYPTION_KEY);
+export const secretsConfigured = () => Boolean(tokenKey() || process.env.KAIZEN_SECRETS_KEY);
 
-function encrypt(text: string) {
-  const key = keyOf();
-  if (!key) throw new Error("KAIZEN_SECRETS_KEY isn't set, so keys can't be stored safely.");
+export function encryptSecret(text: string) {
+  const k = tokenKey();
+  if (k) {
+    const s = seal(text, k);
+    return `v2:${s.iv}:${s.tag}:${s.ciphertext}`;
+  }
+  const key = oldKey();
+  if (!key) throw new Error("TOKEN_ENCRYPTION_KEY isn't set, so keys can't be stored safely.");
   const iv = randomBytes(12);
   const c = createCipheriv("aes-256-gcm", key, iv);
   const data = Buffer.concat([c.update(text, "utf8"), c.final()]);
   return `v1:${iv.toString("base64")}:${c.getAuthTag().toString("base64")}:${data.toString("base64")}`;
 }
-function decrypt(blob: string) {
-  const key = keyOf();
-  if (!key) throw new Error("KAIZEN_SECRETS_KEY isn't set.");
+export function decryptSecret(blob: string) {
   const [v, iv, tag, data] = blob.split(":");
+  if (v === "v2") {
+    const k = tokenKey();
+    if (!k) throw new Error("TOKEN_ENCRYPTION_KEY isn't set.");
+    return unseal({ iv, tag, ciphertext: data }, k);
+  }
   if (v !== "v1") throw new Error("Unknown key format");
+  const key = oldKey();
+  if (!key) throw new Error("KAIZEN_SECRETS_KEY isn't set.");
   const d = createDecipheriv("aes-256-gcm", key, Buffer.from(iv, "base64"));
   d.setAuthTag(Buffer.from(tag, "base64"));
   return Buffer.concat([d.update(Buffer.from(data, "base64")), d.final()]).toString("utf8");
 }
+const encrypt = encryptSecret;
+const decrypt = decryptSecret;
 
 // ─── Where a sale or lead came from ────────────────────────────────────────
 
@@ -58,11 +74,6 @@ const nyDate = (iso: string) => new Date(iso).toLocaleDateString("en-CA", { time
 
 // ─── Each platform ─────────────────────────────────────────────────────────
 
-const SHOPIFY_API = "2025-01";
-const shopDomain = (s: string) => {
-  const d = s.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
-  return d.endsWith(".myshopify.com") ? d : `${d.replace(/\.myshopify\.com$/, "")}.myshopify.com`;
-};
 const siteOrigin = (s: string) => {
   try {
     return new URL(/^https?:\/\//.test(s.trim()) ? s.trim() : `https://${s.trim()}`).origin;
@@ -75,45 +86,6 @@ async function getJson(url: string, init: RequestInit = {}) {
   const r = await fetch(url, { ...init, cache: "no-store", signal: AbortSignal.timeout(30_000) });
   if (!r.ok) throw new Error(`${r.status} ${(await r.text().catch(() => "")).slice(0, 200)}`);
   return { body: (await r.json()) as unknown, headers: r.headers };
-}
-
-type Shop = { token: string; shop: string };
-async function shopifyOrders({ token, shop }: Shop, since: string): Promise<Event[]> {
-  const out: Event[] = [];
-  let url: string | null = `https://${shop}/admin/api/${SHOPIFY_API}/orders.json?status=any&limit=250&created_at_min=${encodeURIComponent(since)}&fields=id,created_at,current_total_price,total_price,customer,landing_site,referring_site,source_name,tags,line_items,cancelled_at,shipping_address`;
-  for (let page = 0; url && page < 20; page++) {
-    const { body, headers } = await getJson(url, { headers: { "X-Shopify-Access-Token": token, Accept: "application/json" } });
-    const orders = ((body as { orders?: Record<string, unknown>[] }).orders ?? []) as {
-      id: number;
-      created_at: string;
-      current_total_price?: string;
-      total_price?: string;
-      customer?: { created_at?: string } | null;
-      landing_site?: string | null;
-      referring_site?: string | null;
-      source_name?: string | null;
-      tags?: string;
-      line_items?: { selling_plan_allocation?: unknown }[];
-      cancelled_at?: string | null;
-      shipping_address?: { city?: string; province_code?: string } | null;
-    }[];
-    for (const o of orders) {
-      if (o.cancelled_at) continue;
-      // New when the customer was made with this order (a returning customer's record is older)
-      const first = o.customer?.created_at ? Math.abs(Date.parse(o.created_at) - Date.parse(o.customer.created_at)) < 86_400_000 : null;
-      const tags = (o.tags ?? "").toLowerCase();
-      const recurring = o.source_name === "subscription_contract" || /subscription recurring|recurring order/.test(tags);
-      const subscribed = !recurring && (/subscription first order|first subscription/.test(tags) || (o.line_items ?? []).some((l) => l.selling_plan_allocation));
-      const attribution = attributionOf(o.landing_site, o.referring_site);
-      const detail = { city: o.shipping_address?.city ?? null, state: o.shipping_address?.province_code ?? null, recurring };
-      out.push({ kind: "order", external_id: String(o.id), occurred_at: o.created_at, value: Number(o.current_total_price ?? o.total_price ?? 0), first_order: first, attribution, detail });
-      if (subscribed) out.push({ kind: "subscription", external_id: String(o.id), occurred_at: o.created_at, value: Number(o.current_total_price ?? o.total_price ?? 0), first_order: first, attribution, detail });
-    }
-    const link = headers.get("link") ?? "";
-    const next = link.split(",").find((p) => p.includes('rel="next"'));
-    url = next ? (next.match(/<([^>]+)>/)?.[1] ?? null) : null;
-  }
-  return out;
 }
 
 type Woo = { site: string; key: string; secret: string };
@@ -229,11 +201,6 @@ export type ConnectInput = { kind: IntegrationKind; account: string; secret: str
 /** Checks the key works before anything is saved, so a wrong token never sits there failing quietly */
 async function testConnection(i: ConnectInput): Promise<{ ok: true; account: string; label: string | null } | { ok: false; error: string }> {
   try {
-    if (i.kind === "shopify") {
-      const shop = shopDomain(i.account);
-      const { body } = await getJson(`https://${shop}/admin/api/${SHOPIFY_API}/shop.json`, { headers: { "X-Shopify-Access-Token": i.secret.trim() } });
-      return { ok: true, account: shop, label: (body as { shop?: { name?: string } }).shop?.name ?? null };
-    }
     if (i.kind === "woocommerce") {
       const site = siteOrigin(i.account);
       await getJson(wooUrl({ site, key: i.secret.trim(), secret: (i.secret2 ?? "").trim() }, "orders", { per_page: "1" }));
@@ -257,6 +224,8 @@ async function testConnection(i: ConnectInput): Promise<{ ok: true; account: str
 
 /** Saves a connection (tested first); the key is encrypted and never comes back to the page */
 export async function connectIntegration(admin: SupabaseClient, clientId: string, i: ConnectInput, by: string) {
+  // Shopify: a custom app's Admin API token (the fallback when the app can't be installed), read the full-history way
+  if (i.kind === "shopify") return (await import("@/lib/shopify/store")).connectShopify(admin, clientId, { shop: i.account, token: i.secret, clientSecret: i.secret2, auth: "token", by });
   if (i.kind !== "other" && !i.secret.trim()) return { ok: false as const, error: "Paste the key." };
   if (i.kind !== "other" && !secretsConfigured()) return { ok: false as const, error: "Keys can't be stored safely yet: KAIZEN_SECRETS_KEY needs to be set in Vercel." };
   const t = await testConnection(i);
@@ -285,6 +254,8 @@ export async function disconnectIntegration(admin: SupabaseClient, id: string) {
 export async function syncIntegration(admin: SupabaseClient, id: string) {
   const { data: i } = await admin.from("client_integrations").select("id, client_id, kind, account, status, last_synced_at, settings").eq("id", id).single();
   if (!i || i.status === "disconnected" || i.kind === "other") return { skipped: true };
+  // Shopify reads its own way: whole days from Shopify's numbers, history first, only changed days written
+  if (i.kind === "shopify") return (await import("@/lib/shopify/store")).syncShopify(admin, id, Date.now() + 120_000);
   const { data: sec } = await admin.from("client_integration_secrets").select("secret").eq("integration_id", id).maybeSingle();
   if (!sec) return { skipped: true };
   const started = new Date().toISOString();
@@ -294,8 +265,7 @@ export async function syncIntegration(admin: SupabaseClient, id: string) {
     const secret = decrypt(sec.secret as string);
     let events: Event[] = [];
     let settings = (i.settings ?? {}) as Record<string, unknown>;
-    if (source === "shopify") events = await shopifyOrders({ token: secret, shop: i.account as string }, since);
-    else if (source === "woocommerce") {
+    if (source === "woocommerce") {
       const k = JSON.parse(secret) as { key: string; secret: string };
       // Customers already seen (so a returning buyer isn't counted new)
       const { data: seenRows } = await admin.from("client_business_events").select("detail").eq("client_id", i.client_id).eq("source", source).eq("kind", "order").lt("occurred_at", since).limit(20000);
@@ -360,7 +330,8 @@ async function sumDays(admin: SupabaseClient, clientId: string, source: string, 
 
 /** Every hour: each connection pulled (a few at a time, oldest first), then the day's notices */
 export async function keepIntegrations(admin: SupabaseClient, max = 8) {
-  const { data: list } = await admin.from("client_integrations").select("id").in("status", ["connected", "error"]).neq("kind", "other").order("last_synced_at", { ascending: true, nullsFirst: true }).limit(max);
+  // Shopify has its own step (src/lib/shopify/store.ts keepShopify): the rest here
+  const { data: list } = await admin.from("client_integrations").select("id").in("status", ["connected", "error"]).not("kind", "in", "(other,shopify)").order("last_synced_at", { ascending: true, nullsFirst: true }).limit(max);
   const out: Record<string, unknown> = {};
   for (const r of list ?? []) out[r.id as string] = await syncIntegration(admin, r.id as string).catch((e) => String(e));
   const notices = await businessNotices(admin).catch((e) => String(e));

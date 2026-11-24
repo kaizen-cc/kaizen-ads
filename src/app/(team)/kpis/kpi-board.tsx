@@ -29,6 +29,7 @@ import { kpiCreative, type KpiCreative } from "./creative-actions";
 import { AdsThisWeek } from "./ads-table";
 import { QuickActions } from "./quick-actions";
 import { PlanStep } from "./plan-step";
+import { StoreStrip } from "./store-strip";
 import { ConnectAccount, needsConnect, type FreeAccounts } from "./connect-account";
 import { Layer } from "../clients/[slug]/layer";
 import { GoogleAdsMark, MetaMark } from "@/components/source-logo";
@@ -942,6 +943,7 @@ function Detail({ r, free, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; 
                     </div>
                   ))}
                 </div>
+                <StoreStrip clientId={r.clientId} />
                 {canExplore && <MetricBoxes key={r.extraMetrics.join(",")} r={r} ex={ex} onChange={() => { setNonce((n) => n + 1); router.refresh(); }} />}
                 {canExplore && ex && (
                   <Reported

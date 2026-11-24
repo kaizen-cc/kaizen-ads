@@ -260,8 +260,19 @@ export function WebsiteSheet(p: StartProps) {
           <div className="grid gap-4">
             <Done title="Thanks, we have it" text={`We'll send a collaborator request to ${step.store}. Shopify emails you when it lands.`} />
             <p className="text-[14.5px] leading-relaxed text-muted">
-              Then in Shopify: <b className="text-fg">Settings › Users and permissions › Collaborators</b>, open our request and click <b className="text-fg">Accept</b>.
+              Then in Shopify: <b className="text-fg">Settings › Users and permissions › Collaborators</b>, open our request, keep <b className="text-fg">Manage and install apps and channels</b> and <b className="text-fg">Enable development</b> ticked (so we can connect your sales, read only), and click <b className="text-fg">Accept</b>.
             </p>
+            {p.shopify?.connected ? (
+              <Done title="Your sales are connected" text="Kaizen reads your store's orders (read only), so we judge every ad by what your store really sold." />
+            ) : p.shopify?.ready && step.store ? (
+              <div className="grid gap-3 rounded-[16px] border border-line bg-surface p-4">
+                <p className="font-heading text-[17px]">One more tap: connect your sales</p>
+                <p className="text-[14px] leading-relaxed text-muted">Lets Kaizen read your orders and revenue (read only, nothing is changed in your store), so we measure ads by real sales, not what Meta or Google claim.</p>
+                <a href={`/api/shopify/install?client=${p.shopify.clientId}&shop=${encodeURIComponent(step.store)}`} className="grid h-12 place-items-center rounded-full bg-brand text-[15px] font-medium text-white">
+                  Connect Shopify sales
+                </a>
+              </div>
+            ) : null}
           </div>
         ) : (
           <Done title="Added" text="Thanks: we'll accept the invite and check we can get in." />

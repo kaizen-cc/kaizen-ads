@@ -49,6 +49,11 @@ export type Period = {
   clicksAll?: number;
   reach?: number | null;
   frequency?: number | null;
+  /** The client's Shopify over the same days (the whole store, not just ads), and every ad dollar across Meta, Google and
+   *  TikTok (the bottom of MER). Absent when no store is connected. */
+  storeRevenue?: number | null;
+  storeOrders?: number | null;
+  allSpend?: number | null;
 };
 
 /** result: what this campaign is optimized for ("Purchase", "Post engagement"), counted the way the KPI board counts it */
@@ -481,6 +486,14 @@ export async function reportMetrics(admin: SupabaseClient, base: Target, kind: "
     const [a, b] = await Promise.all([reachOf(String(t.ad_account_id), ps.main, ids), reachOf(String(t.ad_account_id), ps.compare, ids)]);
     if (a) Object.assign(main, a);
     if (b) Object.assign(compare, b);
+  }
+  // The client's real store over the same days (Shopify): store revenue, orders and MER as tiles, when a store is connected
+  if (!opts.lite && t.client_id) {
+    const store = await import("@/lib/shopify/store").then((m) => m.storePeriods(admin, t.client_id, [ps.main, ps.compare])).catch(() => null);
+    if (store) {
+      Object.assign(main, store[0]);
+      Object.assign(compare, store[1]);
+    }
   }
   // Results by goal: each campaign's part of the result it goes after (Google: its main kind of conversion action)
   const goalSplit = platform === "google" ? googleGoals(all, ps.main) : split;

@@ -279,7 +279,7 @@ export async function websiteStep(slug: string, w: { platform: string; status: "
     if (!store) return { ok: false, error: "Your store address ends in .myshopify.com (Settings › Domains)." };
     const step: WebsiteStep = { status: "done", platform: "shopify", code, store, url, at, by: l.by };
     await l.guide.saveStep(l.admin, l.client.id, "website", step);
-    await l.guide.tellGuideTeam(l.admin, l.client.id, "sent their Shopify collaborator code", `Store ${store}, collaborator request code ${code}. In Shopify Partners: Stores › Add store › Request access (collaborator), enter the store address and the code. They accept it in Shopify. Both are on their client page.`, `website-shopify:${l.client.id}:${code}`, "critical");
+    await l.guide.tellGuideTeam(l.admin, l.client.id, "sent their Shopify collaborator code", `Store ${store}, collaborator request code ${code}. In Shopify Partners: Stores › Add store › Request access (collaborator), enter the store address and the code, and include the permissions Manage and install apps and channels and Enable development (needed to connect their Shopify sales). They accept it in Shopify; then connect the store on their client page (Store revenue). Both are on their client page.`, `website-shopify:${l.client.id}:${code}`, "critical");
     done(slug);
     return { ok: true, step };
   }

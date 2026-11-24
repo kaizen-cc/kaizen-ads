@@ -6,6 +6,7 @@ import { tiktokConfigured } from "@/lib/tiktok/core";
 import { Connections } from "./connections";
 import { GoogleAdsCard, KlaviyoSyncCard, SocialSyncCard, summarizeGoogle, summarizeKlaviyo, summarizeSocial, type PlatformSummary } from "./platform-cards";
 import { ConnectorsTab, MyConnectionsTab } from "./connectors-tab";
+import { ClientStores } from "./client-stores";
 import { DEFAULT_URL_TAGS, metaWriteSetting } from "@/lib/meta-write";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -69,6 +70,7 @@ const HEAD_TABS = ["agents"];
 const EVERYONE_TABS = ["connections", "agents"];
 const CONNECTION_SECTIONS = [
   ["yours", "Your accounts", "everyone"],
+  ["stores", "Client stores", "everyone"],
   ["team", "Team connectors", "exec"],
   ["keys", "Media keys", "lead"],
 ] as const;
@@ -1107,6 +1109,7 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
               flash={sp.slack === "connected" ? (sp.slack_read === "unavailable" ? "Slack is connected for posting. Reading it needs one setting in the Slack app first; the executives have been told." : "Slack is connected. Your assistant can search and read it for you now.") : sp.slack === "error" ? `Slack didn't connect (${typeof sp.reason === "string" ? sp.reason : "try again"}).` : sp.asana === "connected" ? "Asana is connected. Next for me in Asana now shows your My tasks from Kaizen's workspace." : sp.asana === "mismatch" ? "Asana signed in as a different account than yours. Check it below before it's used." : sp.asana === "disconnected" ? "Asana is disconnected." : sp.asana === "error" ? `Asana didn't connect (${typeof sp.reason === "string" ? sp.reason : "try again"}).` : null}
             />
           )}
+          {section === "stores" && <ClientStores />}
           {section === "team" && <ConnectorsTab />}
           {section === "keys" && (
             <div className="grid gap-6">
