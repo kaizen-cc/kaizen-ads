@@ -13,6 +13,7 @@ import { acknowledge, setItem } from "./actions";
 import { DoneBurst } from "@/components/done-burst";
 import { ItemContext } from "@/components/item-context";
 import { SubItems } from "@/components/sub-items";
+import { AsanaItemActions } from "@/components/asana-item-actions";
 import { useClosed } from "@/lib/closed-items";
 import { deferClear } from "@/lib/undo";
 import { subsLeft } from "@/lib/exec-overview-core";
@@ -867,6 +868,17 @@ function ItemBody({ i: item, status, big = false, onChoose, onAct, onNext }: { i
         </div>
       )}
       <p className="relative text-xs text-white/45">Why it&apos;s here: {i.why}</p>
+      {/^asana:\d+$/.test(i.key) ? (
+        // An Asana task: Asana's own actions and context, written back to Asana (src/components/asana-item-actions.tsx)
+        <div className="relative grid gap-2">
+          <AsanaItemActions itemKey={i.key} gid={i.key.slice("asana:".length)} url={i.action.href ?? null} title={i.title} clientSlug={i.clientSlug || null} dark onGone={() => onNext?.()} />
+          {onNext && (
+            <button type="button" onClick={onNext} className="h-11 justify-self-end rounded-full px-3 text-sm text-white/70 hover:text-white">
+              Next →
+            </button>
+          )}
+        </div>
+      ) : (
       <div className="relative flex flex-wrap items-center gap-2">
         {i.action.suggestion ? (
           <button type="button" onClick={onAct} className={primary}>
@@ -916,6 +928,7 @@ function ItemBody({ i: item, status, big = false, onChoose, onAct, onNext }: { i
           </button>
         )}
       </div>
+      )}
     </>
   );
 }

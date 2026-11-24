@@ -101,3 +101,10 @@ export async function commentAsanaTask(gid: string, text: string) {
 export async function subtaskAsanaTask(gid: string, op: { add?: string; tick?: { gid: string; done: boolean } }) {
   return asMe(() => subtaskAsanaTaskInner(gid, op));
 }
+
+/** Who a task can go to: everyone active on the team, by their work email (Asana finds them in Kaizen's workspace) */
+export async function asanaAssignees(): Promise<{ name: string; email: string; role: string }[]> {
+  await requireStaff();
+  const { data } = await createAdminClient().from("profiles").select("full_name, email, role").eq("is_active", true).not("email", "is", null).order("full_name").limit(300);
+  return ((data ?? []) as { full_name: string | null; email: string | null; role: string | null }[]).filter((p) => p.full_name && p.email).map((p) => ({ name: p.full_name as string, email: p.email as string, role: p.role ?? "" }));
+}

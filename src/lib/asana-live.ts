@@ -46,11 +46,12 @@ type ListTask = RawTask & { parent?: { name?: string } | null; assignee_section?
 
 const toLive = (clients: { id: string; name: string; slug: string }[]) => (t: ListTask): LiveTask => {
   const project = t.memberships?.find((m) => m.project?.name)?.project?.name ?? (t.parent?.name ? `Subtask of ${t.parent.name}` : null);
-  // Their own My tasks section first (Asana's "Recently assigned", "Do today"...), else the project's
-  const section = t.assignee_section?.name ?? t.memberships?.find((m) => m.section?.name)?.section?.name ?? null;
+  // The project's section ("Ready for review"), which says where the work is; their own My tasks section ("Recently
+  // assigned") only when the task is in no project (owner, Nov 24 2026)
+  const section = t.memberships?.find((m) => m.section?.name)?.section?.name ?? (t.memberships?.some((m) => m.project?.name) ? null : (t.assignee_section?.name ?? null));
   const hay = `${project ?? ""} ${t.name}`.toLowerCase();
   const c = clients.find((x) => hay.includes(x.name.toLowerCase())) ?? null;
-  return { gid: t.gid, name: t.name, due: t.due_on, project, section, client: c?.name ?? null, clientSlug: c?.slug ?? null, url: t.permalink_url ?? `https://app.asana.com/0/0/${t.gid}` };
+  return { gid: t.gid, name: t.name, due: t.due_on, project, section, client: c?.name ?? null, clientSlug: c?.slug ?? null, url: t.permalink_url ?? `https://app.asana.com/0/0/${t.gid}`, mySection: t.assignee_section?.name ?? null };
 };
 
 /**
@@ -122,7 +123,7 @@ export async function taskDetail(gid: string): Promise<TaskDetail> {
   const [t, subs, stories, files] = await Promise.all([
     asana<RawTask>(`/tasks/${gid}`, { opt_fields: TASK_FIELDS }),
     asana<{ gid: string; name: string; completed: boolean }[]>(`/tasks/${gid}/subtasks`, { opt_fields: "name,completed", limit: "100" }).catch(() => ({ data: [] })),
-    asana<{ gid: string; type: string; text?: string; created_at: string; created_by?: { name?: string } | null }[]>(`/tasks/${gid}/stories`, { opt_fields: "type,text,created_at,created_by.name", limit: "100" }).catch(() => ({ data: [] })),
+    asana<{ gid: string; type: string; resource_subtype?: string; text?: string; created_at: string; created_by?: { name?: string } | null }[]>(`/tasks/${gid}/stories`, { opt_fields: "type,resource_subtype,text,created_at,created_by.name", limit: "100" }).catch(() => ({ data: [] })),
     asana<{ gid: string; name: string; permanent_url?: string; view_url?: string; download_url?: string }[]>(`/tasks/${gid}/attachments`, { opt_fields: "name,permanent_url,view_url", limit: "50" }).catch(() => ({ data: [] })),
   ]);
   const task = t.data;
@@ -149,6 +150,7 @@ export async function taskDetail(gid: string): Promise<TaskDetail> {
     subtasks: (subs.data ?? []).map((s) => ({ gid: s.gid, name: s.name, completed: Boolean(s.completed) })),
     comments: (stories.data ?? []).filter((s) => s.type === "comment" && s.text).map((s) => ({ gid: s.gid, text: s.text ?? "", at: s.created_at, by: s.created_by?.name ?? null })),
     attachments: (files.data ?? []).map((a) => ({ gid: a.gid, name: a.name, url: a.permanent_url ?? a.view_url ?? null })),
+    assignedBy: [...(stories.data ?? [])].reverse().find((s) => s.resource_subtype === "assigned")?.created_by?.name ?? null,
   };
 }
 

@@ -170,10 +170,12 @@ export async function asanaCards(db: SupabaseClient, me: { id: string; email: st
       clientId: null,
       clientSlug: t.clientSlug,
       title: t.name,
-      detail: [t.client ?? t.project, t.section, t.due ? (late ? `overdue since ${short(`${t.due}T12:00:00Z`)}` : t.due === today ? "due today" : `due ${short(`${t.due}T12:00:00Z`)}`) : "no date", connected ? null : "from the shared Asana view"].filter(Boolean).join(" · "),
+      // Where it lives in Asana (the project and its section), then when it's due
+      detail: [t.project ?? t.client ?? t.mySection, t.project ? t.section : null, t.due ? (late ? `overdue since ${short(`${t.due}T12:00:00Z`)}` : t.due === today ? "due today" : `due ${short(`${t.due}T12:00:00Z`)}`) : "no date", connected ? null : "from the shared Asana view"].filter(Boolean).join(" · "),
       severity: late ? ("high" as const) : t.due === today ? ("normal" as const) : ("normal" as const),
       due: t.due ? `${t.due}T21:00:00Z` : null,
-      action: { label: "Open", href: `/pipeline?block=asana&task=${t.gid}` },
+      // Asana-native: open it in Asana (new tab); the card's own actions write back to Asana
+      action: { label: "Open in Asana", href: t.url },
       stat: t.url,
     };
   })];

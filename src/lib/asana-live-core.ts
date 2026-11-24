@@ -1,7 +1,7 @@
 // Kaizen OS as an extension of Asana, the pure part (tests/asana-live.test.ts): the task shapes, the order tasks are
 // shown in, quick due dates, and the comment each change leaves in Asana naming who made it from the OS.
 
-export type LiveTask = { gid: string; name: string; due: string | null; project: string | null; section: string | null; client: string | null; clientSlug: string | null; url: string };
+export type LiveTask = { gid: string; name: string; due: string | null; project: string | null; section: string | null; client: string | null; clientSlug: string | null; url: string; /** Their own My tasks section ("Recently assigned"), apart from the project's */ mySection?: string | null };
 
 export type FieldValue = { gid: string; name: string; kind: "enum" | "text" | "number" | "date" | "other"; options: { gid: string; name: string }[]; value: string | number | null; display: string | null };
 
@@ -21,6 +21,8 @@ export type TaskDetail = {
   subtasks: { gid: string; name: string; completed: boolean }[];
   comments: { gid: string; text: string; at: string; by: string | null }[];
   attachments: { gid: string; name: string; url: string | null }[];
+  /** Who assigned it to whoever has it now (Asana's last "assigned" story) */
+  assignedBy?: string | null;
 };
 
 export type AsanaPatch = {

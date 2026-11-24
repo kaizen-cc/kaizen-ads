@@ -16,6 +16,7 @@ import { openAsanaTask } from "@/components/asana-task-sheet";
 import { DraftActions } from "./emails-ready";
 import { ItemContext } from "@/components/item-context";
 import { SubItems } from "@/components/sub-items";
+import { AsanaItemActions } from "@/components/asana-item-actions";
 import { closeLocally, useClosed } from "@/lib/closed-items";
 import { deferClear } from "@/lib/undo";
 
@@ -312,7 +313,12 @@ function Card({ card, sheet = false }: { card: ExecCard; sheet?: boolean }) {
       </div>
       {/* The recommended move, said plainly (what Nudge does and to whom) */}
       {!readOnly && card.hint && <p className="mt-3 text-[12.5px] leading-relaxed text-muted">{card.hint}</p>}
-      {!readOnly && (
+      {/* An Asana task: Asana's own actions and context, written back to Asana (src/components/asana-item-actions.tsx) */}
+      {!readOnly && card.kind === "asana" && /^asana:\d+$/.test(card.key) ? (
+        <div className="mt-3">
+          <AsanaItemActions itemKey={card.key} gid={card.key.slice("asana:".length)} url={card.stat ?? null} title={card.title} clientSlug={card.clientSlug ?? null} onGone={() => sheet && closeParams("item")} />
+        </div>
+      ) : !readOnly && (
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
           {card.emailDraft ? (
             <DraftActions d={card.emailDraft} />
