@@ -371,21 +371,21 @@ export async function storeOverview(db: SupabaseClient, admin: SupabaseClient, c
   const connections = await storeConnections(db, clientId);
   if (!connections.length) return null;
   const t = today();
-  const yesterday = addDays(t, -1);
   const from = `${addDays(t, -400).slice(0, 7)}-01`;
   const [store, spend, start] = await Promise.all([storeDays(db, clientId, from, t), adSpendDays(admin, clientId, from, t), kaizenStart(admin, clientId)]);
   const spendBy = new Map<string, number>();
   for (const s of spend) spendBy.set(s.date, (spendBy.get(s.date) ?? 0) + s.spend);
   const revBy = new Map(store.map((d) => [d.date, d.revenue]));
   const days: StoreOverview["days"] = [];
-  for (let d = addDays(t, -90); d <= yesterday; d = addDays(d, 1)) days.push({ date: d, revenue: Math.round(revBy.get(d) ?? 0), spend: Math.round(spendBy.get(d) ?? 0) });
+  // Today so far included: a sale shows the hour it's read
+  for (let d = addDays(t, -89); d <= t; d = addDays(d, 1)) days.push({ date: d, revenue: Math.round(revBy.get(d) ?? 0), spend: Math.round(spendBy.get(d) ?? 0) });
   const froms = connections.map((c) => c.historyFrom).filter((x): x is string => Boolean(x));
   return {
     connections,
     currency: connections.find((c) => c.currency)?.currency ?? null,
     historyFrom: froms.length ? froms.sort().at(-1)! : null,
-    last30: totalsFor(store, spend, { start: addDays(t, -30), end: yesterday }),
-    prior30: totalsFor(store, spend, { start: addDays(t, -60), end: addDays(t, -31) }),
+    last30: totalsFor(store, spend, { start: addDays(t, -29), end: t }),
+    prior30: totalsFor(store, spend, { start: addDays(t, -59), end: addDays(t, -30) }),
     months: monthly(store, spend).slice(-13),
     days,
     start,

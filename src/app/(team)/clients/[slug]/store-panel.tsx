@@ -26,7 +26,7 @@ function Delta({ now, before, invert = false }: { now: number; before: number; i
   const d = pct(now, before);
   if (d == null) return null;
   const good = invert ? d <= 0 : d >= 0;
-  return <p className={`mt-0.5 text-[11.5px] ${good ? "text-ok" : "text-bad"}`}>{d >= 0 ? "▲" : "▼"} {Math.abs(d)}% vs the 30 days before</p>;
+  return <p className={`mt-0.5 text-[11.5px] ${good ? "text-ok" : "text-bad"}`}>{d >= 0 ? "▲" : "▼"} {Math.abs(d)}% vs the 30 before</p>;
 }
 
 /** 90 days of store revenue as bars, ad spend as a line over them */
@@ -244,7 +244,7 @@ export function StorePanel({ clientId, overview, split, hint, canEdit, suggest, 
         <>
           <div className="grid grid-cols-2 gap-2.5 md:grid-cols-5">
             {[
-              ["Revenue, 30 days", money(l.revenue, cur), <Delta key="d" now={l.revenue} before={p.revenue} />],
+              ["Revenue, last 30 days", money(l.revenue, cur), <Delta key="d" now={l.revenue} before={p.revenue} />],
               ["Orders", l.orders.toLocaleString("en-US"), <Delta key="d" now={l.orders} before={p.orders} />],
               ["AOV", money(l.aov, cur), l.aov != null && p.aov != null ? <Delta key="d" now={l.aov} before={p.aov} /> : null],
               ["New customers", l.newCustomers.toLocaleString("en-US"), <Delta key="d" now={l.newCustomers} before={p.newCustomers} />],
