@@ -25,6 +25,7 @@ export const DOG_KINDS = [
   "tracking_audit",
   "tracking_mismatch",
   "cvr_drop",
+  "precall_sync",
 ] as const;
 /** The tracking signals (the Tracking Specialist's Today reads these, plus zero_results and lead_no_crm) */
 export const TRACKING_KINDS: readonly DogKind[] = ["tracking_audit", "tracking_mismatch", "cvr_drop", "zero_results", "lead_no_crm"];

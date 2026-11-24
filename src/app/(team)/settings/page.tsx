@@ -1,4 +1,5 @@
 import { GoogleWriteCard, MetaWriteCard } from "./meta-write-card";
+import { ClientConnectionsHealth } from "@/components/integration-health";
 import { AudienceTermsCheck } from "@/components/audience-terms";
 import { BusinessManagers } from "@/components/meta-business-connections";
 import { TikTokConnection } from "@/components/tiktok-connection";
@@ -937,7 +938,12 @@ async function Sync({ motion }: { motion: string | null }) {
   return (
     <SyncShell
       hero={{ healthy, behind: behindN, failing: failingN, total: syncs.length + platforms.length, latest: latest ? freshness(latest).label.toLowerCase() : null, metaSandbox: write.sandbox, googleLive: googleLive.length }}
-      syncs={syncsPanel}
+      syncs={
+        <div className="grid min-w-0 gap-6">
+          <ClientConnectionsHealth />
+          {syncsPanel}
+        </div>
+      }
       meta={
         me.isExec ? (
           <div className="grid min-w-0 gap-8">

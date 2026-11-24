@@ -102,6 +102,7 @@ import { untilLabel } from "@/lib/allotment";
 import { isLive } from "@/lib/live";
 import { ClientDirection } from "@/components/direction-parts";
 import { AdLibrary } from "./ad-library";
+import { ClientConnectionHealth } from "@/components/integration-health";
 import type { ChangeLine } from "@/lib/direction-changes";
 import type { ChangeLineId } from "@/lib/direction-core";
 
@@ -907,6 +908,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                     </select>
                   </label>
                 </div>
+                {!demo && <ClientConnectionHealth clientId={client.id} />}
                 <div className="grid gap-3 border-t border-line pt-5">
                   <p className="text-xs font-medium uppercase tracking-[0.12em] text-faint">Connections</p>
                   <label className={label}>

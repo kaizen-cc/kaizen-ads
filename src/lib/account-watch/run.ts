@@ -415,6 +415,10 @@ export async function applyFindings(admin: SupabaseClient, findings: Finding[], 
       // Billed for a line that's gone idle, spend stopped on a big account: every exec hears the client is on fire
       const avg = Number((f.detail as { average?: number }).average ?? 0);
       await raiseFire(admin, { clientId: f.client_id, client: c?.name ?? null, href: f.href, body: f.body, line: lineOf(f.line), signal: { kind: "watch", watchKind: f.kind, severity: f.severity, billed: Boolean((f.detail as { billed?: boolean }).billed), spend30: avg * 30, line: f.line } }).catch(() => false);
+    } else if (flag.notified_at && f.to.length) {
+      // Someone the flag reaches now who wasn't told when it opened (a new seat holder, a new tracking specialist): they
+      // hear it once too. The notice is keyed per flag, so everyone told before is skipped (never a repeat)
+      await notify(admin, f.to, { key: `watch:${flag.id}${opts.noticeSuffix ?? ""}`, title: `${c?.name ?? "A client"}: ${f.title}`, body: f.body, href: f.href, clientId: f.client_id, kind: f.line === "creative" ? "client" : "kpi", critical: f.severity === "critical" });
     }
     if (f.escalate && f.escalate.to.length && !flag.escalated_at) {
       await notify(admin, f.escalate.to, { key: `watch:${flag.id}:head`, title: f.escalate.title, body: f.body, href: f.href, clientId: f.client_id, kind: "kpi", critical: true });

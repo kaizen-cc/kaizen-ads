@@ -107,6 +107,9 @@ export async function runWatchdogs(admin: SupabaseClient, now = new Date()) {
     if (!f.to.length) return;
     findings.push({ line: null, account: null, ...f });
   };
+  // The tracking specialists hear every tracking signal (spend with no results or landing page views, leads with no CRM
+  // sync, the audits, platform vs store, conversion rate drops)
+  const trackers = b.headsOf("tracking_specialist");
   const metaTargets = b.targets.filter((t) => t.platform === "meta" && byId.has(t.client_id) && hasLine(byId.get(t.client_id)!, "meta"));
   const adTargets = b.targets.filter((t) => (t.platform === "meta" || t.platform === "google") && byId.has(t.client_id) && hasLine(byId.get(t.client_id)!, t.platform === "google" ? "google" : "meta"));
   const accountClient = new Map(adTargets.map((t) => [accountKey(t.platform, t.ad_account_id), t]));
@@ -259,7 +262,7 @@ export async function runWatchdogs(admin: SupabaseClient, now = new Date()) {
       detail: { campaigns: z.names.slice(0, 10), spend: z.spend, kind },
       severity: "critical",
       href: `/kpis?target=${t.id}`,
-      to: b.ownerAndHead(t.client_id, "meta", [t.owner_id]),
+      to: uniq([...b.ownerAndHead(t.client_id, "meta", [t.owner_id]), ...trackers]),
     });
   }
   const leadsBefore = new Map<string, number>();
@@ -282,7 +285,7 @@ export async function runWatchdogs(admin: SupabaseClient, now = new Date()) {
       detail: { newForm: newForm ?? null, leads: leadsNow.get(acc) ?? 0 },
       severity: "warn",
       href: `/kpis?target=${t.id}`,
-      to: b.ownerAndHead(t.client_id, "meta", [t.owner_id]),
+      to: uniq([...b.ownerAndHead(t.client_id, "meta", [t.owner_id]), ...trackers]),
     });
   }
 
@@ -433,7 +436,6 @@ export async function runWatchdogs(admin: SupabaseClient, now = new Date()) {
 
   // ─── 8. Tracking: audits that found tracking problems, platforms vs the store, conversion rate dropping ─────
   // The tracking specialists hear every one of these too (their Today reads TRACKING_KINDS)
-  const trackers = b.headsOf("tracking_specialist");
   const targetById = new Map(b.targets.map((t) => [t.id, t]));
   const seenAudit = new Set<string>();
   for (const a of audits) {
@@ -495,7 +497,7 @@ export async function runWatchdogs(admin: SupabaseClient, now = new Date()) {
     push({ client_id: t.client_id, line: "facebook-ads", account: acc, key: `cvr_drop:${acc}`, kind: "cvr_drop", title: `Meta conversion rate fell to ${(drop.recent * 100).toFixed(1)}% from ${(drop.base * 100).toFixed(1)}%`, body: `The last 3 days convert at under half the 28 days before (${Math.round(v.rr)} results on ${Math.round(v.rc)} link clicks). Check the site, the checkout or form, the pixel and any offer change before blaming the ads.`, detail: { recent: drop.recent, base: drop.base, clicks: v.rc, results: v.rr }, severity: "warn", href: `/kpis?target=${t.id}`, to: uniq([...b.ownerAndHead(t.client_id, "meta", [t.owner_id]), ...trackers]) });
   }
 
-  const applied = await applyFindings(admin, findings, b.clients.map((c) => ({ ...c, billed_services: null })), new Map(), now, { owns: (k) => isDogKind(k) && k !== "site_down" && k !== "site_check", noticeSuffix: ":dog" });
+  const applied = await applyFindings(admin, findings, b.clients.map((c) => ({ ...c, billed_services: null })), new Map(), now, { owns: (k) => isDogKind(k) && k !== "site_down" && k !== "site_check" && k !== "precall_sync", noticeSuffix: ":dog" });
   return { today, findings: findings.length, accounts: metaAccounts.length, tracking: findings.filter((f) => (TRACKING_KINDS as readonly string[]).includes(f.kind)).length, ...applied };
 }
 
