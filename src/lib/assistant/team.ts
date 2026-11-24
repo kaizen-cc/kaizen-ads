@@ -501,16 +501,19 @@ export function specialistForScreen(screen: string | null | undefined): string |
   return null;
 }
 
-export type DirectRoute = { key: string; why: "asked" | "expert" | "deliverable" };
+export type DirectRoute = { key: string; why: "asked" | "expert" | "deliverable" | "sales" };
 
 /**
  * Before the assistant answers: a specialist the person asked for by name joins now; a deliverable to make with them
  * (campaigns, a flow) goes to the line's lead strategist, who runs the flow; a strategy question goes to the
  * specialist for its line (from the words, else the screen they're on). Null: the assistant answers.
  */
-export function directSpecialist(text: string, opts: { screen?: string | null; me?: { role?: string | null; isExec?: boolean | null; isLead?: boolean | null } | null } = {}): DirectRoute | null {
+export function directSpecialist(text: string, opts: { screen?: string | null; me?: { role?: string | null; isExec?: boolean | null; isLead?: boolean | null } | null; sales?: { sales: boolean } | null } = {}): DirectRoute | null {
   const asked = asksToBringIn(text);
   if (asked) return { key: asked, why: "asked" };
+  // A sales ask from someone who may use Sales (src/lib/assistant/sales-intent.ts, read by the turn with the client
+  // list): the Sales agent joins at once, the way a strategy question goes to the line's specialist
+  if (opts.sales?.sales && (opts.me?.isExec || opts.me?.isLead)) return { key: "sales", why: "sales" };
   // Making a deliverable with them ("I need to create campaigns for Candy Cloud"): the line's lead strategist runs it
   const flow = lineForAsk(text);
   if (flow && specialistOf(flow.lead) && emailWritingKind(text) !== "message") return { key: flow.lead, why: "deliverable" };

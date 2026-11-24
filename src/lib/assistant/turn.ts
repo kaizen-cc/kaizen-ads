@@ -70,7 +70,9 @@ export async function runAssistantTurn(input: Input) {
   const hostHop = (m: TurnMode) => assistantAnswer(input, team, m).then(() => undefined);
   // A specialist they asked for, or the one whose line a strategy question is about: it joins and answers now, with
   // no "shall I?" and without the assistant's model in between (that was a whole extra round before anyone spoke)
-  const direct = directSpecialist(text, { screen: input.context?.screen ?? null, me: input.me });
+  // A sales ask (new business, a prospect, a pitch, a discovery call) from an exec or line head: the Sales agent
+  const sales = await timer.time("sales_intent", salesTurnIntent(input, text));
+  const direct = directSpecialist(text, { screen: input.context?.screen ?? null, me: input.me, sales });
   if (team.line.length) {
     const route = routeTeam(text, { host: ASSISTANT_KEY, line: team.line, last: await timer.time("last_speaker", lastSpeaker(admin, call.id)) });
     if (route.dismiss.length) await dismissFromLine(input, team, route.dismiss);
@@ -88,6 +90,17 @@ export async function runAssistantTurn(input: Input) {
   if (!signal.aborted && !ended) await followUps(input, team, hostHop);
   if (ended) emit({ t: "end" });
   emit({ t: "done" });
+}
+
+/**
+ * Whether this turn is a sales ask (src/lib/assistant/sales-intent.ts). The client list (names and sites) is read only
+ * when the words could be one, so a prospect's site is told apart from a client's.
+ */
+async function salesTurnIntent(input: Input, text: string) {
+  const { maybeSales, salesIntent } = await import("./sales-intent");
+  if (!(input.me.isExec || input.me.isLead) || !maybeSales(text)) return null;
+  const { data } = await input.admin.from("clients").select("name, website").is("archived_at", null).limit(2000);
+  return salesIntent(text, input.me, (data ?? []) as { name: string; website: string | null }[], { onClient: Boolean(input.context?.clientId) });
 }
 
 /**
