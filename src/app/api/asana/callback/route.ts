@@ -26,7 +26,9 @@ export async function GET(request: Request) {
   if (!code || !started.state || url.searchParams.get("state") !== started.state) return back({ asana: "error", reason: "state_mismatch" });
   if (staff.viewAs) return back({ asana: "error", reason: "view_as" });
   try {
-    await connectAsana(createAdminClient(), staff.id, code, `${url.origin}/api/asana/callback`);
+    const r = await connectAsana(createAdminClient(), staff.id, code, `${url.origin}/api/asana/callback`, staff.email);
+    // Signed in to Asana as someone else: Settings asks before it's used
+    if (r.mismatch) return Response.redirect(withParams(url.origin, "/settings?tab=connections&section=yours", { asana: "mismatch", as: r.mismatch.slice(0, 120) }), 302);
     return back({ asana: "connected" });
   } catch (e) {
     return back({ asana: "error", reason: e instanceof Error ? e.message.slice(0, 80) : "exchange_failed" });

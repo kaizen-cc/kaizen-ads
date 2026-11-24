@@ -27,6 +27,26 @@ export const asanaIsUser = () => Boolean(asanaAs.getStore());
 const bearer = () => asanaAs.getStore() ?? process.env.ASANA_TOKEN;
 const API = "https://app.asana.com/api/1.0";
 
+/**
+ * Kaizen's Asana workspace (owner, Nov 24 2026: people also belong to other companies' workspaces, which never count
+ * unless they tick them on): ASANA_WORKSPACE_GID, else the shared token's workspace (the one named Kaizen when it sees
+ * several). Read with the shared token even inside a person's own Asana, so it's the same for everyone.
+ */
+let kaizenWs: Promise<string | null> | null = null;
+export function kaizenWorkspace(): Promise<string | null> {
+  if (process.env.ASANA_WORKSPACE_GID) return Promise.resolve(process.env.ASANA_WORKSPACE_GID);
+  if (!process.env.ASANA_TOKEN) return Promise.resolve(null);
+  kaizenWs ??= (async () => {
+    const res = await fetch(`${API}/workspaces?limit=100`, { headers: { Authorization: `Bearer ${process.env.ASANA_TOKEN}`, Accept: "application/json" }, cache: "no-store" });
+    const list = ((await res.json().catch(() => ({}))) as { data?: { gid: string; name: string }[] }).data ?? [];
+    return (list.find((w) => /kaizen/i.test(w.name)) ?? list[0])?.gid ?? null;
+  })().catch(() => {
+    kaizenWs = null;
+    return null;
+  });
+  return kaizenWs;
+}
+
 export async function asana<T>(path: string, params: Record<string, string> = {}): Promise<{ data: T; next_page?: { offset: string } | null }> {
   const url = `${API}${path}${Object.keys(params).length ? `?${new URLSearchParams(params)}` : ""}`;
   for (let attempt = 0; attempt < 4; attempt++) {
@@ -83,7 +103,7 @@ export async function asanaUpdate<T>(path: string, data: Record<string, unknown>
  * unassigned with their name at the top, so it isn't lost.
  */
 export async function createAsanaTask(t: { name: string; notes: string; assignee: string | null; project?: string | null; dueOn?: string | null }) {
-  const where: Record<string, unknown> = t.project ? { projects: [t.project] } : { workspace: (await asana<{ gid: string }[]>("/workspaces")).data[0]?.gid };
+  const where: Record<string, unknown> = t.project ? { projects: [t.project] } : { workspace: (await kaizenWorkspace()) ?? (await asana<{ gid: string }[]>("/workspaces")).data[0]?.gid };
   const base = { ...where, name: t.name.slice(0, 250), notes: t.notes.slice(0, 60000), ...(t.dueOn ? { due_on: t.dueOn } : {}) };
   try {
     const task = await asanaWrite<{ gid: string; permalink_url?: string }>("/tasks?opt_fields=permalink_url", { ...base, ...(t.assignee ? { assignee: t.assignee } : {}) });
@@ -100,7 +120,7 @@ export async function createAsanaTask(t: { name: string; notes: string; assignee
  * a whole number in the title), then on the name; null when nothing matches.
  */
 export async function findClientProject(kaizenId: number | null, name: string) {
-  const ws = (await asana<{ gid: string }[]>("/workspaces")).data[0]?.gid;
+  const ws = (await kaizenWorkspace()) ?? (await asana<{ gid: string }[]>("/workspaces")).data[0]?.gid;
   if (!ws) return null;
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
   const search = async (query: string) => (await asana<{ gid: string; name: string }[]>(`/workspaces/${ws}/typeahead`, { resource_type: "project", query, count: "100", opt_fields: "name,archived" })).data;

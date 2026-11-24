@@ -1104,7 +1104,7 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
           {section === "yours" && (
             <MyConnectionsTab
               me={me}
-              flash={sp.slack === "connected" ? (sp.slack_read === "unavailable" ? "Slack is connected for posting. Reading it needs one setting in the Slack app first; the executives have been told." : "Slack is connected. Your assistant can search and read it for you now.") : sp.slack === "error" ? `Slack didn't connect (${typeof sp.reason === "string" ? sp.reason : "try again"}).` : null}
+              flash={sp.slack === "connected" ? (sp.slack_read === "unavailable" ? "Slack is connected for posting. Reading it needs one setting in the Slack app first; the executives have been told." : "Slack is connected. Your assistant can search and read it for you now.") : sp.slack === "error" ? `Slack didn't connect (${typeof sp.reason === "string" ? sp.reason : "try again"}).` : sp.asana === "connected" ? "Asana is connected. Next for me in Asana now shows your My tasks from Kaizen's workspace." : sp.asana === "mismatch" ? "Asana signed in as a different account than yours. Check it below before it's used." : sp.asana === "disconnected" ? "Asana is disconnected." : sp.asana === "error" ? `Asana didn't connect (${typeof sp.reason === "string" ? sp.reason : "try again"}).` : null}
             />
           )}
           {section === "team" && <ConnectorsTab />}

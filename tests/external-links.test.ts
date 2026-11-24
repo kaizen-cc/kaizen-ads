@@ -28,7 +28,8 @@ describe("what leaves Kaizen OS", () => {
  *  fallbacks that only ever load an in-app address */
 const ALLOWED: Record<string, string> = {
   "src/app/(team)/ai/connectors-ui.tsx": "connecting an AI connector signs in and returns here (an in-app route)",
-  "src/app/(team)/pipeline/views/exec-home.tsx": "the main action's fallback loads an in-app address (external links return early)",
+  "src/app/(team)/settings/work-connection-controls.tsx": "Switch account signs in to Slack again and returns to Settings (an in-app route)",
+  "src/app/(team)/pipeline/views/exec-home.tsx":"the main action's fallback loads an in-app address (external links return early)",
 };
 
 function files(dir: string): string[] {

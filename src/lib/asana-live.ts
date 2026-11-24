@@ -2,7 +2,7 @@ import "server-only";
 import { cache } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
-import { asana, asanaConfigured, asanaUpdate, asanaWrite } from "@/lib/asana";
+import { asana, asanaConfigured, asanaUpdate, asanaWrite, kaizenWorkspace } from "@/lib/asana";
 import { changeNote, sortTasks, type AsanaPatch, type FieldValue, type LiveTask, type TaskDetail } from "@/lib/asana-live-core";
 
 // Kaizen OS as an extension of Asana (the owner, Nov 20 2026): the team still works in Asana, so every role sees its
@@ -15,7 +15,7 @@ const TASK_FIELDS = "name,notes,due_on,start_on,completed,permalink_url,assignee
 let workspace: string | null = null;
 async function ws() {
   if (workspace) return workspace;
-  workspace = (await asana<{ gid: string }[]>("/workspaces")).data[0]?.gid ?? null;
+  workspace = (await kaizenWorkspace()) ?? (await asana<{ gid: string }[]>("/workspaces")).data[0]?.gid ?? null;
   return workspace;
 }
 
@@ -36,7 +36,9 @@ type RawTask = {
 let workspaces: string[] | null = null;
 async function allWorkspaces(): Promise<string[]> {
   if (workspaces) return workspaces;
-  workspaces = ((await asana<{ gid: string }[]>("/workspaces", { limit: "100" })).data ?? []).map((w) => w.gid);
+  // Kaizen's workspace only (owner, Nov 24 2026)
+  const k = await kaizenWorkspace();
+  workspaces = k ? [k] : ((await asana<{ gid: string }[]>("/workspaces", { limit: "100" })).data ?? []).map((w) => w.gid);
   return workspaces;
 }
 
@@ -67,8 +69,11 @@ export const myAsanaView = cache(async (email: string | null, db?: SupabaseClien
     const ws = await allWorkspaces().catch(() => [] as string[]);
     return (await Promise.all(ws.map((w) => asanaAll<ListTask>("/tasks", { assignee: email, workspace: w, completed_since: "now", opt_fields: fields }).catch(() => [])))).flat();
   };
-  const mine = async (): Promise<ListTask[]> => {
-    const ws = ((await asana<{ gid: string }[]>("/workspaces", { limit: "100" }).catch(() => ({ data: [] as { gid: string }[] }))).data ?? []).map((w) => w.gid);
+  // Their own Asana: Kaizen's workspace, plus the other workspaces they ticked on in Settings (never the rest)
+  const mine = async (extra: string[]): Promise<ListTask[]> => {
+    const theirs = ((await asana<{ gid: string }[]>("/workspaces", { limit: "100" }).catch(() => ({ data: [] as { gid: string }[] }))).data ?? []).map((w) => w.gid);
+    const k = await kaizenWorkspace();
+    const ws = theirs.filter((w) => w === k || extra.includes(w) || !k);
     const lists = await Promise.all(
       ws.map(async (w) => {
         const list = await asana<{ gid: string }>("/users/me/user_task_list", { workspace: w }).catch(() => null);
@@ -80,11 +85,13 @@ export const myAsanaView = cache(async (email: string | null, db?: SupabaseClien
   let connected = false;
   let raw: ListTask[] = [];
   if (profileId && adminConfigured()) {
-    const { withMyAsana } = await import("@/lib/asana-user");
-    raw = await withMyAsana(createAdminClient(), profileId, async (c) => {
+    const { withMyAsana, asanaExtraWorkspaces, markAsanaSynced } = await import("@/lib/asana-user");
+    const admin = createAdminClient();
+    raw = await withMyAsana(admin, profileId, async (c) => {
       connected = c;
-      return c ? mine() : shared();
+      return c ? mine(await asanaExtraWorkspaces(admin, profileId)) : shared();
     });
+    if (connected) await markAsanaSynced(admin, profileId).catch(() => null);
   } else raw = await shared();
   const seen = new Set<string>();
   const tasks = sortTasks(raw.filter((t) => t.name?.trim() && !t.completed && !seen.has(t.gid) && seen.add(t.gid)).map(toLive(clients)));

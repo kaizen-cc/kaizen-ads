@@ -9,7 +9,23 @@ import { connectCard, needsConnection, slackState, SLACK_READ_NEEDS, type ConnSt
 // Connections › Yours, the assistant's tools (a needs_connection answer plus a Connect card in the conversation) and
 // the hello (a broken connection mentioned once).
 
-export type ConnRow = { service: Service; state: ConnState; detail: string; missing?: string[]; scopes?: { scope: string; ok: boolean }[] };
+export type ConnRow = {
+  service: Service;
+  state: ConnState;
+  detail: string;
+  missing?: string[];
+  scopes?: { scope: string; ok: boolean }[];
+  /** Which account it is ("Name · email · workspace"), so a wrong sign-in shows at a glance */
+  account?: string | null;
+  /** When it was last used to read their work */
+  lastSync?: string | null;
+  /** Their own sign-in: Disconnect and Switch account apply */
+  own?: boolean;
+  /** Asana: signed in as an account that isn't theirs (its email), waiting for them to confirm or switch */
+  pending?: string | null;
+  /** Asana: the workspaces that account belongs to, Kaizen's locked on */
+  workspaces?: { gid: string; name: string; on: boolean; locked: boolean }[];
+};
 
 const GOOGLE: Record<"gmail" | "drive" | "calendar", { scope: string; label: string }[]> = {
   gmail: [
@@ -48,9 +64,12 @@ export async function slackConnection(profileId: string, live = false): Promise<
   const { slackUserToken, slackRead } = await import("@/lib/slack-user");
   const t = await slackUserToken(profileId);
   let authError: string | null = null;
+  // Which Slack account it is (its user and workspace), so a wrong sign-in shows at a glance
+  let account: string | null = null;
   if (t && live) {
-    const r = await slackRead<{ ok: boolean; error?: string }>(t.token, "auth.test", {}).catch(() => ({ ok: true }) as { ok: boolean; error?: string });
+    const r = await slackRead<{ ok: boolean; error?: string; user?: string; team?: string }>(t.token, "auth.test", {}).catch(() => ({ ok: true }) as { ok: boolean; error?: string; user?: string; team?: string });
     authError = r.ok ? null : (r.error ?? "unknown");
+    if (r.ok) account = [r.user, r.team].filter(Boolean).join(" · ") || null;
   }
   const s = slackState(t ? { scopes: t.scopes.join(",") } : null, authError);
   const detail =
@@ -61,7 +80,7 @@ export async function slackConnection(profileId: string, live = false): Promise<
         : s.state === "reconnect"
           ? "The connection stopped working (Slack says the sign-in expired or was revoked)"
           : "Not connected: your assistant can't post, search or read your Slack";
-  return { service: "slack", state: s.state, detail, missing: s.missing };
+  return { service: "slack", state: s.state, detail, missing: s.missing, account, own: Boolean(t) };
 }
 
 /** Every one of their work accounts, for Settings */
@@ -74,21 +93,28 @@ export async function myWorkConnections(me: { id: string; email: string }): Prom
     const off = scopes.filter((s) => !s.ok);
     return {
       service,
+      account: me.email,
       state: off.length === scopes.length ? "admin" : "connected",
       detail: off.length ? `Through Kaizen's Google Workspace, nothing to connect. ${off.map((s) => s.scope).join(", ")} not switched on yet (an admin setting)` : "Through Kaizen's Google Workspace, nothing to connect",
       scopes,
     };
   };
   const [slack, gmail, drive, calendar] = await Promise.all([slackConnection(me.id, true), google("gmail"), google("drive"), google("calendar")]);
-  const asana = await asanaRow(me.id, asanaConfigured());
+  const asana = await asanaRow(me.id, asanaConfigured(), me.email);
   return [slack, gmail, drive, calendar, asana];
 }
 
 /** Their own Asana (OAuth, asana_user_tokens): connected as whom; else connect it (Kaizen's shared account meanwhile) */
-async function asanaRow(profileId: string, shared: boolean): Promise<ConnRow> {
-  const [{ asanaConnection }, { createAdminClient }] = await Promise.all([import("@/lib/asana-user"), import("@/lib/supabase/admin")]);
+async function asanaRow(profileId: string, shared: boolean, kaizenEmail: string): Promise<ConnRow> {
+  const [{ asanaConnection, sameEmail }, { createAdminClient }] = await Promise.all([import("@/lib/asana-user"), import("@/lib/supabase/admin")]);
   const a = await asanaConnection(createAdminClient(), profileId).catch(() => null);
-  if (a?.connected) return { service: "asana", state: "connected", detail: `Connected as you${a.name ? ` (${a.name})` : ""}: your My tasks, private ones too` };
+  if (a && (a.connected || a.pending)) {
+    const spaces = a.workspaces.filter((w) => w.on).map((w) => w.name);
+    const account = [a.name, a.email, spaces.join(", ")].filter(Boolean).join(" · ");
+    const base = { service: "asana" as const, account, lastSync: a.lastSync, own: true, workspaces: a.workspaces };
+    if (a.pending) return { ...base, state: "reconnect", detail: "Not in use yet: this Asana sign-in isn't your Kaizen email", pending: a.email ?? a.name ?? "another account" };
+    return { ...base, state: "connected", detail: sameEmail(a.email, kaizenEmail) ? "Your My tasks, private ones too, from the workspaces ticked below" : "In use (you confirmed this account): its My tasks from the workspaces ticked below" };
+  }
   if (a?.configured) return { service: "asana", state: "missing", detail: shared ? "Not connected: your assistant sees only what Kaizen's shared Asana account can (not your private My tasks)" : "Not connected: your assistant can't see your Asana tasks" };
   return shared ? { service: "asana", state: "connected", detail: "Through Kaizen's shared Asana account" } : { service: "asana", state: "off", detail: "Kaizen's Asana isn't connected to Kaizen OS yet (an admin setting)" };
 }
