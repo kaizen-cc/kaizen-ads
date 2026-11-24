@@ -18,9 +18,16 @@ export async function runDueRoutines(admin: Admin, opts: { budgetMs?: number; no
   const now = opts.now ?? new Date();
   const deadline = Date.now() + (opts.budgetMs ?? 240_000);
   const { data: rows } = await admin.from("routines").select("profile_id, kind, enabled, times, days").eq("enabled", true).limit(500);
+  // Call prep runs off the calendar, not a time: each person's calls starting within the next hour or so, prepped once
+  let prepped = 0;
+  for (const r of (rows ?? []).filter((x) => x.kind === "call_prep")) {
+    if (Date.now() > deadline) break;
+    const { data: me } = await admin.from("profiles").select("id, full_name, email, role, is_exec, is_lead").eq("id", r.profile_id).maybeSingle();
+    if (me?.email) prepped += await (await import("@/lib/routine-callprep")).prepUpcomingCalls(admin, me as Person).catch(() => 0);
+  }
   const due: { profileId: string; kind: RoutineKind; key: string }[] = [];
   for (const r of rows ?? []) for (const key of dueRuns({ profileId: r.profile_id as string, kind: r.kind as string, times: (r.times as string[]) ?? [], days: r.days as Days, enabled: true }, now)) due.push({ profileId: r.profile_id as string, kind: r.kind as RoutineKind, key });
-  if (!due.length) return { due: 0, ran: 0 };
+  if (!due.length) return { due: 0, ran: 0, prepped };
   const { data: ran } = await admin.from("routine_runs").select("run_key").in("run_key", due.map((d) => d.key));
   const done = new Set((ran ?? []).map((r) => r.run_key as string));
   let n = 0;
@@ -29,7 +36,7 @@ export async function runDueRoutines(admin: Admin, opts: { budgetMs?: number; no
     await runRoutine(admin, d.profileId, d.kind, d.key).catch((e) => console.error("[routines]", d.key, e instanceof Error ? e.message : e));
     n++;
   }
-  return { due: due.length, ran: n };
+  return { due: due.length, ran: n, prepped };
 }
 
 /** One run now (the schedule, or someone asking for it): claims its key, writes the report, rings the bell */
@@ -231,9 +238,6 @@ async function weekAhead(admin: Admin, me: Person): Promise<RoutineReport> {
   );
 }
 
-/** Not built yet in this slice: a short report saying so, never a fake one */
-const later = (label: string) => async (): Promise<RoutineReport> => ({ headline: `${label} is coming to Kaizen OS next; nothing ran.`, sections: [] });
-
 const RUNNERS: Record<RoutineKind, (admin: Admin, me: Person) => Promise<RoutineReport>> = {
   morning,
   afternoon,
@@ -244,7 +248,11 @@ const RUNNERS: Record<RoutineKind, (admin: Admin, me: Person) => Promise<Routine
   delegation: (admin, me) => import("@/lib/routine-sweeps").then((m) => m.delegation(admin, me)),
   nightly: (admin, me) => import("@/lib/routine-agent").then((m) => m.nightly(admin, me)),
   clean_sweep: (admin, me) => import("@/lib/routine-agent").then((m) => m.cleanSweep(admin, me)),
-  call_prep: later("Call prep"),
+  // Run now: the calls starting in the next hour or so, prepped (each one lands as its own brief)
+  call_prep: async (admin, me) => {
+    const n = await (await import("@/lib/routine-callprep")).prepUpcomingCalls(admin, me);
+    return { headline: n ? `${n} call${n === 1 ? "" : "s"} prepped: the briefs are below.` : "No client or sales calls in the next hour and a half to prep.", sections: [] };
+  },
 };
 
 /** A person's routines, every kind, with the defaults filled in for the ones they haven't set */
