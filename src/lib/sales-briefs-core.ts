@@ -213,13 +213,15 @@ export type CallBrief = {
   watch_outs: string[];
   pitch_ideas: string[];
   in_motion: string | null;
+  /** The prospect was archived before this call was booked: why and when */
+  archived: string | null;
 };
 
 const s = (v: unknown, n = 1500) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 const list = (v: unknown, n = 8, len = 500) => (Array.isArray(v) ? v.map((x) => s(x, len)).filter(Boolean).slice(0, n) : []);
 
 /** A brief as the model wrote it, made safe to keep and show */
-export function cleanCallBrief(raw: unknown, extra: { booking?: { q: string; a: string }[]; in_motion?: string | null } = {}): CallBrief {
+export function cleanCallBrief(raw: unknown, extra: { booking?: { q: string; a: string }[]; in_motion?: string | null; archived?: string | null } = {}): CallBrief {
   const r = (raw ?? {}) as Record<string, unknown>;
   const fit = (r.fit ?? {}) as Record<string, unknown>;
   const n = Number(fit.score);
@@ -243,6 +245,7 @@ export function cleanCallBrief(raw: unknown, extra: { booking?: { q: string; a: 
     watch_outs: list(r.watch_outs, 5, 300),
     pitch_ideas: list(r.pitch_ideas, 10, 500),
     in_motion: extra.in_motion ?? (r.in_motion ? s(r.in_motion, 300) : null),
+    archived: extra.archived ?? (r.archived ? s(r.archived, 400) : null),
   };
 }
 
@@ -257,7 +260,7 @@ export function addToBrief(b: CallBrief, section: BriefSection, lines: readonly 
 
 /** The brief as text (the assistant reads it out; the Sales agent gets it as context) */
 export function callBriefText(business: string, when: string, b: CallBrief): string {
-  const out = [`Sales call with ${business}, ${when}.`, b.who && `Who they are: ${b.who}`, b.they_want && `What they said they want: ${b.they_want}`];
+  const out = [`Sales call with ${business}, ${when}.`, b.archived && `Heads-up: ${b.archived}`, b.who && `Who they are: ${b.who}`, b.they_want && `What they said they want: ${b.they_want}`];
   if (b.booking.length) out.push(`Booking answers:\n${b.booking.map((x) => `- ${x.q}: ${x.a}`).join("\n")}`);
   if (b.prior_contact) out.push(`Prior contact: ${b.prior_contact}`);
   if (b.fit.why) out.push(`Fit${b.fit.score != null ? ` ${b.fit.score}/100` : ""}: ${b.fit.why}`);

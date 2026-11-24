@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import { requireStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { notFound } from "next/navigation";
-import { seesSalesPages } from "@/lib/sales-core";
+import { archiveText, seesSalesPages } from "@/lib/sales-core";
 import { SalesView, type ProspectRow } from "./sales-view";
 
 export const metadata: Metadata = { title: "Sales" };
@@ -19,7 +19,7 @@ export default async function SalesPage() {
   if (!seesSalesPages(me)) notFound();
   const db = await createClient();
   const [{ data: rows }, { data: people }] = await Promise.all([
-    db.from("prospects").select("id, name, website, industry, location, status, fit_score, fit_reason, owner_id, researched_at, updated_at, brief").order("updated_at", { ascending: false }).limit(500),
+    db.from("prospects").select("id, name, website, industry, location, status, fit_score, fit_reason, owner_id, researched_at, updated_at, brief, archived_at, archived_by, archive_reason, archive_note").order("updated_at", { ascending: false }).limit(500),
     db.from("profiles").select("id, full_name").eq("is_active", true).or("is_exec.eq.true,is_lead.eq.true").order("full_name"),
   ]);
   const names = new Map((people ?? []).map((p) => [p.id as string, p.full_name as string]));
@@ -37,6 +37,7 @@ export default async function SalesPage() {
     owner: p.owner_id ? (names.get(p.owner_id as string) ?? null) : null,
     researched: Boolean(p.researched_at),
     updated: p.updated_at as string,
+    archived: p.archived_at ? { at: p.archived_at as string, by: p.archived_by ? (names.get(p.archived_by as string) ?? null) : null, label: archiveText(p.archive_reason as string | null, p.archive_note as string | null) } : null,
   }));
   return (
     <Suspense>

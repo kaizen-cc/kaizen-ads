@@ -146,3 +146,23 @@ export async function deleteNoteAction(prospectId: string, noteId: string): Prom
   refresh(prospectId);
   return { ok: true };
 }
+
+export async function archiveAction(id: string, reason: string, note: string): Promise<Result> {
+  const g = await gate();
+  if ("error" in g) return { ok: false, error: g.error };
+  const { archiveProspect } = await import("@/lib/sales-agent");
+  const r = await archiveProspect(await createClient(), createAdminClient(), g.me, id, reason, note);
+  if (!r.ok) return r;
+  refresh(id);
+  return { ok: true };
+}
+
+export async function unarchiveAction(id: string): Promise<Result> {
+  const g = await gate();
+  if ("error" in g) return { ok: false, error: g.error };
+  const { unarchiveProspect } = await import("@/lib/sales-agent");
+  const r = await unarchiveProspect(await createClient(), createAdminClient(), g.me, id);
+  if (!r.ok) return r;
+  refresh(id);
+  return { ok: true };
+}

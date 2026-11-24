@@ -3,9 +3,78 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { OPEN_STATUSES, PROSPECT_STATUSES, STATUS_LABEL, fitBand, type ProspectStatus } from "@/lib/sales-core";
+import { ARCHIVE_LABEL, ARCHIVE_REASONS, OPEN_STATUSES, PROSPECT_STATUSES, STATUS_LABEL, fitBand, type ArchiveReason, type ProspectStatus } from "@/lib/sales-core";
 import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
-import { addAction, findAction, researchAction, updateAction } from "./actions";
+import { addAction, archiveAction, findAction, researchAction, unarchiveAction, updateAction } from "./actions";
+
+/** Archive: asks why (a quick reason, a note for Other), then takes it out of the pipeline; never deletes */
+export function ArchiveButton({ id, onDone }: { id: string; onDone?: () => void }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState<ArchiveReason | null>(null);
+  const [note, setNote] = useState("");
+  const [pending, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  if (!open)
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="inline-flex h-11 items-center rounded-full px-4 text-[14px] text-muted hover:bg-surface-2 hover:text-fg md:h-9 md:text-[13px]">
+        Archive
+      </button>
+    );
+  return (
+    <div className="grid w-full min-w-0 gap-2 rounded-[16px] border border-line bg-bg p-3">
+      <p className="text-[13px] font-medium">Why archive it?</p>
+      <div className="flex flex-wrap gap-2">
+        {ARCHIVE_REASONS.map((r) => (
+          <button key={r} type="button" onClick={() => setReason(r)} aria-pressed={reason === r} className={`inline-flex h-11 items-center rounded-full px-3.5 text-[13px] transition-colors md:h-9 ${reason === r ? "bg-fg text-bg" : "border border-line bg-surface text-muted hover:text-fg"}`}>
+            {ARCHIVE_LABEL[r]}
+          </button>
+        ))}
+      </div>
+      <input value={note} onChange={(e) => setNote(e.target.value)} placeholder={reason === "other" ? "Say why (needed for Other)" : "A note (optional)"} className="h-11 w-full min-w-0 rounded-[12px] border border-line bg-surface px-3 text-[16px] text-fg placeholder:text-faint md:text-[14px]" />
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          disabled={!reason || (reason === "other" && !note.trim()) || pending}
+          onClick={() =>
+            start(async () => {
+              setError(null);
+              const r = await archiveAction(id, reason!, note);
+              if (!r.ok) setError(r.error);
+              else {
+                setOpen(false);
+                onDone?.();
+                router.refresh();
+              }
+            })
+          }
+          className="inline-flex h-11 items-center rounded-full bg-fg px-4 text-[14px] font-medium text-bg disabled:opacity-40 md:h-9 md:text-[13px]"
+        >
+          {pending ? "Archiving…" : "Archive it"}
+        </button>
+        <button type="button" onClick={() => setOpen(false)} className="inline-flex h-11 items-center rounded-full px-4 text-[14px] text-muted hover:text-fg md:h-9 md:text-[13px]">
+          Cancel
+        </button>
+        {error && <span className="text-[12.5px] text-bad">{error}</span>}
+      </div>
+    </div>
+  );
+}
+
+/** Unarchive: back into the pipeline at the stage it had */
+export function UnarchiveButton({ id }: { id: string }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <button type="button" disabled={pending} onClick={() => start(async () => { const r = await unarchiveAction(id); if (!r.ok) setError(r.error); else router.refresh(); })} className="inline-flex h-11 items-center rounded-full border border-line px-4 text-[14px] text-fg hover:bg-surface-2 disabled:opacity-60 md:h-9 md:text-[13px]">
+        {pending ? "Restoring…" : "Unarchive"}
+      </button>
+      {error && <span className="text-[12.5px] text-bad">{error}</span>}
+    </div>
+  );
+}
 
 // Sales › Prospects: the pipeline as cards (no tables, so it reads the same on a phone), filtered by stage and by
 // whose they are, both in the address. The three ways in (research a business, find a list, add one by hand) open as
@@ -25,6 +94,8 @@ export type ProspectRow = {
   owner: string | null;
   researched: boolean;
   updated: string;
+  /** Archived: why (its label and note), who and when; null while it's in the pipeline */
+  archived: { at: string; by: string | null; label: string } | null;
 };
 
 const ago = (iso: string) => {
@@ -90,10 +161,13 @@ export function SalesView({ prospects, meId }: { prospects: ProspectRow[]; meId:
   const all = useParam("all") === "1";
   const panel = useParam("new");
   const q = (useParam("q") ?? "").trim().toLowerCase();
-  const scope = all ? prospects : prospects.filter((p) => p.ownerId === meId);
-  const shown = scope
-    .filter((p) => (stage === "open" ? OPEN_STATUSES.includes(p.status) : stage && (PROSPECT_STATUSES as readonly string[]).includes(stage) ? p.status === stage : true))
-    .filter((p) => !q || `${p.name} ${p.website ?? ""} ${p.industry ?? ""} ${p.location ?? ""}`.toLowerCase().includes(q));
+  const mineOrAll = all ? prospects : prospects.filter((p) => p.ownerId === meId);
+  // Archived prospects are out of the pipeline; the Archived view is their log
+  const scope = mineOrAll.filter((p) => !p.archived);
+  const archivedList = mineOrAll.filter((p) => p.archived).sort((a, b) => (b.archived?.at ?? "").localeCompare(a.archived?.at ?? ""));
+  const shown = (stage === "archived" ? archivedList : scope)
+    .filter((p) => (stage === "archived" ? true : stage === "open" ? OPEN_STATUSES.includes(p.status) : stage && (PROSPECT_STATUSES as readonly string[]).includes(stage) ? p.status === stage : true))
+    .filter((p) => !q || `${p.name} ${p.website ?? ""} ${p.industry ?? ""} ${p.location ?? ""} ${p.archived ? `${p.archived.label} ${p.archived.by ?? ""}` : ""}`.toLowerCase().includes(q));
   const count = (s: ProspectStatus) => scope.filter((p) => p.status === s).length;
   const open = scope.filter((p) => OPEN_STATUSES.includes(p.status)).length;
 
@@ -157,6 +231,7 @@ export function SalesView({ prospects, meId }: { prospects: ProspectRow[]; meId:
           {PROSPECT_STATUSES.map((s) => (
             <StageChip key={s} label={STATUS_LABEL[s]} n={count(s)} on={stage === s} onClick={() => pushParams({ stage: s })} />
           ))}
+          <StageChip label="Archived" n={archivedList.length} on={stage === "archived"} onClick={() => pushParams({ stage: "archived" })} />
         </div>
 
         {shown.length === 0 ? (
@@ -187,12 +262,23 @@ export function SalesView({ prospects, meId }: { prospects: ProspectRow[]; meId:
                   <span>{p.owner ? (p.ownerId === meId ? "Yours" : p.owner) : "No owner"}</span>
                   <span>Updated {ago(p.updated)}</span>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <StageSelect id={p.id} status={p.status} />
-                  <Link href={`/sales/${p.id}`} className="inline-flex h-11 items-center rounded-full border border-line px-4 text-[14px] text-fg hover:bg-surface-2 md:h-9 md:text-[13px]">
-                    {p.researched ? "Open" : "Open and research"}
-                  </Link>
-                </div>
+                {p.archived ? (
+                  <div className="grid gap-2">
+                    <p className="break-words rounded-[14px] bg-bg px-3 py-2.5 text-[13px] leading-relaxed text-muted">
+                      <span className="font-medium text-fg">{p.archived.label}</span> · archived {ago(p.archived.at)}
+                      {p.archived.by ? ` by ${p.archived.by}` : ""} · was {STATUS_LABEL[p.status]}
+                    </p>
+                    <UnarchiveButton id={p.id} />
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <StageSelect id={p.id} status={p.status} />
+                    <Link href={`/sales/${p.id}`} className="inline-flex h-11 items-center rounded-full border border-line px-4 text-[14px] text-fg hover:bg-surface-2 md:h-9 md:text-[13px]">
+                      {p.researched ? "Open" : "Open and research"}
+                    </Link>
+                    <ArchiveButton id={p.id} />
+                  </div>
+                )}
               </li>
             ))}
           </ul>

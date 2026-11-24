@@ -2,7 +2,7 @@ import "server-only";
 import type { Staff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { OPEN_STATUSES, STATUS_LABEL, briefHref, briefText, cleanBrief, fitBand, isProspectStatus, worksSales } from "@/lib/sales-core";
+import { OPEN_STATUSES, STATUS_LABEL, archiveText, briefHref, briefText, cleanBrief, fitBand, isProspectStatus, worksSales } from "@/lib/sales-core";
 import { str, num, type AiTool } from "./types";
 
 // The Sales agent's tools, for the assistant, every agent call and Kaizen AI (registered in src/lib/kaizen-ai/extensions.ts).
@@ -99,19 +99,20 @@ const find: AiTool = {
 
 const mine: AiTool = {
   name: "my_prospects",
-  description: "Executives and leads: the sales pipeline (Sales › Prospects): the person's own prospects by default (everyone's with all: true), optionally one stage (new, researched, contacted, talking, proposal, won, lost) or open only. Each with stage, fit, owner, last update and its page.",
-  input_schema: { type: "object", properties: { all: { type: "boolean" }, stage: { type: "string" }, open: { type: "boolean" } }, additionalProperties: false },
+  description: "Executives and leads: the sales pipeline (Sales › Prospects): the person's own prospects by default (everyone's with all: true), optionally one stage (new, researched, contacted, call_booked, talking, proposal, won, lost) or open only. Archived prospects are left out; archived: true lists only them (the archive log: why, who, when). Each with stage, fit, owner, last update and its page.",
+  input_schema: { type: "object", properties: { all: { type: "boolean" }, stage: { type: "string" }, open: { type: "boolean" }, archived: { type: "boolean" } }, additionalProperties: false },
   only: worksSales,
   run: async (user: Staff, input) => {
     if (!worksSales(user)) return NOT_SALES;
     const db = await createClient();
-    let q = db.from("prospects").select("id, name, website, industry, location, status, fit_score, owner_id, updated_at, profiles:owner_id(full_name)").order("updated_at", { ascending: false }).limit(60);
+    let q = db.from("prospects").select("id, name, website, industry, location, status, fit_score, owner_id, updated_at, archived_at, archive_reason, archive_note, profiles:owner_id(full_name)").order("updated_at", { ascending: false }).limit(60);
     if (input.all !== true) q = q.eq("owner_id", user.id);
+    q = input.archived === true ? q.not("archived_at", "is", null) : q.is("archived_at", null);
     if (isProspectStatus(input.stage)) q = q.eq("status", input.stage);
     else if (input.open === true) q = q.in("status", [...OPEN_STATUSES]);
     const { data, error } = await q;
     if (error) return { ok: false, error: error.message };
-    const rows = (data ?? []).map((p) => ({ id: p.id, name: p.name, website: p.website, industry: p.industry, location: p.location, stage: STATUS_LABEL[p.status as keyof typeof STATUS_LABEL] ?? p.status, fit: p.fit_score, fit_band: fitBand(p.fit_score as number | null), owner: (p.profiles as unknown as { full_name: string } | null)?.full_name ?? null, updated: String(p.updated_at).slice(0, 10), page: pageOf(p.id as string) }));
+    const rows = (data ?? []).map((p) => ({ id: p.id, name: p.name, website: p.website, industry: p.industry, location: p.location, stage: STATUS_LABEL[p.status as keyof typeof STATUS_LABEL] ?? p.status, fit: p.fit_score, fit_band: fitBand(p.fit_score as number | null), owner: (p.profiles as unknown as { full_name: string } | null)?.full_name ?? null, updated: String(p.updated_at).slice(0, 10), ...(p.archived_at ? { archived: `${String(p.archived_at).slice(0, 10)}: ${archiveText(p.archive_reason as string | null, p.archive_note as string | null)}` } : {}), page: pageOf(p.id as string) }));
     return { ok: true, count: rows.length, prospects: rows, page: "/sales" };
   },
 };
@@ -127,7 +128,7 @@ const details: AiTool = {
     if (!p) return { ok: false, error: "No prospect by that name. my_prospects lists them." };
     const db = await createClient();
     const { data: notes } = await db.from("prospect_notes").select("kind, title, body, created_at").eq("prospect_id", p.id).neq("kind", "research").order("created_at", { ascending: false }).limit(6);
-    return { ok: true, id: p.id, name: p.name, website: p.website, stage: p.status, fit_score: p.fit_score, owner_id: p.owner_id, notes: p.notes, contacts: p.contacts, brief: p.brief ? briefText(p.name, cleanBrief(p.brief)) : "Not researched yet (research_prospect).", work: (notes ?? []).map((n) => ({ kind: n.kind, title: n.title, at: String(n.created_at).slice(0, 10), body: n.body })), page: pageOf(p.id) };
+    return { ok: true, id: p.id, name: p.name, website: p.website, stage: p.status, ...(p.archived_at ? { archived: `${p.archived_at.slice(0, 10)}: ${archiveText(p.archive_reason, p.archive_note)} (out of the pipeline; unarchive_prospect puts it back)` } : {}), fit_score: p.fit_score, owner_id: p.owner_id, notes: p.notes, contacts: p.contacts, brief: p.brief ? briefText(p.name, cleanBrief(p.brief)) : "Not researched yet (research_prospect).", work: (notes ?? []).map((n) => ({ kind: n.kind, title: n.title, at: String(n.created_at).slice(0, 10), body: n.body })), page: pageOf(p.id) };
   },
 };
 
@@ -357,4 +358,40 @@ const execPagesOnly = (t: AiTool): AiTool => ({
   },
 });
 
-export const tools: AiTool[] = [webResearch, research, find, mine, details, save, pitch, review, won, myBriefs, saveToBrief, scanBriefs].map(execPagesOnly);
+const archive: AiTool = {
+  name: "archive_prospect",
+  description: "Executives and leads: archives a prospect (never deleted): it leaves the pipeline and its upcoming call briefs, items and follow-ups stop. Needs the reason: not_a_fit, no_budget, went_elsewhere, no_response, duplicate, not_real, or other with a note. If they didn't say why, ask once (offer those reasons) before calling. \"Lost\" is different: a deal that got to a decision and was lost is save_prospect stage lost. Undo with unarchive_prospect.",
+  input_schema: { type: "object", properties: { prospect: { type: "string" }, reason: { type: "string", enum: ["not_a_fit", "no_budget", "went_elsewhere", "no_response", "duplicate", "not_real", "other"] }, note: { type: "string" } }, required: ["prospect", "reason"], additionalProperties: false },
+  only: worksSales,
+  run: async (user: Staff, input) => {
+    if (!worksSales(user)) return NOT_SALES;
+    const v = viewing(user);
+    if (v) return v;
+    const p = await prospectFrom(input);
+    if (!p) return { ok: false, error: "No prospect by that name. my_prospects lists them." };
+    const { archiveProspect } = await import("@/lib/sales-agent");
+    const r = await archiveProspect(await createClient(), createAdminClient(), user, p.id, input.reason, input.note);
+    if (!r.ok) return r;
+    return { ok: true, archived: p.name, reason: archiveText(r.prospect.archive_reason, r.prospect.archive_note), stopped_briefs: r.stopped, kept_stage: r.prospect.status, say: `${p.name} is archived (${archiveText(r.prospect.archive_reason, r.prospect.archive_note)}). It's out of the pipeline; unarchiving puts it back at ${r.prospect.status.replace("_", " ")}.` };
+  },
+};
+
+const unarchive: AiTool = {
+  name: "unarchive_prospect",
+  description: "Executives and leads: puts an archived prospect back into the pipeline at the stage it had (its upcoming call briefs pick up again).",
+  input_schema: { type: "object", properties: { prospect: { type: "string" } }, required: ["prospect"], additionalProperties: false },
+  only: worksSales,
+  run: async (user: Staff, input) => {
+    if (!worksSales(user)) return NOT_SALES;
+    const v = viewing(user);
+    if (v) return v;
+    const p = await prospectFrom(input);
+    if (!p) return { ok: false, error: "No prospect by that name. my_prospects with archived: true lists the archived ones." };
+    const { unarchiveProspect } = await import("@/lib/sales-agent");
+    const r = await unarchiveProspect(await createClient(), createAdminClient(), user, p.id);
+    if (!r.ok) return r;
+    return { ok: true, restored: p.name, stage: r.prospect.status, page: pageOf(p.id) };
+  },
+};
+
+export const tools: AiTool[] = [webResearch, research, find, mine, details, save, pitch, review, won, myBriefs, saveToBrief, scanBriefs, archive, unarchive].map(execPagesOnly);

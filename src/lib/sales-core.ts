@@ -214,3 +214,34 @@ export function forwardStatus(current: ProspectStatus, next: ProspectStatus): Pr
 
 /** The Drive folder name of a prospect (Kaizen Sales › Prospects › <name>) */
 export const prospectFolderName = (name: string) => name.replace(/[\\/:*?"<>|›]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
+
+// ─── Archive (never delete) ─────────────────────────────────────────────────
+export const ARCHIVE_REASONS = ["not_a_fit", "no_budget", "went_elsewhere", "no_response", "duplicate", "not_real", "other"] as const;
+export type ArchiveReason = (typeof ARCHIVE_REASONS)[number];
+export const ARCHIVE_LABEL: Record<ArchiveReason, string> = {
+  not_a_fit: "Not a fit",
+  no_budget: "No budget",
+  went_elsewhere: "Went with someone else",
+  no_response: "No response",
+  duplicate: "Duplicate",
+  not_real: "Not a real business",
+  other: "Other",
+};
+export const isArchiveReason = (v: unknown): v is ArchiveReason => typeof v === "string" && (ARCHIVE_REASONS as readonly string[]).includes(v);
+
+/** A reason in the person's words ("they went with another agency") to one of the reasons, or null */
+export function archiveReasonFrom(v: unknown): ArchiveReason | null {
+  if (isArchiveReason(v)) return v;
+  const t = String(v ?? "").toLowerCase();
+  if (!t.trim()) return null;
+  if (/dup/.test(t)) return "duplicate";
+  if (/budget|afford|money|too expensive|price/.test(t)) return "no_budget";
+  if (/another agency|someone else|competitor|went with|chose|in-?house/.test(t)) return "went_elsewhere";
+  if (/no (?:response|reply|answer)|ghost|never (?:replied|responded)|unresponsive/.test(t)) return "no_response";
+  if (/not (?:a )?real|fake|spam|closed down|out of business|doesn'?t exist/.test(t)) return "not_real";
+  if (/fit|too small|wrong (?:industry|kind)|not (?:a good )?match/.test(t)) return "not_a_fit";
+  return "other";
+}
+
+/** "Not a fit: too small for paid media" */
+export const archiveText = (reason: string | null | undefined, note: string | null | undefined) => [isArchiveReason(reason) ? ARCHIVE_LABEL[reason] : "Archived", String(note ?? "").trim()].filter(Boolean).join(": ");

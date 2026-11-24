@@ -101,6 +101,7 @@ export function BriefView({ row, brief, prospect, runner, mine, sells }: { row: 
             )}
             {brief.prior_contact && <p className="break-words text-[13.5px] leading-relaxed text-muted">Earlier contact: {brief.prior_contact}</p>}
             {brief.in_motion && <p className="break-words text-[13px] text-warn">Already in motion: {brief.in_motion}</p>}
+            {brief.archived && <p className="break-words rounded-[12px] bg-warn-soft px-3 py-2 text-[13px] text-warn">Heads-up: {brief.archived}</p>}
           </Block>
 
           {brief.booking.length > 0 && (

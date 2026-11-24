@@ -7,7 +7,7 @@ import type { CallReview, PitchDrafts, ProspectBrief, ProspectStatus } from "@/l
 import { CallButton } from "@/components/call-button";
 import { pushParams, useParam } from "@/lib/url-state";
 import { deleteNoteAction, pitchAction, researchAction, reviewAction, updateAction, wonAction } from "../actions";
-import { FitBadge, StageSelect } from "../sales-view";
+import { ArchiveButton, FitBadge, StageSelect, UnarchiveButton } from "../sales-view";
 
 // One prospect: its research brief and Kaizen strategy, the outreach drafts and call reviews, and its stage, owner and
 // notes. Tabs live in the address (?tab=), so back returns to the one you were on. Drafts are copied and sent by the
@@ -17,7 +17,7 @@ export type ProspectNote =
   | { id: string; kind: "pitch"; title: string; at: string; pitch: PitchDrafts }
   | { id: string; kind: "call_review"; title: string; at: string; review: CallReview };
 
-type P = { id: string; name: string; website: string | null; industry: string | null; location: string | null; status: ProspectStatus; fit: number | null; fitReason: string | null; ownerId: string | null; notes: string | null; lostReason: string | null; researchedAt: string | null; source: string | null };
+type P = { id: string; name: string; website: string | null; industry: string | null; location: string | null; status: ProspectStatus; fit: number | null; fitReason: string | null; ownerId: string | null; notes: string | null; lostReason: string | null; researchedAt: string | null; source: string | null; archived?: { at: string; by: string | null; label: string } | null };
 
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 const host = (url: string) => url.replace(/^https?:\/\//, "").replace(/\/$/, "");
@@ -94,9 +94,20 @@ export function ProspectView({ p, brief, notes, people, docs, client, meId, call
         <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center">
           <StageSelect key={p.status} id={p.id} status={p.status} />
           <OwnerSelect id={p.id} ownerId={p.ownerId} people={people} meId={meId} />
-          {p.status !== "won" && <WonButton id={p.id} />}
+          {p.status !== "won" && !p.archived && <WonButton id={p.id} />}
           <CallButton roleKey="sales" context={{ screen: "a prospect's page", client: p.name, prospectId: p.id }} label="Talk to the Sales agent" className="justify-center border-brand/40 text-fg" />
         </div>
+        {p.archived ? (
+          <div className="grid gap-2 rounded-[14px] bg-surface-2 px-4 py-3">
+            <p className="break-words text-[13.5px] text-muted">
+              <span className="font-medium text-fg">Archived: {p.archived.label}</span> · {day(p.archived.at)}
+              {p.archived.by ? ` by ${p.archived.by}` : ""}. Out of the pipeline: no briefs or follow-ups. Unarchive puts it back at {p.status.replace("_", " ")}.
+            </p>
+            <UnarchiveButton id={p.id} />
+          </div>
+        ) : (
+          <ArchiveButton id={p.id} />
+        )}
         {client && (
           <p className="rounded-[14px] bg-ok-soft px-4 py-3 text-[13.5px] text-ok">
             Won and enrolled as{" "}

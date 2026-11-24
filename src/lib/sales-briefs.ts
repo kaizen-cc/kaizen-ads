@@ -54,7 +54,7 @@ export type BriefRow = {
   description: string | null;
   html_link: string | null;
   event_hash: string | null;
-  status: "pending" | "ready" | "cancelled" | "done" | "failed";
+  status: "pending" | "ready" | "cancelled" | "done" | "failed" | "stopped";
   brief: (CallBrief & { business?: string; site?: string | null }) | null;
   error: string | null;
   made_at: string | null;
@@ -130,18 +130,19 @@ export async function scanCalendars(admin: Admin, now = new Date(), hours = HORI
 }
 
 /** The prospect a call is with: found by its site or name, else made (stage "call booked"); an open one moves to it */
-async function prospectFor(admin: Admin, row: BriefRow, business: string, site: string | null, ownerId: string | null): Promise<{ id: string; name: string; brief: unknown; researched_at: string | null; status: ProspectStatus }> {
-  type Found = { id: string; name: string; brief: unknown; researched_at: string | null; status: ProspectStatus };
+async function prospectFor(admin: Admin, row: BriefRow, business: string, site: string | null, ownerId: string | null): Promise<{ id: string; name: string; brief: unknown; researched_at: string | null; status: ProspectStatus; archived_at?: string | null; archive_reason?: string | null; archive_note?: string | null }> {
+  type Found = { id: string; name: string; brief: unknown; researched_at: string | null; status: ProspectStatus; archived_at?: string | null; archive_reason?: string | null; archive_note?: string | null };
   const host = siteHost(site);
   let found: Found | null = null;
-  if (host) found = ((await admin.from("prospects").select("id, name, brief, researched_at, status").ilike("website", `%${host}%`).limit(1).maybeSingle()).data as Found | null) ?? null;
+  if (host) found = ((await admin.from("prospects").select("id, name, brief, researched_at, status, archived_at, archive_reason, archive_note").ilike("website", `%${host}%`).limit(1).maybeSingle()).data as Found | null) ?? null;
   if (!found) {
-    const { data } = await admin.from("prospects").select("id, name, brief, researched_at, status").order("updated_at", { ascending: false }).limit(1000);
+    const { data } = await admin.from("prospects").select("id, name, brief, researched_at, status, archived_at, archive_reason, archive_note").order("updated_at", { ascending: false }).limit(1000);
     const k = nameKey(business);
     found = ((data ?? []) as Found[]).find((p) => k.length >= 4 && nameKey(p.name) === k) ?? null;
   }
-  if (row.prospect_id && !found) found = ((await admin.from("prospects").select("id, name, brief, researched_at, status").eq("id", row.prospect_id).maybeSingle()).data as Found | null) ?? null;
+  if (row.prospect_id && !found) found = ((await admin.from("prospects").select("id, name, brief, researched_at, status, archived_at, archive_reason, archive_note").eq("id", row.prospect_id).maybeSingle()).data as Found | null) ?? null;
   if (found) {
+    if (found.archived_at) return found;
     const next = forwardStatus(found.status, "call_booked");
     if (next !== found.status) await admin.from("prospects").update({ status: next, updated_at: new Date().toISOString() }).eq("id", found.id);
     return { ...found, status: next };
@@ -150,7 +151,7 @@ async function prospectFor(admin: Admin, row: BriefRow, business: string, site: 
   const { data, error } = await admin
     .from("prospects")
     .insert({ name: business.slice(0, 160), website: cleanSite(site), status: "call_booked", owner_id: ownerId, created_by: ownerId, source: `calendar: ${row.title.slice(0, 120)}`, contacts: guest ? [{ name: guest.name ?? guest.email, role: "booked the call", where: guest.email }] : [] })
-    .select("id, name, brief, researched_at, status")
+    .select("id, name, brief, researched_at, status, archived_at, archive_reason, archive_note")
     .single();
   if (error || !data) throw new Error(error?.message ?? "The prospect couldn't be saved.");
   return data as { id: string; name: string; brief: unknown; researched_at: string | null; status: ProspectStatus };
@@ -257,7 +258,10 @@ Only what the material supports; never invent a number, review or fact. Kaizen's
     prompt: `<the_call title="${row.title.replace(/"/g, "'")}" when="${row.starts_at}">\nGuests: ${row.attendees.map((a) => `${a.name ?? ""} <${a.email}>`).join(", ") || "unknown"}\n</the_call>\n\n<booking_and_description>\n${plainDescription(row.description).slice(0, 6000) || "(no description)"}\n</booking_and_description>\n\n<research>\n${researchText.slice(0, 14_000) || "(not researched)"}\n</research>\n\n<prior_contact>\n${prior.slice(0, 4000)}\n</prior_contact>\n\n<rate_card>\n${rates}\n</rate_card>\n\n<kaizen_clients note="internal proof">\n${proof}\n</kaizen_clients>`,
   });
   const scrub = (v: unknown): unknown => (typeof v === "string" ? scrubPeopleMatters(v) : Array.isArray(v) ? v.map(scrub) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, scrub(x)])) : v);
-  const brief = { ...cleanCallBrief(scrub(raw), { booking, in_motion: inMotion }), business, site };
+  // Booked with a prospect that was archived: the brief still goes out, flagged with why it was archived
+  const { archiveText } = await import("@/lib/sales-core");
+  const archived = prospect.archived_at ? `previously archived ${prospect.archived_at.slice(0, 10)}: ${archiveText(prospect.archive_reason, prospect.archive_note)}` : null;
+  const brief = { ...cleanCallBrief(scrub(raw), { booking, in_motion: inMotion, archived }), business, site };
   const nowIso = new Date().toISOString();
   await admin.from("sales_call_briefs").update({ brief, status: "ready", prospect_id: prospect.id, made_at: nowIso, error: null, updated_at: nowIso }).eq("id", row.id);
   await admin.from("prospect_notes").insert({ prospect_id: prospect.id, kind: "note", title: `Call brief: ${row.title.slice(0, 100)}`, body: { brief_id: row.id, starts_at: row.starts_at, text: callBriefText(business, whenLabel(row.starts_at, now), brief) }, created_by: row.owner_id });
@@ -299,7 +303,7 @@ export async function runSalesBriefs(admin: Admin, opts: { now?: Date; max?: num
     if (!cur) {
       const { error } = await admin.from("sales_call_briefs").insert({ ...row, status: "pending" });
       if (!error) added++;
-    } else if (cur.event_hash !== row.event_hash || cur.status === "cancelled") {
+    } else if (cur.status !== "stopped" && (cur.event_hash !== row.event_hash || cur.status === "cancelled")) {
       // Changed (time, guests, answers) or back after a cancel: briefed again; the item stays until the new one's ready
       await admin.from("sales_call_briefs").update({ ...row, status: "pending", notified_at: cur.owner_id === owner ? cur.notified_at : null, updated_at: new Date().toISOString() }).eq("id", cur.id);
       changed++;

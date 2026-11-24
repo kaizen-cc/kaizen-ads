@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { requireStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { cleanBrief, cleanPitch, cleanReview, seesSalesPages } from "@/lib/sales-core";
+import { archiveText, cleanBrief, cleanPitch, cleanReview, seesSalesPages } from "@/lib/sales-core";
 import { getProspect } from "@/lib/sales-agent";
 import { ProspectView, type ProspectNote } from "./prospect-view";
 
@@ -33,7 +33,7 @@ export default async function ProspectPage({ params }: PageProps<"/sales/[id]">)
   return (
     <Suspense>
       <ProspectView
-        p={{ id: p.id, name: p.name, website: p.website, industry: p.industry, location: p.location, status: p.status, fit: p.fit_score, fitReason: p.fit_reason, ownerId: p.owner_id, notes: p.notes, lostReason: p.lost_reason, researchedAt: p.researched_at, source: p.source }}
+        p={{ id: p.id, name: p.name, website: p.website, industry: p.industry, location: p.location, status: p.status, fit: p.fit_score, fitReason: p.fit_reason, ownerId: p.owner_id, notes: p.notes, lostReason: p.lost_reason, researchedAt: p.researched_at, source: p.source, archived: p.archived_at ? { at: p.archived_at, by: p.archived_by ? (people ?? []).find((x) => x.id === p.archived_by)?.full_name ?? null : null, label: archiveText(p.archive_reason, p.archive_note) } : null }}
         brief={p.brief ? cleanBrief(p.brief) : null}
         notes={list}
         people={(people ?? []).map((x) => ({ id: x.id as string, name: x.full_name as string }))}

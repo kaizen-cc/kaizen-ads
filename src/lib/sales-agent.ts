@@ -32,9 +32,13 @@ export type Prospect = {
   researched_at: string | null;
   created_at: string;
   updated_at: string;
+  archived_at: string | null;
+  archived_by: string | null;
+  archive_reason: string | null;
+  archive_note: string | null;
 };
 
-export const PROSPECT_COLS = "id, name, website, industry, location, contacts, fit_score, fit_reason, brief, status, owner_id, source, notes, lost_reason, client_id, won_at, researched_at, created_at, updated_at";
+export const PROSPECT_COLS = "id, name, website, industry, location, contacts, fit_score, fit_reason, brief, status, owner_id, source, notes, lost_reason, client_id, won_at, researched_at, created_at, updated_at, archived_at, archived_by, archive_reason, archive_note";
 
 const RESEARCH_RULES = `Public sources only: the business's own website, Google (Business Profile, reviews), Yelp and similar review sites, their public social profiles (Instagram, Facebook, TikTok, YouTube), the Meta Ad Library (facebook.com/ads/library, search the page name: active ads and how long they've run) and the Google Ads Transparency Center (adstransparency.google.com). LinkedIn: only what a public web search shows (a company page or a person's title in a search result); never log in, browse or scrape LinkedIn. Never guess: when you can't see something (an ad library page that won't load), say "not visible" and why.`;
 
@@ -448,7 +452,7 @@ export async function linkWonProspect(db: SupabaseClient, admin: Admin, p: Prosp
  * move its documents to the client's Headquarters (moving them waits for their yes on the folder).
  */
 export async function linkEnrolledProspects(admin: Admin) {
-  const { data: won } = await admin.from("prospects").select(PROSPECT_COLS).eq("status", "won").is("client_id", null).limit(50);
+  const { data: won } = await admin.from("prospects").select(PROSPECT_COLS).eq("status", "won").is("client_id", null).is("archived_at", null).limit(50);
   let linked = 0;
   for (const p of (won ?? []) as Prospect[]) {
     const r = await linkWonProspect(admin, admin, p).catch(() => null);
@@ -501,4 +505,42 @@ export async function prospectContextText(db: SupabaseClient, id: string): Promi
     parts.push(`<earlier_conversations_about_them>\n${[...sums, ...said].join("\n")}\n</earlier_conversations_about_them>`);
   }
   return { name: p.name, text: parts.join("\n\n") };
+}
+
+/**
+ * Archives a prospect (never deleted): who, when and why are kept, it leaves the pipeline, and its upcoming call briefs
+ * stop (no brief, no Needs me item, no bell; notices already sent are cleared). Its stage stays, so Unarchive puts it
+ * back where it was. Through the person's own session (row-level security: execs and leads).
+ */
+export async function archiveProspect(db: SupabaseClient, admin: Admin, me: { id: string }, id: string, reason: unknown, note?: unknown): Promise<{ ok: true; prospect: Prospect; stopped: number } | { ok: false; error: string }> {
+  const { archiveReasonFrom } = await import("@/lib/sales-core");
+  const why = archiveReasonFrom(reason);
+  if (!why) return { ok: false, error: "Why is it being archived? Not a fit, no budget, went with someone else, no response, duplicate, not a real business, or other (with a note)." };
+  const text = String(note ?? "").trim().slice(0, 600) || (why === "other" && typeof reason === "string" && reason.trim() !== "other" ? reason.trim().slice(0, 600) : "");
+  if (why === "other" && !text) return { ok: false, error: "Other: say why in a few words." };
+  const now = new Date().toISOString();
+  const { data, error } = await db.from("prospects").update({ archived_at: now, archived_by: me.id, archive_reason: why, archive_note: text || null, updated_at: now }).eq("id", id).is("archived_at", null).select(PROSPECT_COLS).maybeSingle();
+  if (error) return { ok: false, error: error.message };
+  if (!data) return { ok: false, error: "That prospect isn't there, or it's already archived." };
+  // Its briefs for calls still to come stop, and anything already delivered about them is cleared
+  const { data: briefs } = await admin.from("sales_call_briefs").select("id, owner_id").eq("prospect_id", id).in("status", ["pending", "ready", "failed"]).gt("starts_at", now);
+  for (const b of briefs ?? []) {
+    await admin.from("sales_call_briefs").update({ status: "stopped", updated_at: now }).eq("id", b.id);
+    if (b.owner_id) await admin.from("notifications").update({ read_at: now, cleared_at: now }).eq("profile_id", b.owner_id).eq("key", `sales-brief:${b.id}`);
+  }
+  // Debrief prompts for calls already held go too
+  await admin.from("sales_call_briefs").update({ status: "stopped", updated_at: now }).eq("prospect_id", id).eq("status", "done");
+  await db.from("prospect_notes").insert({ prospect_id: id, kind: "note", title: "Archived", body: { reason: why, note: text || null, by: me.id, at: now }, created_by: me.id });
+  return { ok: true, prospect: data as Prospect, stopped: (briefs ?? []).length };
+}
+
+/** Back into the pipeline at the stage it had; briefs for calls still to come pick up again on the next run */
+export async function unarchiveProspect(db: SupabaseClient, admin: Admin, me: { id: string }, id: string): Promise<{ ok: true; prospect: Prospect } | { ok: false; error: string }> {
+  const now = new Date().toISOString();
+  const { data, error } = await db.from("prospects").update({ archived_at: null, archived_by: null, archive_reason: null, archive_note: null, updated_at: now }).eq("id", id).not("archived_at", "is", null).select(PROSPECT_COLS).maybeSingle();
+  if (error) return { ok: false, error: error.message };
+  if (!data) return { ok: false, error: "That prospect isn't archived." };
+  await admin.from("sales_call_briefs").update({ status: "pending", notified_at: null, updated_at: now }).eq("prospect_id", id).eq("status", "stopped").gt("starts_at", now);
+  await db.from("prospect_notes").insert({ prospect_id: id, kind: "note", title: "Unarchived", body: { by: me.id, at: now }, created_by: me.id });
+  return { ok: true, prospect: data as Prospect };
 }
