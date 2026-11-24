@@ -65,6 +65,8 @@ export type CallView = {
   /** Send what's been heard now (and whether there's anything to send), or a typed turn */
   canSend?: boolean;
   onSend?: () => void;
+  /** "Answer now": it seems stuck listening or thinking; the agent answers from what it has */
+  onForce?: () => void;
   onType?: (text: string) => void;
   /** A screenshot or file pasted into "Type it instead": sent at once with what's typed */
   onTypeFiles?: (text: string, files: File[]) => Promise<void>;
@@ -255,6 +257,18 @@ function SendBar({ v, compact }: { v: CallView; compact: boolean }) {
       <SendIcon size={14} />
     </button>
   );
+  // Stuck: listening with nothing to send, or thinking for a while; the agent answers from what it has
+  const stuck = Boolean(v.onForce) && !v.muted && ((v.phase === "listening" && !v.canSend) || (v.phase === "thinking" && (v.stall === "slow" || v.stall === "long")));
+  const forceButton = stuck ? (
+    <button
+      type="button"
+      onClick={v.onForce}
+      title="Make it answer now, from what it has"
+      className={`inline-flex min-h-11 shrink-0 items-center rounded-full border border-line px-3.5 text-[13px] text-fg transition-colors hover:bg-surface-2 active:scale-[0.97] ${compact ? "md:min-h-9 md:px-3" : "md:min-h-9"}`}
+    >
+      Answer now
+    </button>
+  ) : null;
   if (compact)
     return (
       <div className="flex items-center gap-1 rounded-[16px] border border-line bg-surface-2/40 p-1 pl-3">
@@ -264,6 +278,7 @@ function SendBar({ v, compact }: { v: CallView; compact: boolean }) {
         <button type="button" onClick={() => setTyping(true)} aria-label="Type instead" title="Type instead" className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-muted transition-colors hover:bg-surface-2 hover:text-fg">
           <KeyboardIcon size={16} />
         </button>
+        {forceButton}
         {sendButton}
       </div>
     );
@@ -277,7 +292,10 @@ function SendBar({ v, compact }: { v: CallView; compact: boolean }) {
           <KeyboardIcon size={17} />
           Type instead
         </button>
-        {sendButton}
+        <span className="flex items-center gap-1.5">
+          {forceButton}
+          {sendButton}
+        </span>
       </div>
     </div>
   );

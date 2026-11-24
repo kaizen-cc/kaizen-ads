@@ -86,6 +86,19 @@ export const hasFloor = (s: TurnState) => !s.muted && (s.phase === "listening" |
 /** Whether Send has something to send */
 export const canSend = (s: TurnState) => s.phase === "listening" && Boolean(s.heard.trim() || s.carry.trim());
 
+/**
+ * "Answer now" when the call seems stuck (listening and nothing caught, or thinking too long): the words the agent gets
+ * instead, so it answers from what it has. With words heard, Send is used instead (null).
+ */
+export function forcedTurn(s: Pick<TurnState, "phase" | "heard" | "carry" | "last">): string | null {
+  if (s.phase === "connecting" || s.phase === "speaking") return null;
+  if (canSend(s as TurnState)) return null;
+  const last = s.last?.said?.replace(/\s+/g, " ").trim().slice(0, 400) ?? "";
+  return last
+    ? `[Answer now] I'm waiting on you. Answer what I last said ("${last}") now, or ask me one short question if you didn't catch it.`
+    : "[Answer now] I'm waiting on you. Answer from what you've heard so far, or ask me one short question.";
+}
+
 /** Whether an answer's event or sentence belongs to the turn being answered (null: the greeting, always played) */
 export const isCurrent = (s: TurnState, turn: number | null) => turn === null || turn === s.asking;
 

@@ -985,6 +985,7 @@ export function AgentCallProvider({ assistantColor = null, assistantName: givenN
         onHangUp: () => void hangUp(),
         canSend,
         onSend: () => call.current?.sendNow(),
+        onForce: () => call.current?.forceAnswer(),
         onType: (text) => call.current?.sendText(text),
         onTypeFiles: (text, files) => chatSendFiles(text, files),
         stall,

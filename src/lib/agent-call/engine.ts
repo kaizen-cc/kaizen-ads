@@ -1,5 +1,5 @@
 import { downsample, createTurnDetector, createTurnWatchdog, rms, splitSpeakable, toPcm16, type CallCard, type CallEvent, type CallProgress, type LearnedItem, type StallState, type UploadAsk } from "./core";
-import { canSend, createTranscript, hasFloor, initialTurns, isCurrent, shouldCheckpoint, shownPhase, stepTurns, wordsStalled, type TurnEffect, type TurnInput, type TurnState } from "./turns";
+import { canSend, createTranscript, hasFloor, initialTurns, isCurrent, shouldCheckpoint, shownPhase, stepTurns, wordsStalled, type TurnEffect, type TurnInput, type TurnState, forcedTurn } from "./turns";
 import type { CallContext } from "./call-context";
 import { initialAway, stepAway, type AwayEffect, type AwayEvent, type AwayState } from "./away";
 import { AUDIO_PART_SECONDS } from "@/lib/assistant/core";
@@ -920,6 +920,17 @@ export class Call {
   /** Send what's been heard so far, now (the Send button, or Enter on a computer) */
   sendNow() {
     this.dispatch({ t: "send" });
+  }
+
+  /**
+   * "Answer now": it seems stuck (listening and nothing caught, or thinking too long). Words heard go as with Send;
+   * otherwise whatever it's doing is stopped and it's asked to answer what was last said, or ask one short question.
+   */
+  forceAnswer() {
+    if (this.closed) return;
+    const nudge = forcedTurn(this.st);
+    if (nudge === null) return this.sendNow();
+    this.dispatch({ t: "inject", text: nudge, shown: "Answer now", frame: null });
   }
 
   /** A typed turn (loud places, or the transcriber missed it): sent as if said */
