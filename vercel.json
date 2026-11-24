@@ -51,6 +51,10 @@
       "schedule": "37 * * * *"
     },
     {
+      "path": "/api/cron/context?step=routines",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/context?step=sites",
       "schedule": "52 * * * *"
     },

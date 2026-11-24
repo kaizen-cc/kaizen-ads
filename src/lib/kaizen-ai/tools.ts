@@ -1357,6 +1357,10 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
   const { doneCheckTools } = await import("./done-check-tools");
   for (const t of doneCheckTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
   for (const t of doneCheckTools(ctx)) CHANNEL_EXTRA.add(t.name);
+  // Routines (execs and leads): their recaps, run one now, turn one on or change its times
+  const { routineTools } = await import("./routine-tools");
+  for (const t of routineTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
+  for (const t of routineTools(ctx)) CHANNEL_EXTRA.add(t.name);
   // Their own Asana: next tasks, and any change written straight back (src/lib/asana-live.ts)
   const { asanaLiveTools, ASANA_LIVE_TOOLS } = await import("./asana-live-tools");
   for (const t of asanaLiveTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);

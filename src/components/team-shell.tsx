@@ -37,6 +37,7 @@ const I = {
   lab: "M9 3h6M10 3v6L4.5 18.5A1.7 1.7 0 0 0 6 21h12a1.7 1.7 0 0 0 1.5-2.5L14 9V3M7 15h10",
   // A target (prospects to win)
   sales: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM12 12h.01",
+  routines: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 2",
 };
 
 // Two groups: the day-to-day work, and where ideas come from. Settings sits at the bottom, by your name.
@@ -56,6 +57,8 @@ const GROUPS: { title: string; items: Item[] }[] = [
       { href: "/ai", label: "Kaizen AI", icon: I.ai },
       // New business (internal for now): the prospects the Sales agent researches, for the executives and the leads
       { href: "/sales", label: "Sales", icon: I.sales, tiers: ["exec", "lead"] },
+      // Your routines: recaps, sweeps and the nightly agent at your own times (execs and leads)
+      { href: "/routines", label: "Routines", icon: I.routines, tiers: ["exec", "lead"] },
     ],
   },
   {
@@ -266,7 +269,7 @@ export function TeamShell({ name, fullName, meId, roles, tier, creative = null, 
   // The email and social teams get only Overview, Clients, KPIs, Reports and Kaizen AI (Feedback and Settings sit apart);
   // the email team also gets Boards (their Email Board)
   // The makers and customer success have no Ideas (their Overview is their plate): gone from the sidebar and the tab bar
-  const groups = GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => can(i) && (!channel || channelNavOk(i.href, role) || i.href === "/sales") && !(noIdeas(role) && isIdeasPath(i.href)) && !(isSupportRole(role) && SUPPORT_HIDDEN.includes(i.href))) })).filter((g) => g.items.length);
+  const groups = GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => can(i) && (!channel || channelNavOk(i.href, role) || i.href === "/sales" || i.href === "/routines") && !(noIdeas(role) && isIdeasPath(i.href)) && !(isSupportRole(role) && SUPPORT_HIDDEN.includes(i.href))) })).filter((g) => g.items.length);
   const settings = can(SETTINGS) ? SETTINGS : null;
   // The tab bar on phones: home (the Overview), the board, clients and KPIs (the creative team: their own
   // KPIs, or Ideas); everything else is in the menu

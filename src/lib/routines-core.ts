@@ -1,0 +1,77 @@
+// Per-person routines (owner, Nov 24 2026): what an exec's Claude scheduled runs did, done by Kaizen OS for anyone who
+// turns them on (execs and leads), at their own times. The pure rules: the kinds, their defaults, and when a run is due.
+// Tested in tests/routines.test.ts. Times are New York.
+
+export type RoutineKind = "debrief" | "morning" | "afternoon" | "eod" | "delegation" | "nightly" | "clean_sweep" | "week_recap" | "week_ahead" | "call_prep";
+export type Days = "weekdays" | "daily" | "fri" | "sun";
+
+export const ROUTINES: { kind: RoutineKind; label: string; about: string; times: string[]; days: Days; multi?: boolean }[] = [
+  { kind: "clean_sweep", label: "Morning clean sweep", about: "Closes what you already did (only on proof), merges duplicates, and leaves only what you still have to do today", times: ["07:40"], days: "daily" },
+  { kind: "morning", label: "Morning recap", about: "Overnight calls and messages, what's still open from yesterday, today's meetings with prep, and your top 3", times: ["08:45"], days: "weekdays" },
+  { kind: "debrief", label: "Call debrief sweep", about: "Every call from Gemini and Fireflies: the team's commitments, sales calls into Sales, and your own action items", times: ["10:07", "12:07", "14:07", "16:07", "20:07"], days: "weekdays", multi: true },
+  { kind: "afternoon", label: "Afternoon meeting recap", about: "Every meeting so far today: decisions, numbers, risks and who owes what; what's still to come", times: ["15:00"], days: "weekdays" },
+  { kind: "eod", label: "End-of-day recap", about: "Meetings and messages since 3pm, what's still open tonight, and tomorrow's prep", times: ["18:00"], days: "weekdays" },
+  { kind: "delegation", label: "Delegation tracker", about: "Every ask you made of a teammate in Slack today becomes an item they own", times: ["19:25"], days: "daily" },
+  { kind: "nightly", label: "Nightly execution agent", about: "Works your open items overnight: drafts, briefs and staged tasks for you to review and send (never sends)", times: ["19:48"], days: "daily" },
+  { kind: "week_recap", label: "Friday week recap", about: "Every open action this week ranked revenue-first, what you're waiting on, the week in numbers and risks", times: ["16:45"], days: "fri" },
+  { kind: "week_ahead", label: "Sunday week-ahead prep", about: "Monday's meetings prepped, the week ahead, and what to do before Monday 9am", times: ["17:55"], days: "sun" },
+  { kind: "call_prep", label: "Call prep", about: "A brief before every client and sales call on your calendar, and a check the afternoon before that every integration is connected", times: [], days: "daily" },
+];
+export const routineOf = (kind: string) => ROUTINES.find((r) => r.kind === kind) ?? null;
+export const ROUTINE_KINDS = ROUTINES.map((r) => r.kind) as readonly RoutineKind[];
+
+/** The New York date and minutes past midnight for an instant, and its weekday (0 Sunday) */
+export function nyClock(now: Date): { date: string; minutes: number; weekday: number } {
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", weekday: "short", hourCycle: "h23" }).formatToParts(now).map((x) => [x.type, x.value]));
+  const weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(String(p.weekday));
+  return { date: `${p.year}-${p.month}-${p.day}`, minutes: Number(p.hour) * 60 + Number(p.minute), weekday };
+}
+
+const toMinutes = (t: string) => {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(t.trim());
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+};
+export const validTime = (t: string) => {
+  const m = toMinutes(t);
+  return m != null && m >= 0 && m < 24 * 60;
+};
+
+export function runsOn(days: Days, weekday: number): boolean {
+  if (days === "daily") return true;
+  if (days === "fri") return weekday === 5;
+  if (days === "sun") return weekday === 0;
+  return weekday >= 1 && weekday <= 5;
+}
+
+/** How late a run may still start after its time (a missed cron catches up, a day-old one doesn't) */
+export const CATCH_UP_MIN = 150;
+
+/**
+ * The runs due now for one routine: each of its times today that has passed within the catch-up window, keyed so a run
+ * happens once (profile · kind · date · time). The caller skips keys that already ran.
+ */
+export function dueRuns(r: { profileId: string; kind: string; times: readonly string[]; days: Days; enabled: boolean }, now: Date): string[] {
+  if (!r.enabled) return [];
+  const c = nyClock(now);
+  if (!runsOn(r.days, c.weekday)) return [];
+  const out: string[] = [];
+  for (const t of r.times) {
+    const m = toMinutes(t);
+    if (m == null) continue;
+    if (c.minutes >= m && c.minutes - m <= CATCH_UP_MIN) out.push(runKey(r.profileId, r.kind, c.date, t));
+  }
+  // Only the latest slot that's due (two missed sweeps catch up as one)
+  return out.slice(-1);
+}
+
+export const runKey = (profileId: string, kind: string, date: string, slot: string) => `${profileId}|${kind}|${date}|${slot}`;
+
+/** Who may turn routines on: execs and leads (line heads included) */
+export const mayUseRoutines = (me: { isExec?: boolean | null; isLead?: boolean | null; role?: string | null }) => Boolean(me.isExec || me.isLead || String(me.role ?? "").startsWith("head_of_"));
+
+export type RecapLine = { text: string; href?: string | null; tag?: "certain" | "likely" | "guessing" | null };
+export type RecapSection = { title: string; lines: RecapLine[] };
+export type RoutineReport = { headline: string; sections: RecapSection[]; failedSources?: string[]; urgent?: boolean };
+
+/** A report's first sentence, for the bell and the push (what the person must do first) */
+export const pushLine = (r: RoutineReport) => r.headline.split(/(?<=[.!?])\s/)[0].slice(0, 200);
