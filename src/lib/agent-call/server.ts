@@ -9,6 +9,7 @@ import { TOOLS_RULE, agentTools } from "./agent-tools";
 import { BACKGROUND_CHATTER_RULE, CALL_LIMIT_SECONDS, DISTRESS_RULE, END_CALL_RULE, LEARNINGS_SCHEMA, endMarkerFilter, endReasonFor, stripEndMarker, firstNameOf, parseLearnings, parseTopic, pendingItems, pendingOf, type CallEvent, type EndReason, type LearnedItem, type Learning, type ResumeMode } from "./core";
 import { agentModality, keptLine, modeSince, parseModeLog, stillOpen, streamShaping, talkModeOf, type ModeStep, type TalkMode } from "./modality";
 import { callHistory, longTurnText } from "./history";
+import { wellFormed } from "./well-formed";
 import { focusFor } from "./role-focus";
 import { callConnectors, noConnectors, type CallConnectors } from "./call-connectors";
 import type { CallContext } from "./call-context";
@@ -468,10 +469,11 @@ export async function streamAnswer(input: {
       model: MODEL_IDS[model],
       // Spoken answers are short: room for a little thinking and a few sentences, never a lecture
       max_tokens: 2500,
-      system: system(),
+      // Half an emoji left by a cut anywhere in the context makes the API refuse the request: made whole first
+      system: wellFormed(system()),
       thinking: { type: "adaptive" as const },
       output_config: { effort },
-      messages: msgs as Anthropic.MessageParam[],
+      messages: wellFormed(msgs) as Anthropic.MessageParam[],
     };
     // Cut at the length guard: the round ends with what was said
     const ended = (stream: { currentMessage?: unknown }): Reply => ({
