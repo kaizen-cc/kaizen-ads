@@ -46,6 +46,13 @@ export function StepinsHero({ cards, compact = false, people, canRefresh = false
   const fires = open.filter((c) => c.fire).length;
   const mine = open.filter((c) => !c.handler).length;
   const refresh = useAct();
+  // On the Overview it folds to one slim row (?stepins=1 opens it, so back folds it again). It opens on its own only
+  // for a fire nobody is handling; closing that one is ?stepins=0. The /stepins page is always open.
+  const param = useParam("stepins");
+  const autoOpen = open.some((c) => c.fire && !c.handler);
+  const expanded = !compact || param === "1" || (autoOpen && param !== "0");
+  const toggle = () => (expanded ? (autoOpen ? pushParams({ stepins: "0" }) : closeParams("stepins")) : pushParams({ stepins: "1" }));
+  if (!expanded) return <SlimRow cards={open} flagged={flagged.length} onOpen={toggle} story={story} people={people} />;
   return (
     <section className="relative isolate grid min-w-0 grid-cols-[minmax(0,1fr)] gap-5 overflow-hidden rounded-[26px] border border-ink/[0.08] bg-deep p-4 shadow-[0_30px_70px_-40px_rgba(0,0,0,0.9)] md:p-7" aria-label="This week's step-ins">
       <span aria-hidden className="pointer-events-none absolute -right-20 -top-28 -z-10 h-[320px] w-[320px] rounded-full blur-[100px]" style={{ background: GLOW }} />
@@ -69,6 +76,11 @@ export function StepinsHero({ cards, compact = false, people, canRefresh = false
           <p className="text-[13.5px] text-ink/60">{open.length ? `${mine ? `${mine} with nobody handling yet. ` : "Each one has someone on it. "}Everything else is with the leads.` : "Your leads are handling every account in your lines."}</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {compact && (
+            <button type="button" onClick={toggle} aria-expanded="true" className="inline-flex h-11 items-center gap-2 rounded-full border border-ink/15 px-4 text-[14px] text-fg hover:border-ink/30">
+              Fold <span aria-hidden className="-rotate-90">→</span>
+            </button>
+          )}
           {open.length > 0 && (
             <button type="button" onClick={() => pushParams({ story: "stepins" })} className="inline-flex h-11 items-center gap-2 rounded-full px-5 text-[14px] font-semibold text-deep transition-opacity hover:opacity-90" style={{ background: VIOLET }}>
               ▶ Monday story
@@ -91,6 +103,55 @@ export function StepinsHero({ cards, compact = false, people, canRefresh = false
       {open.length > 0 && <Deck cards={compact ? open.slice(0, 8) : open} people={people} />}
       <FlaggedList rows={flagged} people={people} />
       {story && open.length > 0 && <Story cards={open} people={people} />}
+    </section>
+  );
+}
+
+/** The folded section: one slim violet row with the top account, its most urgent pill, and the two small buttons */
+function SlimRow({ cards, flagged, onOpen, story, people }: { cards: Stepin[]; flagged: number; onOpen: () => void; story: boolean; people: Person[] }) {
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  const top = cards[0];
+  const overdue = (c: Stepin) => Boolean(c.handler && c.dueOn && c.dueOn < today);
+  const pill = !top
+    ? { t: "All clear", c: "bg-ok-soft text-ok" }
+    : top.fire && !top.handler
+      ? { t: "Fire · nobody on it", c: "bg-bad-soft text-bad" }
+      : cards.some(overdue)
+        ? { t: "Overdue", c: "bg-bad-soft text-bad" }
+        : cards.some((c) => !c.handler)
+          ? { t: `${cards.filter((c) => !c.handler).length} nobody handling`, c: "bg-warn-soft text-warn" }
+          : { t: cards.length === 1 && top.handler ? `${top.handler.label.split(" ")[0]} handling` : "All handled", c: "bg-ok-soft text-ok" };
+  const what = top
+    ? `${top.card.client.name} (${top.handler ? `${top.handler.label.split(" ")[0]} handling${top.dueOn ? `, ${overdue(top) ? "overdue since" : "due"} ${day(`${top.dueOn}T12:00:00Z`)}` : ""}` : (KIND_LABEL[top.reasons[0]?.kind ?? ""] ?? "needs an exec").toLowerCase()})${cards.length > 1 ? ` + ${cards.length - 1} more` : ""}`
+    : "Nothing needs an exec this week";
+  return (
+    <section className="relative isolate grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3 overflow-hidden rounded-[22px] border border-ink/[0.08] bg-deep px-4 py-3.5 md:flex md:items-center md:gap-4 md:px-5" aria-label="This week's step-ins">
+      <span aria-hidden className="pointer-events-none absolute -right-16 -top-20 -z-10 h-[180px] w-[180px] rounded-full blur-[70px]" style={{ background: GLOW }} />
+      <span aria-hidden className="pointer-events-none absolute inset-x-6 top-0 -z-10 h-px opacity-70" style={{ background: `linear-gradient(90deg, transparent, ${VIOLET}, transparent)` }} />
+      <button type="button" onClick={onOpen} aria-expanded="false" className="group flex min-h-11 min-w-0 flex-1 items-center gap-3 text-left">
+        <span className="grid min-w-0 flex-1 gap-1">
+          <span className="text-[10.5px] font-semibold uppercase tracking-[0.2em]" style={{ color: VIOLET }}>
+            This week&apos;s step-ins · {cards.length} account{cards.length === 1 ? "" : "s"}
+            {flagged ? ` · ${flagged} flagged` : ""}
+          </span>
+          <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="line-clamp-2 min-w-0 text-[14px] leading-snug text-fg">{what}</span>
+            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10.5px] font-medium ${pill.c}`}>{pill.t}</span>
+          </span>
+        </span>
+        <span aria-hidden className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-ink/10 text-ink/60 transition group-hover:text-fg">→</span>
+      </button>
+      <span className="flex shrink-0 gap-2">
+        {cards.length > 0 && (
+          <button type="button" onClick={() => pushParams({ story: "stepins" })} className="inline-flex min-h-11 items-center rounded-full px-3.5 text-[12.5px] font-semibold text-deep hover:opacity-90 md:min-h-9" style={{ background: VIOLET }}>
+            ▶ Monday story
+          </button>
+        )}
+        <Link href="/stepins" className="inline-flex min-h-11 items-center rounded-full border border-ink/15 px-3.5 text-[12.5px] text-fg hover:border-ink/30 md:min-h-9">
+          All step-ins
+        </Link>
+      </span>
+      {story && cards.length > 0 && <Story cards={cards} people={people} />}
     </section>
   );
 }
