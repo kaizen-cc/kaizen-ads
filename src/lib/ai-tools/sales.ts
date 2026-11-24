@@ -133,7 +133,7 @@ const details: AiTool = {
 
 const save: AiTool = {
   name: "save_prospect",
-  description: "Executives and leads: adds a prospect by hand (name, website, location, industry, notes) or changes one (prospect: its name, site or id): stage (new, researched, contacted, talking, proposal, won, lost; lost_reason with lost), owner (a teammate's name, or \"me\"), notes, details. For won, prospect_won links the client too.",
+  description: "Executives and leads: adds a prospect by hand (name, website, location, industry, notes) or changes one (prospect: its name, site or id): stage (new, researched, contacted, call_booked, talking, proposal, won, lost; lost_reason with lost), owner (a teammate's name, or \"me\"), notes, details. For won, prospect_won links the client too.",
   input_schema: {
     type: "object",
     properties: {
@@ -142,7 +142,7 @@ const save: AiTool = {
       website: { type: "string" },
       location: { type: "string" },
       industry: { type: "string" },
-      stage: { type: "string", enum: ["new", "researched", "contacted", "talking", "proposal", "won", "lost"] },
+      stage: { type: "string", enum: ["new", "researched", "contacted", "call_booked", "talking", "proposal", "won", "lost"] },
       owner: { type: "string" },
       notes: { type: "string" },
       lost_reason: { type: "string" },
@@ -274,4 +274,70 @@ const won: AiTool = {
   },
 };
 
-export const tools: AiTool[] = [webResearch, research, find, mine, details, save, pitch, review, won];
+// ─── Sales call briefs (src/lib/sales-briefs.ts) ───────────────────────────
+
+const myBriefs: AiTool = {
+  name: "my_sales_briefs",
+  description: "The sales calls this person runs in the next few days (from their Google Calendar: meetings with people outside Kaizen who aren't clients) and each one's brief from the Sales agent: who they are, what they said they want, fit, the Kaizen services that match, likely objections, the questions to ask and the next step. Execs and leads can ask for everyone's (all: true). Briefs are written 18 hours before each call.",
+  input_schema: { type: "object", properties: { all: { type: "boolean" } }, additionalProperties: false },
+  run: async (user: Staff, input) => {
+    const db = await createClient();
+    let q = db.from("sales_call_briefs").select("id, title, starts_at, status, brief, owner_id, prospect_id").in("status", ["pending", "ready", "failed"]).gt("starts_at", new Date().toISOString()).order("starts_at").limit(20);
+    if (!(input.all === true && worksSales(user))) q = q.eq("owner_id", user.id);
+    const { data, error } = await q;
+    if (error) return { ok: false, error: error.message };
+    const { callBriefText, cleanCallBrief, whenLabel } = await import("@/lib/sales-briefs-core");
+    return {
+      ok: true,
+      calls: (data ?? []).map((r) => {
+        const b = r.brief as (Parameters<typeof cleanCallBrief>[0] & { business?: string }) | null;
+        const business = (b as { business?: string } | null)?.business ?? r.title;
+        return { business, title: r.title, when: whenLabel(r.starts_at as string), status: r.status === "ready" ? "brief ready" : r.status === "failed" ? "brief failed" : "brief comes 18h before", brief: b ? callBriefText(business, whenLabel(r.starts_at as string), cleanCallBrief(b, { booking: (b as { booking?: { q: string; a: string }[] }).booking })) : null, page: `/sales/briefs/${r.id}` };
+      }),
+    };
+  },
+};
+
+const saveToBrief: AiTool = {
+  name: "save_to_brief",
+  description: "Executives and leads: saves what came out of the conversation onto the prospect's sales call brief (its latest one) so it's there before and after the call: section pitch_ideas (angles and talking points), discovery_questions, watch_outs, or proof; or findings (new facts found, saved on the prospect as a note). lines: each one short. With no call booked, everything is saved on the prospect as a note.",
+  input_schema: { type: "object", properties: { prospect: { type: "string" }, section: { type: "string", enum: ["pitch_ideas", "discovery_questions", "watch_outs", "proof", "findings"] }, lines: { type: "array", items: { type: "string" } } }, required: ["prospect", "section", "lines"], additionalProperties: false },
+  only: worksSales,
+  run: async (user: Staff, input) => {
+    if (!worksSales(user)) return NOT_SALES;
+    const v = viewing(user);
+    if (v) return v;
+    const p = await prospectFrom(input);
+    if (!p) return { ok: false, error: "No prospect by that name. my_prospects lists them." };
+    const lines = (Array.isArray(input.lines) ? input.lines : []).map((x) => String(x ?? "").trim()).filter(Boolean).slice(0, 12);
+    if (!lines.length) return { ok: false, error: "What should I save?" };
+    const db = await createClient();
+    const { BRIEF_SECTIONS, addToBrief, cleanCallBrief } = await import("@/lib/sales-briefs-core");
+    const section = String(input.section);
+    const { data: b } = await db.from("sales_call_briefs").select("id, brief").eq("prospect_id", p.id).not("brief", "is", null).order("starts_at", { ascending: false }).limit(1).maybeSingle();
+    if (b && (BRIEF_SECTIONS as readonly string[]).includes(section)) {
+      const cur = b.brief as Record<string, unknown>;
+      const next = { ...cur, ...addToBrief(cleanCallBrief(cur, { booking: cur.booking as { q: string; a: string }[] | undefined, in_motion: (cur.in_motion as string | null) ?? null }), section as (typeof BRIEF_SECTIONS)[number], lines) };
+      const { error } = await db.from("sales_call_briefs").update({ brief: next, updated_at: new Date().toISOString() }).eq("id", b.id);
+      if (error) return { ok: false, error: error.message };
+      return { ok: true, saved: lines.length, where: `the call brief (${section.replace(/_/g, " ")})`, page: `/sales/briefs/${b.id}` };
+    }
+    const { error } = await db.from("prospect_notes").insert({ prospect_id: p.id, kind: "note", title: section === "findings" ? "Found in a conversation" : `Saved: ${section.replace(/_/g, " ")}`, body: { lines, section }, created_by: user.id });
+    if (error) return { ok: false, error: error.message };
+    return { ok: true, saved: lines.length, where: "the prospect's notes", page: pageOf(p.id) };
+  },
+};
+
+const scanBriefs: AiTool = {
+  name: "refresh_sales_briefs",
+  description: "Executives and leads: reads the team's calendars now for upcoming sales calls (outside Kaizen, not a client) and lists each with who runs it and whether its brief is due; write: true also writes the briefs that are due now (each takes a minute or two). Normally this runs on its own every half hour.",
+  input_schema: { type: "object", properties: { write: { type: "boolean" } }, additionalProperties: false },
+  only: worksSales,
+  run: async (user: Staff, input) => {
+    if (!worksSales(user)) return NOT_SALES;
+    const { runSalesBriefs } = await import("@/lib/sales-briefs");
+    return runSalesBriefs(createAdminClient(), { dryRun: input.write !== true, max: 2, budgetMs: 200_000 });
+  },
+};
+
+export const tools: AiTool[] = [webResearch, research, find, mine, details, save, pitch, review, won, myBriefs, saveToBrief, scanBriefs];

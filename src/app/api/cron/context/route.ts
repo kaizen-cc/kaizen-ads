@@ -136,6 +136,7 @@ function due(step: string | null) {
   if (step === "floating") return true; // every 30 minutes (vercel.json): every person's open items, closed when done or marked in motion elsewhere
   if (step === "routines") return true; // every 5 minutes (vercel.json): each person's routines at their own times (recaps, sweeps, the nightly agent)
   if (step === "done") return hour >= 7 && hour <= 23; // hourly (vercel.json), 7am to 11pm: items on anyone's day closed when Slack, Gmail or call notes show them done
+  if (step === "sales_briefs") return true; // every half hour (vercel.json): upcoming sales calls on the team's calendars, each briefed 18 hours ahead
   if (step === "precall") return weekday !== "Sat" && hour === 15; // hourly (vercel.json), runs at 3pm New York on Sun-Fri: connections checked for the next business day's client calls
   if (step === "stepins") return hour >= 6 && hour <= 19; // every 2 hours (vercel.json): the execs' step-ins, built Monday morning and kept current through the week
   if (step === "dogs") return hour >= 7 && hour <= 18; // twice a day (vercel.json): the daily watchdogs, same-day notices to the account owner and the line's head
@@ -450,6 +451,8 @@ export async function GET(request: Request) {
     }
     if (step === "audits") return Response.json(await (await import("@/lib/auto-audits")).autoAudits(admin));
     // The account watch: billed but idle, neglected or overtouched accounts, spend anomalies, creative behind, unknown people
+    // Sales call briefs: the team's calendars read for upcoming sales calls; each briefed 18 hours ahead
+    if (step === "sales_briefs") return Response.json(await (await import("@/lib/sales-briefs")).runSalesBriefs(admin, { max: 3, budgetMs: 600_000 }));
     if (step === "precall") return Response.json(await (await import("@/lib/integration-health/precall")).runPrecallCheck(admin));
     if (step === "stepins") return Response.json(await (await import("@/lib/stepins/run")).runStepins(admin));
     if (step === "dogs") return Response.json(await (await import("@/lib/watchdogs/run")).runWatchdogs(admin));

@@ -471,3 +471,34 @@ export async function linkEnrolledProspects(admin: Admin) {
   }
   return { linked };
 }
+
+/**
+ * Everything the Sales agent starts a conversation about one prospect with: the prospect and its research, the latest
+ * sales call brief, the saved drafts and call reviews, and this person's earlier Sales conversations about it (their
+ * summaries and last lines), so a later chat (after the call, at the proposal) carries on with the same context.
+ * Read through the person's own session.
+ */
+export async function prospectContextText(db: SupabaseClient, id: string): Promise<{ name: string; text: string } | null> {
+  const p = await getProspect(db, id);
+  if (!p) return null;
+  const [{ data: briefs }, { data: notes }, { data: calls }] = await Promise.all([
+    db.from("sales_call_briefs").select("id, title, starts_at, status, brief").eq("prospect_id", id).order("starts_at", { ascending: false }).limit(2),
+    db.from("prospect_notes").select("kind, title, body, created_at").eq("prospect_id", id).in("kind", ["pitch", "call_review"]).order("created_at", { ascending: false }).limit(4),
+    db.from("ai_role_calls").select("id, started_at, summary").eq("prospect_id", id).eq("role_key", "sales").order("started_at", { ascending: false }).limit(4),
+  ]);
+  const parts = [`${p.name}${p.website ? ` (${p.website})` : ""}${p.industry ? ` · ${p.industry}` : ""}${p.location ? ` · ${p.location}` : ""} · stage: ${p.status}${p.notes ? `\nTeam notes: ${p.notes}` : ""}`];
+  parts.push(p.brief ? briefText(p.name, cleanBrief(p.brief)) : "Not researched yet: research_prospect can do it now.");
+  const { callBriefText, cleanCallBrief, whenLabel } = await import("@/lib/sales-briefs-core");
+  for (const b of (briefs ?? []) as { title: string; starts_at: string; status: string; brief: unknown }[])
+    if (b.brief) parts.push(`<call_brief status="${b.status}">\n${callBriefText(p.name, whenLabel(b.starts_at), cleanCallBrief(b.brief, { booking: (b.brief as { booking?: { q: string; a: string }[] }).booking }))}\n</call_brief>`);
+    else parts.push(`A sales call "${b.title}" on ${b.starts_at.slice(0, 16)} (${b.status}, no brief yet).`);
+  for (const n of notes ?? []) parts.push(`${n.kind === "pitch" ? "Pitch drafts" : "Call review"} (${String(n.created_at).slice(0, 10)}): ${JSON.stringify(n.body).slice(0, 2000)}`);
+  const ids = ((calls ?? []) as { id: string }[]).map((c) => c.id);
+  if (ids.length) {
+    const { data: lines } = await db.from("ai_role_chats").select("call_id, role, content, created_at").in("call_id", ids).order("created_at", { ascending: false }).limit(16);
+    const said = ((lines ?? []) as { role: string; content: string | null }[]).reverse().map((l) => `${l.role === "user" ? "They" : "You"}: ${String(l.content ?? "").replace(/\s+/g, " ").slice(0, 400)}`);
+    const sums = ((calls ?? []) as { started_at: string; summary: unknown }[]).filter((c) => c.summary).map((c) => `${String(c.started_at).slice(0, 10)}: ${typeof c.summary === "string" ? c.summary : JSON.stringify(c.summary)}`.slice(0, 800));
+    parts.push(`<earlier_conversations_about_them>\n${[...sums, ...said].join("\n")}\n</earlier_conversations_about_them>`);
+  }
+  return { name: p.name, text: parts.join("\n\n") };
+}

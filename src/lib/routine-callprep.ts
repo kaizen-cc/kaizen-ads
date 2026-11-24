@@ -56,6 +56,16 @@ export async function prepUpcomingCalls(admin: Admin, me: Me): Promise<number> {
     if (error || !claimed) continue;
     try {
       const client = clientOfEvent({ id: m.id, summary: m.title, start: m.start, attendees: m.external.map((email) => ({ email })) }, matches);
+      // A sales call the Sales agent already briefs (src/lib/sales-briefs.ts): never a second brief or a second bell,
+      // the run just points at that one
+      if (!client) {
+        const { data: sb } = await admin.from("sales_call_briefs").select("id, status, brief").eq("event_id", m.id).in("status", ["pending", "ready"]).limit(1).maybeSingle();
+        if (sb) {
+          const report: RoutineReport = { headline: sb.status === "ready" ? "The Sales agent's brief for this call is ready." : "The Sales agent is writing this call's brief.", sections: [{ title: "Sales call brief", lines: [{ text: "Open the brief", href: `/sales/briefs/${sb.id}`, tag: null }] }] };
+          await admin.from("routine_runs").update({ status: "done", headline: report.headline, report, finished_at: new Date().toISOString() }).eq("id", claimed.id);
+          continue;
+        }
+      }
       const report = client ? await clientBrief(admin, me, m, client) : await salesBrief(admin, me, m);
       await admin.from("routine_runs").update({ status: "done", headline: report.headline.slice(0, 400), report, finished_at: new Date().toISOString() }).eq("id", claimed.id);
       const at = new Date(m.start).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" });

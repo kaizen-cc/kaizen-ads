@@ -12,7 +12,7 @@ import type { LoopTool } from "./tool-loop";
 // calls when it needs to see their screen, and the screenshot itself when one comes with the turn).
 
 /** The context block for the prompt: the client, report and chat the person called from (empty when there's none) */
-export async function contextBlock(db: SupabaseClient, ctx: CallContext | null | undefined, me: Pick<Staff, "role" | "isExec">): Promise<string> {
+export async function contextBlock(db: SupabaseClient, ctx: CallContext | null | undefined, me: Pick<Staff, "role" | "isExec"> & { isLead?: boolean | null }): Promise<string> {
   if (!ctx) return "";
   const facts: ContextFacts = { screen: ctx.screen };
   const [client, report, thread] = await Promise.all([
@@ -50,6 +50,12 @@ export async function contextBlock(db: SupabaseClient, ctx: CallContext | null |
         .map((m) => ({ who: m.role === "user" ? ("them" as const) : ("ai" as const), text: String(m.content) })),
     };
     if (!facts.client && c?.name) facts.client = { name: c.name };
+  }
+  // A sales prospect, for those who work sales (row-level security checks again): everything the Sales agent needs
+  if (ctx.prospectId && (me.isExec || me.isLead)) {
+    const { prospectContextText } = await import("@/lib/sales-agent");
+    const p = await prospectContextText(db, ctx.prospectId).catch(() => null);
+    if (p) facts.prospect = p;
   }
   return contextPrompt(facts);
 }

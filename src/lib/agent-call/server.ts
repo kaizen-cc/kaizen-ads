@@ -258,6 +258,10 @@ export async function turnExtras(input: TurnInput, text: string, tag = "") {
     input.frame ? t.time(`${tag}frame`, loadFrame(input.admin, input.me, input.call.id, input.frame).catch(() => null)) : null,
   ]);
   const where = [where0, team].filter(Boolean).join("\n\n");
+  // A call about a prospect stays attached to it, so later conversations about the same prospect pick up from here
+  const pid = input.context?.prospectId;
+  if (pid && (input.me.isExec || input.me.isLead) && (input.call as { prospect_id?: string | null }).prospect_id !== pid)
+    void Promise.resolve(input.admin.from("ai_role_calls").update({ prospect_id: pid }).eq("id", input.call.id).eq("profile_id", input.me.id)).catch(() => undefined);
   return { where, connectors, frame, look: lookTool(input.emit), hint: lookHint(text, Boolean(frame)) };
 }
 

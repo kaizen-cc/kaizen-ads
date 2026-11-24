@@ -18,11 +18,12 @@ export default async function ProspectPage({ params }: PageProps<"/sales/[id]">)
   const db = await createClient();
   const p = await getProspect(db, id);
   if (!p) notFound();
-  const [{ data: notes }, { data: people }, { data: docs }, { data: client }] = await Promise.all([
+  const [{ data: notes }, { data: people }, { data: docs }, { data: client }, { data: calls }] = await Promise.all([
     db.from("prospect_notes").select("id, kind, title, body, created_at, created_by").eq("prospect_id", p.id).in("kind", ["pitch", "call_review"]).order("created_at", { ascending: false }).limit(30),
     db.from("profiles").select("id, full_name").eq("is_active", true).or("is_exec.eq.true,is_lead.eq.true").order("full_name"),
     db.from("kaizen_documents").select("id, title, template, google_url, folder_place, created_at").ilike("prospect_name", p.name.replace(/[%_]/g, "")).order("created_at", { ascending: false }).limit(20),
     p.client_id ? db.from("clients").select("name, slug").eq("id", p.client_id).maybeSingle() : Promise.resolve({ data: null }),
+    db.from("sales_call_briefs").select("id, title, starts_at, status").eq("prospect_id", p.id).order("starts_at", { ascending: false }).limit(10),
   ]);
   const list: ProspectNote[] = (notes ?? []).map((n) =>
     n.kind === "pitch"
@@ -38,6 +39,7 @@ export default async function ProspectPage({ params }: PageProps<"/sales/[id]">)
         people={(people ?? []).map((x) => ({ id: x.id as string, name: x.full_name as string }))}
         docs={(docs ?? []).map((d) => ({ id: d.id as string, title: (d.title as string) ?? "Document", link: (d.google_url as string | null) ?? null, folder: (d.folder_place as string | null) ?? null }))}
         client={client ? { name: client.name as string, slug: client.slug as string } : null}
+        calls={(calls ?? []).map((c) => ({ id: c.id as string, title: c.title as string, startsAt: c.starts_at as string, status: c.status as string }))}
         meId={me.id}
       />
     </Suspense>

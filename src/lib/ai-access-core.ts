@@ -56,6 +56,8 @@ export function mayOpen(href: string, me: AccessWho): Gate {
   if (under("/economics")) return me.isExec ? OK : no("Billing and the company's money are for the executives.");
   if (under("/csuite") || under("/safety")) return me.isExec ? OK : no("That page is for the executives.");
   if (under("/lab")) return me.isExec || me.isLead ? OK : no("The Ads Lab is for the executives and leaders.");
+  // A sales call brief goes to whoever runs the call (the page checks it's theirs); the rest of Sales is execs' and leads'
+  if (under("/sales/briefs")) return OK;
   if (under("/sales")) return me.isExec || me.isLead ? OK : no("Sales is for the executives and leaders.");
   if (under("/routines")) return me.isExec || me.isLead || String(me.role ?? "").startsWith("head_of_") ? OK : no("Routines are for the executives and leaders.");
   if (under("/team/handoffs")) return mayTransferAny(me) ? OK : no("Handoffs are for the executives and the line heads.");

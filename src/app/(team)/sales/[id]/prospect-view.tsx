@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import type { CallReview, PitchDrafts, ProspectBrief, ProspectStatus } from "@/lib/sales-core";
+import { CallButton } from "@/components/call-button";
 import { pushParams, useParam } from "@/lib/url-state";
 import { deleteNoteAction, pitchAction, researchAction, reviewAction, updateAction, wonAction } from "../actions";
 import { FitBadge, StageSelect } from "../sales-view";
@@ -67,7 +68,7 @@ const Bullets = ({ items }: { items: string[] }) => (
   </ul>
 );
 
-export function ProspectView({ p, brief, notes, people, docs, client, meId }: { p: P; brief: ProspectBrief | null; notes: ProspectNote[]; people: { id: string; name: string }[]; docs: { id: string; title: string; link: string | null; folder: string | null }[]; client: { name: string; slug: string } | null; meId: string }) {
+export function ProspectView({ p, brief, notes, people, docs, client, meId, calls = [] }: { p: P; brief: ProspectBrief | null; notes: ProspectNote[]; people: { id: string; name: string }[]; docs: { id: string; title: string; link: string | null; folder: string | null }[]; client: { name: string; slug: string } | null; meId: string; calls?: { id: string; title: string; startsAt: string; status: string }[] }) {
   const tab = useParam("tab") ?? "brief";
   const drafts = notes.length;
   return (
@@ -94,6 +95,7 @@ export function ProspectView({ p, brief, notes, people, docs, client, meId }: { 
           <StageSelect key={p.status} id={p.id} status={p.status} />
           <OwnerSelect id={p.id} ownerId={p.ownerId} people={people} meId={meId} />
           {p.status !== "won" && <WonButton id={p.id} />}
+          <CallButton roleKey="sales" context={{ screen: "a prospect's page", client: p.name, prospectId: p.id }} label="Talk to the Sales agent" className="justify-center border-brand/40 text-fg" />
         </div>
         {client && (
           <p className="rounded-[14px] bg-ok-soft px-4 py-3 text-[13.5px] text-ok">
@@ -120,6 +122,22 @@ export function ProspectView({ p, brief, notes, people, docs, client, meId }: { 
           </button>
         ))}
       </div>
+
+      {calls.length > 0 && (
+        <section className="grid min-w-0 gap-2">
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.16em] text-faint">Sales calls</h2>
+          <ul className="grid min-w-0 gap-2">
+            {calls.map((c) => (
+              <li key={c.id}>
+                <Link href={`/sales/briefs/${c.id}`} className="flex min-h-11 min-w-0 flex-wrap items-center justify-between gap-2 rounded-[14px] border border-line bg-surface px-4 py-2.5 hover:bg-surface-2">
+                  <span className="min-w-0 break-words text-[14px]">{c.title}</span>
+                  <span className="text-[12.5px] text-muted">{day(c.startsAt)} · {c.status === "ready" ? "brief ready" : c.status === "pending" ? "brief 18h before" : c.status}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {tab === "brief" && <BriefTab p={p} brief={brief} />}
       {tab === "drafts" && <DraftsTab p={p} notes={notes} researched={Boolean(brief)} />}

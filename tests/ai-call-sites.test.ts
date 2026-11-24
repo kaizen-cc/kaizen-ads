@@ -207,6 +207,7 @@ const UTILITY: Record<string, { labels: string[]; why: string }> = {
   "src/lib/playbooks.ts": { labels: ["playbook"], why: "cross-client playbook per sub-vertical" },
   "src/lib/promise-groups.ts": { labels: ["group promises"], why: "groups duplicate promises; a utility" },
   "src/lib/routine-callprep.ts": { labels: ["routine sales call prep"], why: "a prospect or vendor call: no client exists yet" },
+  "src/lib/sales-briefs.ts": { labels: ["sales call brief"], why: "a sales call with a prospect: no client exists yet (current clients' calls are never briefed here)" },
   "src/lib/routine-sweeps.ts": { labels: ["routine delegation tracker"], why: "reads one person's Slack asks across all their clients; each item gets its client after" },
   "src/lib/website-issues.ts": { labels: ["website issues"], why: "reads a page check's findings; extraction" },
   "src/lib/context/docs.ts": { labels: ["read a doc"], why: "reads Drive docs for every client in one pass" },

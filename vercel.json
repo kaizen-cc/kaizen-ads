@@ -35,6 +35,10 @@
       "schedule": "35 * * * *"
     },
     {
+      "path": "/api/cron/context?step=sales_briefs",
+      "schedule": "15,45 * * * *"
+    },
+    {
       "path": "/api/cron/context?step=precall",
       "schedule": "5 19,20 * * *"
     },

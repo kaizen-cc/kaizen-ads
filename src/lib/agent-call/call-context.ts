@@ -14,6 +14,8 @@ export type CallContext = {
   client?: string | null;
   reportId?: string | null;
   threadId?: string | null;
+  /** A sales prospect (Sales › Prospects, a sales call brief): the Sales agent starts with all of it */
+  prospectId?: string | null;
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -35,12 +37,14 @@ export function parseCallContext(raw: unknown): CallContext | null {
   const clientId = id(r.clientId);
   const reportId = id(r.reportId);
   const threadId = id(r.threadId);
+  const prospectId = id(r.prospectId);
+  if (prospectId) ctx.prospectId = prospectId;
   if (clientId) ctx.clientId = clientId;
   if (reportId) ctx.reportId = reportId;
   if (threadId) ctx.threadId = threadId;
   const client = words(r.client, 120);
   if (client) ctx.client = client;
-  if (!clientId && !reportId && !threadId && !words(r.screen, 80)) return null;
+  if (!clientId && !reportId && !threadId && !prospectId && !words(r.screen, 80)) return null;
   return ctx;
 }
 
@@ -94,6 +98,8 @@ export type ContextFacts = {
   client?: { name: string } | null;
   report?: { client: string | null; platform: string; kind: string; period: string; status: string; message: string; sections: string; checks: number } | null;
   thread?: { title: string; client: string | null; turns: { who: "them" | "ai"; text: string }[] } | null;
+  /** A sales prospect: its research, latest call brief, saved drafts and reviews, and earlier Sales conversations about it */
+  prospect?: { name: string; text: string } | null;
 };
 
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
@@ -113,6 +119,10 @@ export function contextPrompt(f: ContextFacts): string {
     const said = t.turns.map((x) => `${x.who === "them" ? "They wrote" : "Kaizen AI answered"}: ${clip(x.text.replace(/\s+/g, " ").trim(), 900)}`).join("\n");
     parts.push(`<their_chat title="${t.title.replace(/"/g, "'")}"${t.client ? ` client="${t.client.replace(/"/g, "'")}"` : ""}>\n${said || "(nothing written yet)"}\n</their_chat>\nThis call carries on from that chat: pick up where it left off.`);
   }
+  if (f.prospect)
+    parts.push(
+      `<the_prospect name="${f.prospect.name.replace(/"/g, "'")}">\n${clip(f.prospect.text, 16000)}\n</the_prospect>\nThis conversation is about ${f.prospect.name}: "them" and "this prospect" mean ${f.prospect.name}. You already have everything above: use it without asking. When you find more (research_prospect, web_research) or they settle a pitch idea, a talking point or an objection answer, save it (save_to_brief; save_prospect for the stage, owner and notes) so it's there next time.`,
+    );
   return `<where_they_are>\n${parts.join("\n\n")}\n</where_they_are>`;
 }
 

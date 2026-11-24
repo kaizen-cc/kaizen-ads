@@ -1,13 +1,14 @@
 // The Sales agent's plain helpers (no server imports, so screens and tests can use them): who works sales, the
 // prospect stages, website and name clean-up, and the prospect brief as text.
 
-export const PROSPECT_STATUSES = ["new", "researched", "contacted", "talking", "proposal", "won", "lost"] as const;
+export const PROSPECT_STATUSES = ["new", "researched", "contacted", "call_booked", "talking", "proposal", "won", "lost"] as const;
 export type ProspectStatus = (typeof PROSPECT_STATUSES)[number];
 
 export const STATUS_LABEL: Record<ProspectStatus, string> = {
   new: "New",
   researched: "Researched",
   contacted: "Contacted",
+  call_booked: "Call booked",
   talking: "Talking",
   proposal: "Proposal",
   won: "Won",
@@ -17,7 +18,7 @@ export const STATUS_LABEL: Record<ProspectStatus, string> = {
 export const isProspectStatus = (v: unknown): v is ProspectStatus => typeof v === "string" && (PROSPECT_STATUSES as readonly string[]).includes(v);
 
 /** The open stages (still being worked), in pipeline order */
-export const OPEN_STATUSES: readonly ProspectStatus[] = ["new", "researched", "contacted", "talking", "proposal"];
+export const OPEN_STATUSES: readonly ProspectStatus[] = ["new", "researched", "contacted", "call_booked", "talking", "proposal"];
 
 /** Sales is internal for now: the executives and the leads (line heads) only */
 export const worksSales = (me: { isExec?: boolean | null; isLead?: boolean | null } | null | undefined) => Boolean(me && (me.isExec || me.isLead));

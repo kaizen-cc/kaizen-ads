@@ -939,6 +939,55 @@ async function withAsks(db: SupabaseClient, me: Staff, drafts: Draft[]): Promise
 }
 
 /**
+ * Sales call briefs (src/lib/sales-briefs.ts): each upcoming sales call this person runs, with its brief ready, is a
+ * Needs me item that opens the brief; for two days after the call it's a short debrief prompt instead (the call
+ * review on the prospect). Only their own calls, whatever their role.
+ */
+async function withSalesBriefs(db: SupabaseClient, me: Staff, drafts: Draft[]): Promise<Draft[]> {
+  const now = Date.now();
+  const { data } = await db
+    .from("sales_call_briefs")
+    .select("id, title, starts_at, status, brief, prospect_id")
+    .eq("owner_id", me.id)
+    .in("status", ["ready", "done"])
+    .gt("starts_at", new Date(now - 2 * 86_400_000).toISOString())
+    .lt("starts_at", new Date(now + 4 * 86_400_000).toISOString())
+    .order("starts_at")
+    .limit(20);
+  if (!data?.length) return drafts;
+  const { briefTitle, whenLabel } = await import("@/lib/sales-briefs-core");
+  const out = [...drafts];
+  for (const r of data as { id: string; title: string; starts_at: string; status: string; brief: { business?: string; they_want?: string; next_step?: string; fit?: { score: number | null } } | null; prospect_id: string | null }[]) {
+    const business = r.brief?.business || r.title;
+    const over = r.status === "done" || Date.parse(r.starts_at) < now;
+    const key = over ? `salesdebrief:${r.id}` : `salesbrief:${r.id}`;
+    const href = over ? (r.prospect_id ? `/sales/${r.prospect_id}?tab=drafts` : `/sales/briefs/${r.id}`) : `/sales/briefs/${r.id}`;
+    const title = over ? `How did the call with ${business} go? Review it` : briefTitle(business, r.starts_at);
+    const story = over ? "Paste the notes or the Gemini doc: the Sales agent reviews it, moves the deal on and suggests the proposal" : [r.brief?.they_want ? `They want: ${r.brief.they_want}` : null, r.brief?.next_step ? `Next step: ${r.brief.next_step}` : null].filter(Boolean).join(" · ").slice(0, 300) || "Who they are, what they want, fit, objections and the questions to ask";
+    const soon = !over && Date.parse(r.starts_at) - now < 3 * 3_600_000;
+    const action = { label: over ? "Review the call" : "Open the brief", href };
+    const card = { key, tab: "needs" as const, kind: "mine" as const, client: null, clientId: null, clientSlug: null, title, detail: story, severity: (soon ? "critical" : "high") as "critical" | "high", due: r.starts_at, action };
+    out.push({
+      key,
+      topic: "needs",
+      score: over ? 66 : soon ? 88 : 78,
+      client: business,
+      clientSlug: "",
+      clientId: null,
+      stat: { value: whenLabel(r.starts_at), label: over ? "call was" : "sales call" },
+      title,
+      story,
+      why: over ? "The call happened: a quick review keeps the deal moving" : "A sales call you're running, briefed by the Sales agent",
+      evidence: [],
+      action,
+      due: r.starts_at,
+      ...(me.isExec ? { exec: card } : {}),
+    });
+  }
+  return out;
+}
+
+/**
  * Enough on every item to act right there (a teammate, Nov 24 2026: "the daily tasks should have enough context right
  * there to answer on platform"): a reply owed carries the conversation around it (the client's messages and ours, with
  * who and when, from the same channel or email thread); a promise carries the exact words asked and said.
@@ -1051,6 +1100,7 @@ export async function loadToday(db: SupabaseClient, me: Staff): Promise<Today> {
       .then((d) => (me.isExec ? forExec(db, me, d) : ownedDay(db, me, d)))
       .then((d) => withDesk(db, me, d).catch(() => d))
       .then((d) => withAsks(db, me, d).catch(() => d))
+      .then((d) => withSalesBriefs(db, me, d).catch(() => d))
       .then((d) => withContext(db, d).catch(() => d)),
     db.from("daily_items").select("key, status, snapshot, first_seen_at, snoozed_until").eq("profile_id", me.id),
     db.from("hidden_items").select("key").eq("profile_id", me.id),

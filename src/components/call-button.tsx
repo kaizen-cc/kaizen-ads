@@ -17,9 +17,11 @@ type Props = {
   /** "pill": an outlined button with words; "icon": a round button for a tight composer row */
   variant?: "pill" | "icon";
   className?: string;
+  /** The pill's words instead of Call / Huddle ("Talk to the Sales agent") */
+  label?: string;
 };
 
-export function CallButton({ roleKey, context, variant = "pill", className = "" }: Props) {
+export function CallButton({ roleKey, context, variant = "pill", className = "", label }: Props) {
   const { start, activeRole, live, assistantTint } = useAgentCall();
   const look = CALL_ROLES[roleKey] ?? CALL_ROLES.assistant;
   const key = CALL_ROLES[roleKey] ? roleKey : "assistant";
@@ -61,8 +63,14 @@ export function CallButton({ roleKey, context, variant = "pill", className = "" 
       <span className="hidden md:inline">
         <HeadsetIcon size={15} />
       </span>
-      <span className="md:hidden">{here ? "On the call" : "Call"}</span>
-      <span className="hidden md:inline">{here ? "In the huddle" : "Huddle"}</span>
+      {label && !here ? (
+        <span>{label}</span>
+      ) : (
+        <>
+          <span className="md:hidden">{here ? "On the call" : "Call"}</span>
+          <span className="hidden md:inline">{here ? "In the huddle" : "Huddle"}</span>
+        </>
+      )}
     </button>
   );
 }

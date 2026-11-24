@@ -244,6 +244,8 @@ export const SCREEN_PLACES: Record<string, string> = {
   "sales pipeline": "/sales",
   "my prospects": "/sales?mine=1",
   "sales agent": "/settings?tab=agents&role=sales#talk",
+  "sales calls": "/sales?stage=call_booked",
+  "call booked": "/sales?stage=call_booked",
   // Your routines (execs and leads): the recaps, sweeps and nightly agent the OS runs at your times, and what each found
   routines: "/routines",
   recaps: "/routines",
