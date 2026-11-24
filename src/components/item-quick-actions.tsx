@@ -113,7 +113,7 @@ function DelegatePicker({ item, open, setOpen, onDone, tone = "auto" }: { item: 
   useEffect(() => {
     if (open) form.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [open]);
-  const field = "h-11 rounded-brand border border-ink/15 bg-transparent px-2 text-[14px] text-fg sm:h-9 sm:text-[13px]";
+  const field = "h-11 rounded-brand border border-ink/15 bg-transparent px-2 text-[16px] text-fg sm:h-9 sm:text-[13px]";
   return (
     <span className="contents">
       <button type="button" onClick={toggle} aria-expanded={open} className={`${pill} border ${tone === "dark" ? "border-white/25 text-white/85 hover:bg-white/10" : "border-ink/15 text-ink/75 hover:border-ink/35 hover:text-fg"}`}>

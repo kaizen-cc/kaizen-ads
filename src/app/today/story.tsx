@@ -11,6 +11,7 @@ import { bucketsOf, countLooks, EXEC_TOPICS, isOpenMark, lookHeadline, openOf, Q
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { acknowledge, setItem } from "./actions";
 import { DoneBurst } from "@/components/done-burst";
+import { ItemContext } from "@/components/item-context";
 import { ItemQuickActions } from "@/components/item-quick-actions";
 import { ScorecardView } from "@/components/production";
 import type { Scorecard } from "@/lib/production";
@@ -806,7 +807,14 @@ function ItemBody({ i, status, big = false, onChoose, onAct, onNext }: { i: Toda
           <h3 className="relative font-heading text-2xl leading-snug">{i.title}</h3>
         </>
       )}
-      <p className={`relative leading-relaxed text-white/75 ${big ? "text-[15px]" : "text-sm"}`}>{i.story}</p>
+      {/* Enough to answer right here: the conversation (theirs and ours) or the exact words promised, else the story */}
+      {i.context?.length ? (
+        <div className="relative">
+          <ItemContext lines={i.context} dark />
+        </div>
+      ) : (
+        <p className={`relative leading-relaxed text-white/75 ${big ? "text-[15px]" : "text-sm"}`}>{i.story}</p>
+      )}
       {i.evidence.length > 0 && (
         <ul className="relative grid gap-1.5">
           {i.evidence.map((e, n) => (

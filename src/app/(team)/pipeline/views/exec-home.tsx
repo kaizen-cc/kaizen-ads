@@ -10,6 +10,7 @@ import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { nudgeLead, takeItOver } from "../../exec-actions";
 import { openAsanaTask } from "@/components/asana-task-sheet";
 import { DraftActions } from "./emails-ready";
+import { ItemContext } from "@/components/item-context";
 
 // The executive Overview's blocks (owner, Nov 23 2026), under the Wrapped hero: Needs me, Escalated, Accounts, Pulse
 // and (the owner) System, each a designed block with its own color, a big number, one line and its sub-chips. A tap
@@ -213,6 +214,11 @@ function Card({ card }: { card: ExecCard }) {
           {card.client && card.kind !== "fire" && card.kind !== "stuck" && <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-faint">{card.client}</p>}
           <h3 className={`text-[15.5px] font-medium leading-snug ${card.severity === "fire" ? "text-bad" : "text-fg"}`}>{card.title}</h3>
           <p className="mt-1 text-[13.5px] leading-relaxed text-muted">{card.detail}</p>
+          {card.context?.length ? (
+            <div className="mt-3">
+              <ItemContext lines={card.context} />
+            </div>
+          ) : null}
         </div>
         {card.stat && card.kind !== "asana" && <span className="tabular shrink-0 rounded-full bg-bad-soft px-2.5 py-1 text-[12px] text-bad">{card.stat}</span>}
       </div>

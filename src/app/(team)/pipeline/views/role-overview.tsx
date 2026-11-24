@@ -39,7 +39,7 @@ const EMPTY: Partial<Record<TopicKey, { title: string; line: string }>> = {
 /** A recap item as a block card (an exec's and a lead's own linked items carry their card already) */
 function cardOf(i: TodayItem): ExecCard {
   if (i.exec) return i.exec;
-  const kind: ExecCard["kind"] = i.key.startsWith("lead:") ? "stuck" : /^owed/.test(i.key) ? "owed" : /^said/.test(i.key) ? "said" : "mine";
+  const kind: ExecCard["kind"] = i.key.startsWith("lead:") ? "stuck" : /^owed/.test(i.key) ? "owed" : /^said/.test(i.key) ? "said" : i.key.startsWith("draft:") ? "draft" : i.key.startsWith("todo:") ? "todo" : "mine";
   // A saved recap from before an update can carry an item without its action: never let one item break the page
   const act = (i as Partial<TodayItem>).action;
   const href = act?.href ?? (i.clientSlug ? `/clients/${i.clientSlug}` : null);
@@ -55,6 +55,9 @@ function cardOf(i: TodayItem): ExecCard {
     severity: i.tier === "critical" ? "critical" : i.tier === "high" ? "high" : "normal",
     due: i.due ?? null,
     action: { label: act?.label ?? "Open", href },
+    // The email drafted for it (its main action) and the conversation behind it
+    emailDraft: i.emailDraft ?? null,
+    context: i.context ?? null,
   };
 }
 

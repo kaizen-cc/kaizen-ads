@@ -73,6 +73,8 @@ export type TodayItem = {
   pause?: { service: string };
   /** An email drafted for this person to send about it (src/lib/email-drafts) */
   emailDraft?: import("@/lib/exec-overview-core").ExecCard["emailDraft"];
+  /** The conversation behind it, or the exact words promised (src/lib/exec-overview-core.ts ItemContextLine) */
+  context?: import("@/lib/exec-overview-core").ItemContextLine[] | null;
   /** A message waiting on this person: the reply drafted for them */
   reply?: { id: string; source: "slack" | "gmail"; url: string | null; draft: string | null; channel: string | null; kind?: "owed" | "said" | "call" };
   /** Under "Everything else" (an exec's day, outside their focus): the topic it came from */
@@ -93,7 +95,7 @@ export type Today = { items: TodayItem[]; resolved: Resolved[]; counts: Record<T
  * The shape a saved day is built in. Bump DAY_SHAPE_VERSION whenever what an item or a block holds changes, so every
  * day saved before is built again on its next look (a read-only View as included), never shown stale.
  */
-export const DAY_SHAPE_VERSION = 3;
+export const DAY_SHAPE_VERSION = 4;
 export const dayShape = (me: { isExec: boolean }) => `${me.isExec ? "exec" : "blocks"}:${DAY_SHAPE_VERSION}`;
 
 const tierOf = (score: number): Tier => (score >= 80 ? "critical" : score >= 60 ? "high" : "normal");
@@ -825,6 +827,57 @@ async function withDesk(db: SupabaseClient, me: Staff, drafts: Draft[]): Promise
   return out;
 }
 
+/**
+ * Enough on every item to act right there (a teammate, Nov 24 2026: "the daily tasks should have enough context right
+ * there to answer on platform"): a reply owed carries the conversation around it (the client's messages and ours, with
+ * who and when, from the same channel or email thread); a promise carries the exact words asked and said.
+ */
+async function withContext(db: SupabaseClient, drafts: Draft[]): Promise<Draft[]> {
+  const owedIds = [...new Set(drafts.map((d) => /^(owed2?|owed-lead):(.+)$/.exec(d.key)?.[2]).filter((x): x is string => Boolean(x)))].slice(0, 60);
+  const saidIds = [...new Set(drafts.map((d) => /^(said2?|said-lead):(.+)$/.exec(d.key)?.[2]).filter((x): x is string => Boolean(x)))].slice(0, 60);
+  if (!owedIds.length && !saidIds.length) return drafts;
+  const [{ data: owed }, { data: said }, { data: team }] = await Promise.all([
+    owedIds.length ? db.from("owed_replies").select("id, client_id, source, channel_id, gmail_thread_id, asked_at, from_name, body, draft").in("id", owedIds) : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+    saidIds.length ? db.from("message_promises").select("id, asked_by, ask, said, said_at, owner:profiles!message_promises_owner_id_fkey(full_name)").in("id", saidIds) : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+    db.from("profiles").select("full_name").eq("is_active", true),
+  ]);
+  const ours = new Set(((team ?? []) as { full_name: string | null }[]).flatMap((p) => [String(p.full_name ?? "").toLowerCase(), String(p.full_name ?? "").split(" ")[0].toLowerCase()]).filter((x) => x.length > 2));
+  const isOurs = (author: string | null) => Boolean(author && [...ours].some((n) => author.toLowerCase().includes(n)));
+  const clip = (t: unknown, n: number) => String(t ?? "").replace(/\s+/g, " ").trim().slice(0, n);
+  const ctx = new Map<string, import("@/lib/exec-overview-core").ItemContextLine[]>();
+  await Promise.all(
+    ((owed ?? []) as { id: string; client_id: string | null; source: string; channel_id: string | null; gmail_thread_id: string | null; asked_at: string; from_name: string; body: string | null; draft: string | null }[]).map(async (o) => {
+      const from = new Date(Date.parse(o.asked_at) - 7 * 86_400_000).toISOString();
+      let q = db.from("context_items").select("occurred_at, author, body, external_id").gte("occurred_at", from).order("occurred_at", { ascending: false }).limit(6);
+      if (o.client_id) q = q.eq("client_id", o.client_id);
+      // The same Slack channel, or the same email thread
+      if (o.source === "slack" && o.channel_id) q = q.like("external_id", `${o.channel_id}:%`);
+      else if (o.gmail_thread_id) q = q.eq("thread_id", o.gmail_thread_id);
+      else q = q.eq("external_id", "__none__");
+      const { data } = await q;
+      const lines = ((data ?? []) as { occurred_at: string; author: string | null; body: string | null }[])
+        .reverse()
+        .filter((m) => clip(m.body, 10))
+        .map((m) => ({ from: m.author ?? "Someone", at: m.occurred_at, text: clip(m.body, 600), ours: isOurs(m.author) }));
+      // At least the message itself, in full
+      const thread = lines.length ? lines : [{ from: o.from_name, at: o.asked_at, text: clip(o.body, 900), ours: false }];
+      // And the reply drafted for them, last
+      ctx.set(o.id, o.draft ? [...thread, { from: "Drafted reply", at: null, text: clip(o.draft, 900), ours: true }] : thread);
+    }),
+  );
+  for (const p of (said ?? []) as unknown as { id: string; asked_by: string | null; ask: string | null; said: string | null; said_at: string | null; owner: { full_name: string } | null }[])
+    ctx.set(
+      p.id,
+      [p.ask ? { from: p.asked_by ?? "They", at: null, text: clip(p.ask, 600), ours: false } : null, { from: p.owner?.full_name ?? "We", at: p.said_at, text: clip(p.said, 900), ours: true }].filter((x): x is import("@/lib/exec-overview-core").ItemContextLine => Boolean(x)),
+    );
+  return drafts.map((d) => {
+    const id = /^(?:owed2?|owed-lead|said2?|said-lead):(.+)$/.exec(d.key)?.[1];
+    const lines = id ? ctx.get(id) : undefined;
+    if (!lines?.length) return d;
+    return { ...d, context: lines, ...(d.exec ? { exec: { ...d.exec, context: lines } } : {}) };
+  });
+}
+
 /** A lead's rung-2 items: their own, linked to the teammate's item that sat 48 hours, never that item itself */
 async function leadItems(admin: SupabaseClient, me: string): Promise<Draft[]> {
   const { data } = await admin.from("ladder_nudges").select("id, item_key, kind, client_id, client_name, what, href, since, created_at, owner:profiles!ladder_nudges_owner_id_fkey(full_name), client:clients(slug)").eq("lead_id", me).in("status", ["open", "sent"]).order("since").limit(60);
@@ -884,7 +937,8 @@ export async function loadToday(db: SupabaseClient, me: Staff): Promise<Today> {
   const [all, { data: mine }, { data: hiddenRows }] = await Promise.all([
     gather(db, me)
       .then((d) => (me.isExec ? forExec(db, me, d) : ownedDay(db, me, d)))
-      .then((d) => withDesk(db, me, d).catch(() => d)),
+      .then((d) => withDesk(db, me, d).catch(() => d))
+      .then((d) => withContext(db, d).catch(() => d)),
     db.from("daily_items").select("key, status, snapshot, first_seen_at, snoozed_until").eq("profile_id", me.id),
     db.from("hidden_items").select("key").eq("profile_id", me.id),
   ]);

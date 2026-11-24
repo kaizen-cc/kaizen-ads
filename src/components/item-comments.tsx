@@ -1,5 +1,6 @@
 "use client";
 
+import { useVisualViewport } from "@/lib/use-visual-viewport";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { commentOnItem, itemThread } from "@/app/(team)/comment-actions";
@@ -46,6 +47,11 @@ function Sheet({ k }: { k: string }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, start] = useTransition();
   const end = useRef<HTMLDivElement>(null);
+  // Phones: the sheet fills only what's visible above the keyboard, so Comment and the close stay in reach
+  const vv = useVisualViewport();
+  const swipe = useRef<number | null>(null);
+  // A button pressed while typing keeps the field focused: the keyboard doesn't drop first and move the button away
+  const keepFocus = (e: React.PointerEvent) => e.preventDefault();
   useEffect(() => {
     let live = true;
     itemThread(k).then((t) => live && setThread(t)).catch(() => live && setThread({ key: k, waiting: false, waitingSince: null, waitingBy: null, comments: [], clientId: null, title: null }));
@@ -71,10 +77,29 @@ function Sheet({ k }: { k: string }) {
       router.refresh();
     });
   return (
-    <div className="fixed inset-0 z-[60] flex items-end justify-center md:items-stretch md:justify-end" role="dialog" aria-modal="true" aria-label="Comments">
+    <div
+      className="fixed inset-x-0 top-0 z-[60] flex h-[100dvh] items-end justify-center md:inset-0 md:h-auto md:items-stretch md:justify-end"
+      style={vv ? { top: vv.top, height: vv.height } : undefined}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Comments"
+      // Nothing behind it (the recap's taps and swipes) ever sees a touch meant for the sheet
+      onClick={(e) => e.stopPropagation()}
+      onTouchStart={(e) => e.stopPropagation()}
+      onTouchEnd={(e) => e.stopPropagation()}
+    >
       <button type="button" aria-label="Close" onClick={() => closeParams("comments")} className="absolute inset-0 bg-black/60 backdrop-blur-[2px] animate-[sheet-fade_.2s_ease-out]" />
-      <div className="relative grid max-h-[90dvh] w-full grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-t-[26px] border border-line bg-bg shadow-[0_-30px_80px_-30px_rgba(0,0,0,0.6)] animate-[sheet-up_.32s_cubic-bezier(.2,.8,.2,1)] md:max-h-none md:w-[480px] md:rounded-none md:rounded-l-[26px] md:border-y-0 md:border-r-0 md:animate-[drawer-right_.32s_cubic-bezier(.2,.8,.2,1)]">
-        <header className="grid gap-2 border-b border-line px-5 pb-4 pt-5">
+      <div className="relative grid max-h-[92%] w-full grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-t-[26px] border border-line bg-bg shadow-[0_-30px_80px_-30px_rgba(0,0,0,0.6)] animate-[sheet-up_.32s_cubic-bezier(.2,.8,.2,1)] md:max-h-none md:w-[480px] md:rounded-none md:rounded-l-[26px] md:border-y-0 md:border-r-0 md:animate-[drawer-right_.32s_cubic-bezier(.2,.8,.2,1)]">
+        <header
+          className="grid gap-2 border-b border-line px-5 pb-4 pt-5"
+          // Phones: pull the top of the sheet down to close it
+          onTouchStart={(e) => (swipe.current = e.touches[0].clientY)}
+          onTouchEnd={(e) => {
+            if (swipe.current != null && e.changedTouches[0].clientY - swipe.current > 70) closeParams("comments");
+            swipe.current = null;
+          }}
+        >
+          <span aria-hidden className="mx-auto -mt-2 mb-1 h-1 w-10 rounded-full bg-ink/20 md:hidden" />
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-faint">Comments</p>
@@ -120,13 +145,13 @@ function Sheet({ k }: { k: string }) {
           )}
         </div>
         <footer className="grid gap-2 border-t border-line px-5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3">
-          <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={2} maxLength={2000} placeholder="Add a comment" className="min-h-[3.5rem] w-full resize-none rounded-[16px] border border-line bg-transparent px-3.5 py-2.5 text-[15px] text-fg outline-none focus:border-ink/35 md:text-[14px]" onKeyDown={(e) => e.key === "Enter" && (e.metaKey || e.ctrlKey) && body.trim() && send()} />
+          <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={2} maxLength={2000} placeholder="Add a comment" className="min-h-[3.5rem] w-full resize-none rounded-[16px] border border-line bg-transparent px-3.5 py-2.5 text-[16px] text-fg outline-none focus:border-ink/35 md:text-[14px]" onKeyDown={(e) => e.key === "Enter" && (e.metaKey || e.ctrlKey) && body.trim() && send()} />
           {error && <p className="text-[12px] text-[var(--bad)]">{error}</p>}
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <button type="button" disabled={busy || !thread} onClick={() => send(!thread?.waiting)} className={`min-h-11 rounded-full border px-3.5 text-[13px] sm:min-h-9 ${thread?.waiting ? "border-[#f2b14c]/50 text-[#d99a2b]" : "border-line text-ink/75 hover:text-fg"}`}>
+            <button type="button" disabled={busy} onPointerDown={keepFocus} onClick={() => send(!thread?.waiting)} className={`min-h-11 rounded-full border px-3.5 text-[13px] sm:min-h-9 ${thread?.waiting ? "border-[#f2b14c]/50 text-[#d99a2b]" : "border-line text-ink/75 hover:text-fg"}`}>
               {thread?.waiting ? "Not waiting any more" : "Waiting on client"}
             </button>
-            <button type="button" disabled={busy || !body.trim()} onClick={() => send()} className="min-h-11 rounded-full bg-fg px-5 text-[14px] font-medium text-bg disabled:opacity-50 sm:min-h-9 sm:text-[13px]">
+            <button type="button" disabled={busy || !body.trim()} onPointerDown={keepFocus} onClick={() => send()} className="min-h-11 rounded-full bg-fg px-5 text-[14px] font-medium text-bg disabled:opacity-50 sm:min-h-9 sm:text-[13px]">
               {busy ? "Sending…" : "Comment"}
             </button>
           </div>

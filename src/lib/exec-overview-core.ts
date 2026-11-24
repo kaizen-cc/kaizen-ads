@@ -4,6 +4,9 @@
 // (Accounts), and a read-only Pulse; the owner also sees System. At most 5 cards a tab, the rest behind a tap. Nothing
 // below rung 3 reaches an exec except a fire.
 
+/** One line of an item's context: who said it, when, what (ours: the team's side) */
+export type ItemContextLine = { from: string; at: string | null; text: string; ours: boolean };
+
 export type ExecTab = "needs" | "escalated" | "accounts" | "asana" | "pulse" | "system";
 export const EXEC_TABS: readonly ExecTab[] = ["needs", "escalated", "accounts", "asana", "pulse", "system"];
 export const TAB_LABEL: Record<ExecTab, string> = { needs: "Needs me", escalated: "Escalated", accounts: "Accounts", asana: "Next for me in Asana", pulse: "Pulse", system: "System" };
@@ -41,6 +44,8 @@ export type ExecCard = {
   stat?: string | null;
   /** An email drafted for this person to send about it: the item's main action is Open draft */
   emailDraft?: { id: string; client: string; kind: string; subject: string; body: string; to: string[]; reason: string | null; opened: boolean; files?: { id: string; name: string }[] } | null;
+  /** Enough to act without leaving: the conversation (their messages and ours, oldest first) or the exact words promised */
+  context?: ItemContextLine[] | null;
   /** A teammate to call about it (Accounts: the buyer) */
   callee?: { id: string; name: string } | null;
 };
