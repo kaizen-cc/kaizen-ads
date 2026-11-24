@@ -358,6 +358,11 @@ export async function GET(request: Request) {
       if (!aiEnabled()) return Response.json({ skipped: "The AI isn't connected" });
       const yt = await import("@/lib/youtube");
       const sources = await yt.checkSources(admin, { budgetMs: 60_000 }).catch((e) => String(e));
+      // Videos the team shared in Slack: team channels the bot is in (and line channels it joins), and people's own DMs
+      // when they've connected Slack reading (client channels come in with the context sync)
+      const ys = await import("@/lib/youtube-slack");
+      const slackShares = await ys.scanTeamChannels(admin, { budgetMs: 60_000 }).catch((e) => String(e));
+      const dmShares = await ys.scanPersonalDms(admin).catch((e) => String(e));
       // The Gemini key just set: the videos that waited for it go back in the queue
       const requeued = await yt.requeueForKey(admin).catch((e) => String(e));
       const queue = await yt.processYouTubeQueue(admin, { budgetMs: 240_000, parallel: 3 }).catch((e) => String(e));
@@ -367,7 +372,9 @@ export async function GET(request: Request) {
       const tracking = await import("@/lib/tracking-agent");
       const playbook = await tracking.seedTrackingPlaybook(admin).catch((e) => String(e));
       const trackingChecks = await tracking.trackingWatch(admin, { max: 3 }).catch((e) => String(e));
-      return Response.json({ sources, requeued, queue, shared, playbook, trackingChecks });
+      // Videos shared in a client's channel, now read: filed to that client's knowledge when they're about the client
+      const clientFiled = await ys.attachSharedToClients(admin).catch((e) => String(e));
+      return Response.json({ sources, slackShares, dmShares, requeued, queue, shared, clientFiled, playbook, trackingChecks });
     }
     if (step === "social_learn") {
       const { aiEnabled } = await import("@/lib/ai");

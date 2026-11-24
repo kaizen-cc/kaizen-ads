@@ -246,6 +246,8 @@ export async function collectSlack(admin: SupabaseClient, t?: Tracker): Promise<
         await saveItems(admin, read);
         // A Loom posted in the client's channel: into the knowledge, as about this client
         await queueSlackLooms(admin, read, c.id);
+        // A YouTube video shared in it: read for the agents (once per video), and filed to this client when relevant
+        await (await import("@/lib/youtube-slack")).queueSlackYouTube(admin, read, { clientId: c.id, channelId: channel }).catch((e) => console.error("[slack] youtube", e instanceof Error ? e.message : e));
         await setCursor(admin, key, new Date(started.getTime() - 5 * 60_000), { ok: true, items: read.length });
         saved += read.length;
         t?.tick(`${c.name} (${source === "slack_internal" ? "internal" : "client"} channel)`);

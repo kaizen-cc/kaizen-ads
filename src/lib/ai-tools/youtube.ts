@@ -45,7 +45,7 @@ const ask: AiTool = {
 const list: AiTool = {
   name: "youtube_takeaways",
   description:
-    "Takeaways from the YouTube channels the agents study. which: 'decide' (a line head or exec: the ones waiting for their call on the lines they oversee, each with its id for youtube_decide; seeAll: true adds the rest they may decide), 'mine' (shared with this person's lines), 'all'. To show them, open_screen place 'youtube takeaways to decide' or 'youtube takeaways for me'.",
+    "Takeaways from the YouTube channels the agents study and from videos the team shared in Slack (team channels, client channels, people's own DMs; each with who shared it and where). which: 'decide' (a line head or exec: the ones waiting for their call on the lines they oversee, each with its id for youtube_decide; seeAll: true adds the rest they may decide), 'mine' (shared with this person's lines), 'all'. To show them, open_screen place 'youtube takeaways to decide' or 'youtube takeaways for me'.",
   input_schema: { type: "object", properties: { which: { type: "string", enum: ["decide", "mine", "all"] }, seeAll: { type: "boolean" } }, additionalProperties: false },
   run: async (user: Staff, input) => {
     const { loadYouTube } = await import("@/lib/youtube");

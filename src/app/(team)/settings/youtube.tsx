@@ -346,6 +346,13 @@ function VideoCard({ v, show }: { v: VideoView; show: TakeawayView[] }) {
           <p className="mt-0.5 text-[12px] text-faint">
             {[v.channel, when(v.publishedAt), v.onDemand ? "asked for on demand" : null, v.via === "gemini" ? "transcribed by Gemini" : v.via === "paste" ? "transcript pasted" : null].filter(Boolean).join(" · ")}
           </p>
+          {v.sharedNote && (
+            <p className="mt-2 flex flex-wrap items-center gap-1.5 text-[12px] text-muted">
+              {v.priority >= 3 && <span className="rounded-full bg-brand-soft px-2 py-0.5 text-[11px] text-brand-text">Must watch</span>}
+              <span className="[overflow-wrap:anywhere]">{v.sharedNote}</span>
+              {v.shares > 1 && <span className="text-faint">· shared {v.shares} times</span>}
+            </p>
+          )}
         </div>
         {v.summary && <p className="text-[13px] leading-relaxed text-muted">{v.summary}</p>}
         {v.status === "no_transcript" && (

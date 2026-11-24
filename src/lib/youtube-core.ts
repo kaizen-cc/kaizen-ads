@@ -39,10 +39,10 @@ export function parseYouTube(input: string | null | undefined): YtRef | null {
   return null;
 }
 
-/** Every YouTube video link in a piece of text, once each */
+/** Every YouTube video link in a piece of text, once each (Slack's <url|label> form and &amp; included) */
 export function videoIdsIn(text: string): string[] {
   const out = new Set<string>();
-  for (const m of String(text ?? "").matchAll(/(?:https?:\/\/)?(?:www\.|m\.)?(?:youtube\.com|youtu\.be)\/[^\s<>()"']+/gi)) {
+  for (const m of String(text ?? "").matchAll(/(?:https?:\/\/)?(?:www\.|m\.)?(?:youtube\.com|youtu\.be)\/[^\s<>()"'|]+/gi)) {
     const r = parseYouTube(m[0]);
     if (r?.kind === "video") out.add(r.id);
   }
@@ -465,4 +465,104 @@ export function decidesScoped(me: { role: string | null | undefined; isExec?: bo
     const theirs = linesOverseen({ role: "executive", isExec: true, execFocus: f });
     return lines.every((l) => theirs.includes(l));
   });
+}
+
+// ─── Videos shared in Slack ─────────────────────────────────────────────────
+
+/** The line a Slack channel is about, from its name (#facebook → meta, #email-team → email); null when it's general */
+export function lineOfChannel(name: string | null | undefined): YtLine | null {
+  const n = String(name ?? "").toLowerCase();
+  if (!n) return null;
+  if (/track|pixel|capi|analytics|attribution|measure/.test(n)) return "tracking";
+  if (/google|ppc|sem\b|search-ads|pmax|youtube-ads/.test(n)) return "google";
+  if (/email|klaviyo|sms|retention/.test(n)) return "email";
+  if (/organic|social-media|\bsocial\b|community|content-team/.test(n)) return "social";
+  if (/creative|design|video|edit|ugc|copy|motion/.test(n)) return "creative";
+  if (/facebook|\bmeta\b|\bfb\b|paid|ads|media-?buy|tiktok/.test(n)) return "meta";
+  return null;
+}
+
+/** The line a teammate's role works on (a share by a media buyer is about Meta ads) */
+export function lineOfTeamRole(role: string | null | undefined): YtLine | null {
+  const r = String(role ?? "");
+  if (r === "head_of_meta" || r === "media_buyer") return "meta";
+  if (r === "head_of_google" || r === "google_buyer") return "google";
+  if (/^(head_of_creative|lead_graphic_designer|graphic_designer|lead_video_editor|video_editor|copywriter)$/.test(r)) return "creative";
+  if (/^(head_of_email|email_strategist|email_designer|email_builder)$/.test(r)) return "email";
+  if (r === "head_of_social" || r === "social_media_manager") return "social";
+  if (r === "tracking_specialist") return "tracking";
+  return null;
+}
+
+/** The lines a shared video teaches: the channel's, else the sharer's; an exec's focus when it says; empty = the AI decides */
+export function linesOfShare(s: { channelName?: string | null; role?: string | null; isExec?: boolean; execFocus?: readonly string[] | null }): YtLine[] {
+  const ch = lineOfChannel(s.channelName);
+  if (ch) return [ch];
+  const r = lineOfTeamRole(s.role);
+  if (r) return [r];
+  if (s.isExec && s.execFocus?.length) {
+    const out: YtLine[] = [];
+    for (const f of s.execFocus) {
+      const l: YtLine | null = f === "meta" || f === "tiktok" ? "meta" : f === "google" ? "google" : f === "email" ? "email" : f === "social" ? "social" : f === "creative" || f === "creative_performance" ? "creative" : null;
+      if (l && !out.includes(l)) out.push(l);
+    }
+    return out;
+  }
+  return [];
+}
+
+const PRAISE = /\b(great|amazing|awesome|incredible|must[- ]?watch|watch this|everyone (should|needs to)|gold|goldmine|game[- ]?changer|fire|insane|brilliant|so good|best|important|required|mandatory)\b|🔥|💯|🙌|‼️|!!/i;
+const EVERYONE = /<!channel>|<!here>|<!everyone>|@channel|@here|@everyone/i;
+
+/**
+ * How much a share should count: a lead's or exec's share counts more, praise in the comment ("great", "must watch",
+ * 🔥) more again, and calling the whole channel (@channel) more still. 0 (a plain link) to 4.
+ */
+export function shareSignal(s: { comment?: string | null; role?: string | null; isExec?: boolean }): number {
+  const c = String(s.comment ?? "");
+  let p = 0;
+  if (s.isExec) p += 2;
+  else if (/^head_of_/.test(String(s.role ?? ""))) p += 1;
+  if (PRAISE.test(c)) p += 1;
+  if (EVERYONE.test(c)) p += 1;
+  return Math.min(4, p);
+}
+
+/** The sharer in role words, never a name ("the paid-ads exec", "the Head of Email", "a media buyer", "a teammate") */
+export function sharerWords(s: { role?: string | null; isExec?: boolean; execFocus?: readonly string[] | null }): string {
+  if (s.isExec) {
+    const f = s.execFocus ?? [];
+    if (f.some((x) => x === "meta" || x === "google" || x === "tiktok")) return "the paid-ads exec";
+    if (f.includes("email")) return "the email exec";
+    if (f.includes("social") || f.includes("creative")) return "the creative and social exec";
+    return "an exec";
+  }
+  const r = String(s.role ?? "");
+  if (!r) return "a teammate";
+  if (r.startsWith("head_of_")) return `the Head of ${r === "head_of_social" ? "Organic Social" : r.slice(8).replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase())}`;
+  const words = r.replace(/_/g, " ");
+  return `${/^[aeiou]/.test(words) ? "an" : "a"} ${words}`;
+}
+
+/** The credit shown with a shared video: who and where, with their comment (a DM keeps only that it was a DM) */
+export function shareNote(s: { who: string; channelName?: string | null; dm?: boolean; comment?: string | null }): string {
+  const where = s.dm ? "a direct message" : s.channelName ? `#${s.channelName.replace(/^#/, "")}` : "Slack";
+  const said = s.dm ? "" : cleanComment(s.comment);
+  return `Shared by ${s.who} in ${where}${said ? `: "${said}"` : ""}`;
+}
+
+/** A Slack message's own words around the link: mentions, links and markup dropped */
+export function cleanComment(text: string | null | undefined): string {
+  return String(text ?? "")
+    .replace(/<!(channel|here|everyone)>/g, "")
+    .replace(/<@[A-Z0-9]+(\|[^>]*)?>/g, "")
+    .replace(/<#[A-Z0-9]+\|([^>]*)>/g, "#$1")
+    .replace(/<https?:[^>]+>/g, "")
+    .replace(/https?:\/\/\S+/g, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 200);
 }

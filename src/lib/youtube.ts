@@ -425,7 +425,7 @@ export async function suggestLines(admin: Admin, id: string) {
 
 // ─── Reading and distilling ─────────────────────────────────────────────────
 
-type VideoRow = { id: string; video_id: string; url: string; source_id: string | null; title: string | null; channel_title: string | null; description: string | null; transcript: string | null; attempts: number; created_at: string; published_at: string | null; on_demand: boolean; allow_long?: boolean; transcript_via?: string | null; duration_seconds?: number | null };
+type VideoRow = { id: string; video_id: string; url: string; source_id: string | null; title: string | null; channel_title: string | null; description: string | null; transcript: string | null; attempts: number; created_at: string; published_at: string | null; on_demand: boolean; allow_long?: boolean; transcript_via?: string | null; duration_seconds?: number | null; lines?: string[] | null; shared_note?: string | null };
 /** How many Gemini transcriptions this run still has room for (shared by the run's parallel workers) */
 export type GeminiGate = { left: number };
 
@@ -471,8 +471,13 @@ async function update(admin: Admin, id: string, patch: Record<string, unknown>) 
   await admin.from("youtube_videos").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
 }
 
-/** The lines the video's source teaches (a pasted video with none: every line, so the AI decides) */
-async function sourceLines(admin: Admin, sourceId: string | null): Promise<YtLine[]> {
+/**
+ * The lines the video teaches: a video shared in Slack carries its own (the channel's or the sharer's), else its
+ * source's; none at all: every line, so the AI decides
+ */
+async function sourceLines(admin: Admin, sourceId: string | null, own?: string[] | null): Promise<YtLine[]> {
+  const mine = cleanLines(own ?? []);
+  if (mine.length) return mine;
   if (!sourceId) return [...YT_LINES];
   const { data } = await admin.from("youtube_sources").select("lines").eq("id", sourceId).maybeSingle();
   const l = cleanLines((data?.lines as string[] | null) ?? []);
@@ -482,7 +487,7 @@ async function sourceLines(admin: Admin, sourceId: string | null): Promise<YtLin
 export type Distilled = { summary: string; takeaways: Takeaway[]; worthIt: boolean };
 
 /** What one transcript teaches: the AI's summary and cleaned takeaways */
-export async function distill(v: { title: string | null; channel: string | null; description: string | null; transcript: string; seconds?: number | null }, lines: YtLine[]): Promise<Distilled> {
+export async function distill(v: { title: string | null; channel: string | null; description: string | null; transcript: string; seconds?: number | null; shared?: string | null }, lines: YtLine[]): Promise<Distilled> {
   const out = await askJson<{ worth_it: boolean; summary: string; takeaways: unknown[] }>({
     agent: "market",
     label: "youtube takeaways",
@@ -492,7 +497,8 @@ export async function distill(v: { title: string | null; channel: string | null;
     maxTokens: 6000,
     system: SYSTEM,
     prompt: `<video channel="${(v.channel ?? "unknown").replace(/"/g, "'")}" title="${(v.title ?? "").replace(/"/g, "'")}">
-<lines_this_channel_teaches>${lines.map((l) => YT_LINE_LABEL[l]).join(", ")}</lines_this_channel_teaches>
+<lines_this_channel_teaches>${lines.map((l) => YT_LINE_LABEL[l]).join(", ")}</lines_this_channel_teaches>${v.shared ? `
+<shared_by_the_team>${v.shared.replace(/</g, "")} (a teammate flagged it: weigh what they point at)</shared_by_the_team>` : ""}
 <description>${(v.description ?? "").slice(0, 1500)}</description>
 <transcript>
 ${v.transcript.slice(0, TRANSCRIPT_CHARS)}
@@ -551,8 +557,8 @@ export async function processVideo(admin: Admin, row: VideoRow, gate: GeminiGate
       return update(admin, row.id, { ...about, status: "no_transcript", blocked: step === "wait-key" ? "key" : null, error: step === "wait-key" ? WAITING_KEY : (geminiError ?? NO_TRANSCRIPT) });
     }
     if (transcript.length < 400) return update(admin, row.id, { ...about, transcript, transcript_via: via, blocked: null, status: "skipped", error: "Too short to teach anything (a Short or a clip)." });
-    const lines = await sourceLines(admin, row.source_id);
-    const d = await distill({ title: about.title, channel: about.channel_title, description: about.description, transcript, seconds }, lines);
+    const lines = await sourceLines(admin, row.source_id, row.lines);
+    const d = await distill({ title: about.title, channel: about.channel_title, description: about.description, transcript, seconds, shared: row.shared_note ?? null }, lines);
     await admin.from("youtube_takeaways").delete().eq("video_row", row.id).eq("status", "pending");
     if (d.takeaways.length)
       await admin.from("youtube_takeaways").insert(d.takeaways.map((t) => ({ video_row: row.id, takeaway: t.takeaway, why: t.why || null, lines: t.lines, roles: t.roles, at_seconds: t.atSeconds })));
@@ -823,7 +829,7 @@ export async function askChannels(admin: Admin, question: string, channel?: stri
 
 export type SourceView = { id: string; kind: "channel" | "video"; url: string; title: string | null; handle: string | null; thumbnail: string | null; about: string | null; lines: YtLine[]; suggested: YtLine[]; active: boolean; lastChecked: string | null; error: string | null; videos: number; newVideos: number; takeaways: number; addedBy: string | null; blocked: { key: number; unavailable: number; long: number } };
 export type TakeawayView = { id: string; takeaway: string; why: string | null; lines: YtLine[]; roles: string[]; link: string; status: string; decidedBy: string | null; calledRole: string | null; mine: boolean; canDecide: boolean; /** On lines this person oversees (their own call); the rest only under "See all" */ scoped: boolean };
-export type VideoView = { id: string; videoId: string; url: string; title: string | null; channel: string | null; thumbnail: string | null; publishedAt: string | null; summary: string | null; status: string; error: string | null; sourceId: string | null; onDemand: boolean; blocked: "key" | "unavailable" | "long" | null; via: string | null; takeaways: TakeawayView[] };
+export type VideoView = { id: string; videoId: string; url: string; title: string | null; channel: string | null; thumbnail: string | null; publishedAt: string | null; summary: string | null; status: string; error: string | null; sourceId: string | null; onDemand: boolean; blocked: "key" | "unavailable" | "long" | null; via: string | null; sharedNote: string | null; priority: number; shares: number; takeaways: TakeawayView[] };
 export type YouTubePage = { sources: SourceView[]; videos: VideoView[]; waiting: number; forMe: number; canManage: boolean; gemini: boolean };
 
 /** Everything the YouTube section shows, for this person (what's shared with them, what's theirs to decide) */
@@ -832,7 +838,7 @@ export async function loadYouTube(db: SupabaseClient, me: Me & { isLead?: boolea
   const week = new Date(Date.now() - 7 * DAY).toISOString();
   const [{ data: src }, { data: vids }, { data: me2 }] = await Promise.all([
     db.from("youtube_sources").select("id, kind, url, title, handle, thumbnail_url, about, lines, suggested_lines, active, last_checked_at, error, video_count, profiles:added_by(full_name)").order("created_at", { ascending: false }),
-    db.from("youtube_videos").select("id, video_id, url, title, channel_title, thumbnail_url, published_at, summary, status, error, source_id, on_demand, created_at, added_by, blocked, transcript_via").order("created_at", { ascending: false }).limit(120),
+    db.from("youtube_videos").select("id, video_id, url, title, channel_title, thumbnail_url, published_at, summary, status, error, source_id, on_demand, created_at, added_by, blocked, transcript_via, shared_note, priority, youtube_shares(count)").order("created_at", { ascending: false }).limit(120),
     db.from("profiles").select("exec_focus").eq("id", me.id).maybeSingle(),
   ]);
   const ids = (vids ?? []).map((v) => v.id as string);
@@ -879,6 +885,9 @@ export async function loadYouTube(db: SupabaseClient, me: Me & { isLead?: boolea
       onDemand: Boolean(v.on_demand),
       blocked: (v.blocked as VideoView["blocked"]) ?? null,
       via: (v.transcript_via as string | null) ?? null,
+      sharedNote: (v.shared_note as string | null) ?? null,
+      priority: Number(v.priority) || 0,
+      shares: Number((v.youtube_shares as unknown as { count: number }[] | null)?.[0]?.count ?? 0),
       takeaways: byVideo.get(v.id as string) ?? [],
     }));
   const sources: SourceView[] = (src ?? []).map((s) => {
