@@ -185,19 +185,24 @@ export async function setSuppliesContent(clientId: string, on: boolean): Promise
 
 /**
  * The Email SOW Generator from the client page: a Sprint Recap and Ongoing Management SOW made as a Google Doc in the
- * Scope of Work look (src/lib/kaizen-docs), filed in the client's Headquarters › Proposals & SOWs, priced from the
- * email packages. `brief` is what the person wants in it (the tier to pitch, an add-on, what was built); empty is fine.
+ * Scope of Work look (src/lib/kaizen-docs), priced from the email packages, in the Drive folder said back for a yes
+ * first (their Headquarters › Proposals & SOWs by default, or the folder they last used) or a link they paste. `brief` is what the person wants in it (the tier to pitch, an add-on, what was built); empty is fine.
  */
-export async function draftEmailSow(clientId: string, brief: string): Promise<{ ok: true; id: string; url: string; pdf: string | null; place: string; placeholders: string[] } | Fail> {
+export async function draftEmailSow(clientId: string, brief: string, where: { folder?: string | null; yes?: boolean } = {}): Promise<{ ok: true; id: string; url: string; pdf: string | null; place: string; saved: string; placeholders: string[] } | { ok: false; folder: { say: string; path: string | null; link: string | null; needsLink: boolean } } | Fail> {
   try {
     const me = await requireStaff();
     if (!adminConfigured()) throw new Error("Not set up.");
     const { data: c } = await (await createClient()).from("clients").select("id, name").eq("id", clientId).maybeSingle();
     if (!c) throw new Error("That client isn't one you work on.");
     const { makeKaizenDoc } = await import("@/lib/kaizen-docs/server");
-    const r = await makeKaizenDoc({ admin: createAdminClient(), me: { id: me.id, fullName: me.fullName, email: me.email, isExec: me.isExec, isLead: me.isLead, role: me.role }, ask: `Email SOW for ${c.name as string}. ${String(brief ?? "")}`.slice(0, 6000), template: "sow", client: { id: c.id as string, name: c.name as string }, brief: String(brief ?? "").slice(0, 6000), line: "email" });
+    const r = await makeKaizenDoc({ admin: createAdminClient(), me: { id: me.id, fullName: me.fullName, email: me.email, isExec: me.isExec, isLead: me.isLead, role: me.role }, ask: `Email SOW for ${c.name as string}. ${String(brief ?? "")}`.slice(0, 6000), template: "sow", client: { id: c.id as string, name: c.name as string }, brief: String(brief ?? "").slice(0, 6000), line: "email", folder: where.folder?.trim() || null, folderYes: where.yes === true });
+    if (!r.ok && "where" in r) {
+      // The Drive rule: the folder is said back for a yes (or a link is asked for) before anything is written
+      const w = r.where as { say?: string; destination?: { path?: string; link?: string | null }; needs_yes?: boolean };
+      return { ok: false, folder: { say: String(w.say ?? "Which Drive folder should it go in?"), path: w.destination?.path ?? null, link: w.destination?.link ?? null, needsLink: !w.needs_yes } };
+    }
     if (!r.ok) return { ok: false, error: r.error };
-    return { ok: true, id: r.id, url: r.url, pdf: r.pdf, place: r.place, placeholders: r.placeholders };
+    return { ok: true, id: r.id, url: r.url, pdf: r.pdf, place: r.place, saved: r.saved, placeholders: r.placeholders };
   } catch (e) {
     return fail(e);
   }

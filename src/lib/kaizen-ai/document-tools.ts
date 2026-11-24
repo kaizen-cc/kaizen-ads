@@ -16,7 +16,7 @@ const CLIENT = { type: "string", description: "The client's name (or slug). Leav
 const r2 = (x: number | null | undefined) => (x == null || !Number.isFinite(x) ? null : Math.round(x * 100) / 100);
 
 /** Every tool name here (the email and social teams get them too) */
-export const DOCUMENT_TOOLS = ["package_details", "client_wins", "make_document", "create_document", "rate_card", "set_rate_card", "create_case_study", "upload_to_drive", "run_after_call"] as const;
+export const DOCUMENT_TOOLS = ["package_details", "client_wins", "make_document", "move_document", "create_document", "rate_card", "set_rate_card", "create_case_study", "upload_to_drive", "run_after_call"] as const;
 
 const ITEMS = { type: "array", items: { type: "string" } };
 
@@ -35,11 +35,11 @@ export function documentTools(ctx: ToolCtx): ChatTool[] {
   const maybeClient = async (input: Record<string, unknown>) => (input.client || ctx.clientId ? await clientNamedForTools(ctx, input) : null);
 
   /** Makes a Kaizen document in Google and puts its card on screen */
-  const makeDoc = async (o: { template: TemplateKey | null; client: { id: string; name: string } | null; prospect: string | null; ask: string; brief: string; confirmed: { label: string; amount: number; cadence: "one_time" | "month" }[]; line: string | null; title: string | null; replaces?: string | null }) => {
+  const makeDoc = async (o: { template: TemplateKey | null; client: { id: string; name: string } | null; prospect: string | null; ask: string; brief: string; prices: { label: string; amount: number; cadence: "one_time" | "month" }[]; line: string | null; title: string | null; replaces?: string | null; folder?: unknown; confirmed?: unknown }) => {
     if (ctx.me.viewAs) return { made: false, error: "While viewing as someone, nothing is made in their Google Drive." };
     const { makeKaizenDoc } = await import("@/lib/kaizen-docs/server");
-    const r = await makeKaizenDoc({ admin: ctx.admin, me: { id: ctx.me.id, fullName: ctx.me.fullName, email: ctx.me.email, isExec: ctx.me.isExec, isLead: ctx.me.isLead, role: ctx.me.role }, ask: o.ask, template: o.template, client: o.client, prospect: o.prospect, brief: o.brief, confirmed: o.confirmed, line: o.line, title: o.title });
-    if (!r.ok) return { made: false, error: r.error, ...(r.ask ? { ask_them: r.ask } : {}) };
+    const r = await makeKaizenDoc({ admin: ctx.admin, me: { id: ctx.me.id, fullName: ctx.me.fullName, email: ctx.me.email, isExec: ctx.me.isExec, isLead: ctx.me.isLead, role: ctx.me.role }, ask: o.ask, template: o.template, client: o.client, prospect: o.prospect, brief: o.brief, confirmed: o.prices, line: o.line, title: o.title, folder: typeof o.folder === "string" ? o.folder : null, folderYes: o.confirmed === true });
+    if (!r.ok) return "where" in r ? r.where : { made: false, error: r.error, ...(r.ask ? { ask_them: r.ask } : {}) };
     card({ type: "document", id: r.id, kind: r.template === "proposal" ? "proposal" : "sow", title: r.title, client: o.client?.name ?? o.prospect ?? null, version: 1, href: r.url, download: r.pdf ?? r.url, placeholders: r.placeholders, google: { url: r.url, kind: r.kind, place: r.place } });
     return {
       made: true,
@@ -48,18 +48,18 @@ export function documentTools(ctx: ToolCtx): ChatTool[] {
       kind: r.kind === "slides" ? "Google Slides" : "Google Doc",
       filed_in: r.place,
       folder: r.folderUrl,
-      ...(r.note ? { filing_note: r.note } : {}),
+      say: r.saved,
       ...(r.placeholders.length ? { still_to_fill: r.placeholders } : {}),
       ...(r.rateCardEmpty && r.placeholders.some((p) => /price/i.test(p)) ? { prices: "Kaizen's rate card is empty, so the fees are marked [Price to confirm]. Ask them for the prices (one question listing each), then make it again with confirmed_prices." } : {}),
       ...(o.replaces ? { note_on_versions: "Made as a new Google file; the earlier one stays in Drive." } : {}),
-      note: "The card is on screen with the Google link (it opens in a new tab). Say in a line what it is and where it's filed; mention anything still to fill. To email it, give document_id to draft_message (attach): the PDF goes with it.",
+      note: "The card is on screen with the Google link (it opens in a new tab). Say the saved line (the file's link and its folder path) and what it is in a line; mention anything still to fill. To email it, give document_id to draft_message (attach): the PDF goes with it.",
     };
   };
 
   return [
     {
       name: "make_document",
-      description: `Makes a client-facing Kaizen document as a Google file in the house style, in the person's Google Drive, filed where it belongs (a client's Headquarters › Proposals & SOWs; a prospect's Kaizen Sales › Prospects › <name>; otherwise their own Drive), and returns its link. Templates: proposal (a sales proposal deck, Google Slides: pitch new work), quote (a project quote for a one-time build like a website, Google Doc), sow (a Scope of Work for a retainer, sprint or tier options, Google Doc; an email SOW is written by the Email SOW Generator), doc (any other document: a plan, audit, client brief, recap, in the SOW look) or deck (any other deck, in the proposal look). Leave template out to pick it from what they asked; if it says it's unclear, ask once. Proposals, quotes and SOWs are for the executives and line heads. Look things up first (get_client_context, package_details, client_wins, their KPIs, calls) and put what matters in brief with what they said; never ask what Kaizen OS already knows. Prices: only the rate card (rate_card), the email packages, or prices they confirmed (confirmed_prices, every time); anything else is marked [Price to confirm]. When the rate card is empty, ask for the prices once.`,
+      description: `Makes a client-facing Kaizen document as a Google file in the house style, in the person's Google Drive, in the Drive folder settled first (the Drive rule): the folder they named or linked, else the one they used last time for this client and kind of document, else Kaizen's default (a client's Headquarters › Proposals & SOWs; a prospect's Kaizen Sales › Prospects › <name>), said back as "Saving to <path>, OK?" before anything is written; on their yes call again with the same content and confirmed: true. Never guess a folder or use My Drive's root; when it can't be found, ask for the link. Returns the file's link and folder path. Templates: proposal (a sales proposal deck, Google Slides: pitch new work), quote (a project quote for a one-time build like a website, Google Doc), sow (a Scope of Work for a retainer, sprint or tier options, Google Doc; an email SOW is written by the Email SOW Generator), doc (any other document: a plan, audit, client brief, recap, in the SOW look) or deck (any other deck, in the proposal look). Leave template out to pick it from what they asked; if it says it's unclear, ask once. Proposals, quotes and SOWs are for the executives and line heads. Look things up first (get_client_context, package_details, client_wins, their KPIs, calls) and put what matters in brief with what they said; never ask what Kaizen OS already knows. Prices: only the rate card (rate_card), the email packages, or prices they confirmed (confirmed_prices, every time); anything else is marked [Price to confirm]. When the rate card is empty, ask for the prices once.`,
       input_schema: {
         type: "object",
         properties: {
@@ -71,6 +71,8 @@ export function documentTools(ctx: ToolCtx): ChatTool[] {
           line: { type: "string", description: "The service line it's about: email, meta, google, social, creative, web" },
           brief: { type: "string", description: "Everything the writer needs: what you looked up (numbers, package, services, call notes), their answers, the scope, timeline and terms they gave" },
           confirmed_prices: { type: "array", items: { type: "object", properties: { item: { type: "string" }, amount: { type: "number" }, cadence: { type: "string", enum: ["month", "one_time"] } }, required: ["item", "amount"] }, description: "Prices they confirmed in this conversation (relationship pricing). Pass every one, each time." },
+          folder: { type: "string", description: "The Drive folder they named or linked in this conversation (its link, or its path like Shared drive/Folder)" },
+          confirmed: { type: "boolean", description: "true only after they said yes to the folder you said back (Saving to <path>, OK?)" },
         },
         required: ["ask"],
         additionalProperties: false,
@@ -81,7 +83,30 @@ export function documentTools(ctx: ToolCtx): ChatTool[] {
         const { confirmedPrices } = await import("@/lib/documents/core");
         const { isTemplate } = await import("@/lib/kaizen-docs/templates");
         const confirmed = confirmedPrices(input.confirmed_prices, ctx.said ?? "", Boolean(ctx.me.isExec));
-        return makeDoc({ template: isTemplate(input.template) ? input.template : null, client: c ? { id: c.id, name: c.name } : null, prospect: c ? null : clip(input.prospect, 120) || null, ask: clip(input.ask, 4000), brief: clip(input.brief, 16000), confirmed: confirmed.map((p) => ({ label: p.label, amount: p.amount, cadence: p.cadence === "one_time" ? "one_time" : "month" })), line: clip(input.line, 30) || null, title: clip(input.title, 200) || null });
+        return makeDoc({ template: isTemplate(input.template) ? input.template : null, client: c ? { id: c.id, name: c.name } : null, prospect: c ? null : clip(input.prospect, 120) || null, ask: clip(input.ask, 4000), brief: clip(input.brief, 16000), prices: confirmed.map((p) => ({ label: p.label, amount: p.amount, cadence: p.cadence === "one_time" ? "one_time" : "month" })), folder: input.folder, confirmed: input.confirmed, line: clip(input.line, 30) || null, title: clip(input.title, 200) || null });
+      },
+    },
+    {
+      name: "move_document",
+      description: "Moves a Kaizen document already in Google Drive (its document_id) into another folder, under the Drive rule: the folder they named or linked (folder), or the one said back for a yes (confirmed: true after it). Use it when a prospect's proposal should now go into the client's folder, or they ask to move one. Returns the file's link and its new folder path.",
+      input_schema: { type: "object", properties: { document_id: { type: "string" }, folder: { type: "string" }, confirmed: { type: "boolean" } }, required: ["document_id"], additionalProperties: false },
+      status: () => "Moving it in Drive…",
+      run: async (input) => {
+        if (ctx.me.viewAs) return { moved: false, error: "While viewing as someone, nothing is moved in their Drive." };
+        const id = /^[0-9a-f-]{36}$/i.test(String(input.document_id ?? "")) ? String(input.document_id) : null;
+        const { data: d } = id ? await ctx.db.from("kaizen_documents").select("id, template, client_id, prospect_name, google_id").eq("id", id).maybeSingle() : { data: null };
+        if (!d?.google_id) return { moved: false, error: "That isn't a Google document you can move." };
+        const { data: c } = d.client_id ? await ctx.db.from("clients").select("id, name").eq("id", d.client_id as string).maybeSingle() : { data: null };
+        const { docDestination } = await import("@/lib/kaizen-docs/destination");
+        const { isTemplate } = await import("@/lib/kaizen-docs/templates");
+        const where = await docDestination({ admin: ctx.admin, me: { id: ctx.me.id, email: ctx.me.email }, template: isTemplate(d.template) ? d.template : "doc", client: c ? { id: c.id as string, name: c.name as string } : null, prospect: (d.prospect_name as string | null) ?? null, folder: typeof input.folder === "string" ? input.folder : null, confirmed: input.confirmed === true });
+        if ("reply" in where) return where.reply;
+        const { moveToDestination, rememberDestination } = await import("@/lib/drive-destination");
+        const { pathText, savedLine } = await import("@/lib/drive-destination-core");
+        const m = await moveToDestination(ctx.me.email, d.google_id as string, where.save);
+        await rememberDestination(ctx.admin, where.key, m.dest).catch(() => undefined);
+        await ctx.admin.from("kaizen_documents").update({ folder_id: m.dest.id, folder_place: pathText(m.dest.path), updated_at: new Date().toISOString() }).eq("id", d.id);
+        return { moved: true, link: m.link, folder_path: pathText(m.dest.path), say: savedLine(m.link, m.dest) };
       },
     },
     {
@@ -206,6 +231,8 @@ export function documentTools(ctx: ToolCtx): ChatTool[] {
           data_figures: { type: "array", items: { type: "number" }, description: "Dollar figures quoted from their own data (revenue won), so they aren't taken for prices" },
           document_id: { type: "string", description: "A document you made, to draw again with this content" },
           confirmed_prices: { type: "array", items: { type: "object", properties: { item: { type: "string" }, amount: { type: "number" }, cadence: { type: "string", enum: ["month", "one_time"] } }, required: ["item", "amount"] }, description: "Prices the person confirmed in this conversation (\"Basic is $1,000 a month\"): they're printed instead of a placeholder. Pass every one they confirmed, each time you draw it again." },
+          folder: { type: "string", description: "The Drive folder they named or linked in this conversation (its link, or its path like Shared drive/Folder)" },
+          confirmed: { type: "boolean", description: "true only after they said yes to the folder you said back (Saving to <path>, OK?)" },
         },
         required: ["kind", "title"],
         additionalProperties: false,
@@ -223,7 +250,7 @@ export function documentTools(ctx: ToolCtx): ChatTool[] {
         const { confirmedPrices } = await import("@/lib/documents/core");
         const confirmed = confirmedPrices(input.confirmed_prices, ctx.said ?? "", Boolean(ctx.me.isExec));
         const template = input.kind === "sow" ? "sow" : input.kind === "proposal" ? "proposal" : "doc";
-        return makeDoc({ template, client: c, prospect: null, ask: `${clip(input.title, 200)}${ctx.said ? `. They said: ${clip(ctx.said, 1500)}` : ""}`, brief: sowBrief(input, ctx.said), confirmed: confirmed.map((p) => ({ label: p.label, amount: p.amount, cadence: p.cadence === "one_time" ? "one_time" : "month" })), line: String(input.service ?? "") || null, title: clip(input.title, 200) || null, replaces: id });
+        return makeDoc({ template, client: c, prospect: null, ask: `${clip(input.title, 200)}${ctx.said ? `. They said: ${clip(ctx.said, 1500)}` : ""}`, brief: sowBrief(input, ctx.said), prices: confirmed.map((p) => ({ label: p.label, amount: p.amount, cadence: p.cadence === "one_time" ? "one_time" : "month" })), folder: input.folder, confirmed: input.confirmed, line: String(input.service ?? "") || null, title: clip(input.title, 200) || null, replaces: id });
       },
     },
     {

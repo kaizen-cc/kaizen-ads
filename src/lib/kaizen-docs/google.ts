@@ -1,17 +1,13 @@
 import "server-only";
-import type { SupabaseClient } from "@supabase/supabase-js";
-import { findOrCreateFolder, folderIdOf } from "@/lib/creative-drive-paths";
+import type { Destination } from "@/lib/drive-destination-core";
 import { footerText, kdocHtml } from "./html";
 import { deckRequests, PAGE } from "./slides";
 import { fileName, type KDoc } from "./templates";
 
 // A Kaizen document made in Google, as the person who asked (Kaizen's service account acting for them, domain-wide
 // delegation): a Google Doc from the house-style HTML (Drive converts it; the footer is set through the Docs API) or
-// Google Slides built through the Slides API. Filed where it belongs:
-//   a client's document → the client's Headquarters folder › "Proposals & SOWs" (made when missing)
-//   a prospect's        → the shared "Kaizen Sales" › "Prospects" › <name> (moved to the HQ once they're a client)
-//   anything else       → the person's own Drive
-// and a PDF copy exported for email attachments. Needs, in the Google Admin console, the service account's domain-wide
+// Google Slides built through the Slides API, in the folder the Drive rule settled on (src/lib/kaizen-docs/destination.ts:
+// named, confirmed or remembered; never a guess), and a PDF copy exported for email attachments. Needs, in the Google Admin console, the service account's domain-wide
 // delegation with https://www.googleapis.com/auth/drive, https://www.googleapis.com/auth/presentations and
 // https://www.googleapis.com/auth/documents.
 
@@ -20,9 +16,6 @@ const SLIDES_SCOPE = "https://www.googleapis.com/auth/presentations";
 const DOCS_SCOPE = "https://www.googleapis.com/auth/documents";
 const DRIVE = "https://www.googleapis.com/drive/v3/files";
 const UPLOAD = "https://www.googleapis.com/upload/drive/v3/files";
-export const PROPOSALS_FOLDER = "Proposals & SOWs";
-export const SALES_FOLDER = "Kaizen Sales";
-export const PROSPECTS_FOLDER = "Prospects";
 
 // A token asks for the scopes it needs; when the Workspace hasn't allowed Slides or Docs yet, Drive alone still works
 // (a Doc is made by Drive's converter; only the footer needs the Docs scope)
@@ -103,7 +96,7 @@ function googleAs(subject: string): GoogleAs {
 const q = (params: Record<string, string>) => `?${new URLSearchParams({ supportsAllDrives: "true", ...params })}`;
 
 /** Folder helpers for one Google identity (the shape findHq and findOrCreateFolder take) */
-function folders(g: GoogleAs) {
+export function folderHelpers(g: GoogleAs) {
   return {
     async listFolders(parent: string) {
       const out: { id: string; name: string }[] = [];
@@ -131,7 +124,7 @@ export async function googleFor(email: string | null, probe = "root"): Promise<{
   for (const who of tries) {
     try {
       const g = googleAs(who);
-      await folders(g).folderName(probe);
+      await folderHelpers(g).folderName(probe);
       return { g, asPerson: who === email };
     } catch (e) {
       last = e;
@@ -140,54 +133,13 @@ export async function googleFor(email: string | null, probe = "root"): Promise<{
   throw last;
 }
 
-export type Where = { kind: "client"; clientId: string } | { kind: "prospect"; name: string } | { kind: "mine" };
-export type Filed = { folderId: string; folderUrl: string; place: string; asPerson: boolean; g: GoogleAs; note: string | null };
+export type Filed = { folderId: string; folderUrl: string; place: string; asPerson: boolean; g: GoogleAs };
 
-/** The shared "Kaizen Sales" folder: app_settings kaizen_sales_folder, else found (or made) in the shared drive */
-async function salesRoot(admin: SupabaseClient, g: GoogleAs): Promise<string> {
-  const { data } = await admin.from("app_settings").select("value").eq("key", "kaizen_sales_folder").maybeSingle();
-  const set = (data?.value as { folder?: string } | null)?.folder;
-  if (set) return folderIdOf(set);
-  const root = process.env.GOOGLE_SHARED_DRIVE_ID;
-  if (!root) throw new GoogleError("There's no shared Kaizen Sales folder set, and no shared drive to make it in.", 0);
-  const id = (await findOrCreateFolder(folders(g), root, SALES_FOLDER)).id;
-  await admin.from("app_settings").upsert({ key: "kaizen_sales_folder", value: { folder: id } });
-  return id;
-}
-
-/** Where a document goes, and the Google identity that writes it there */
-export async function fileFor(admin: SupabaseClient, me: { email: string }, where: Where): Promise<Filed> {
-  if (where.kind === "client") {
-    const [{ clientFacts }, { findHq }] = await Promise.all([import("@/lib/copy-docs/server"), import("@/lib/copy-docs/hq-path")]);
-    const facts = await clientFacts(admin as never, where.clientId);
-    const root = process.env.GOOGLE_SHARED_DRIVE_ID ?? null;
-    const probe = [...facts.hqLinks, facts.clientFolder, root].map((x) => (x ? folderIdOf(x) : null)).find(Boolean) ?? null;
-    if (probe) {
-      try {
-        const look = await googleFor(me.email, probe);
-        const hq = await findHq(folders(look.g), { client: { name: facts.name, kaizenId: facts.kaizenId }, stored: facts.hqLinks, clientFolder: facts.clientFolder, root });
-        if (hq.ok) {
-          const { g, asPerson } = await googleFor(me.email, hq.id);
-          const id = (await findOrCreateFolder(folders(g), hq.id, PROPOSALS_FOLDER)).id;
-          return { folderId: id, folderUrl: `https://drive.google.com/drive/folders/${id}`, place: `${facts.name}'s Headquarters › ${PROPOSALS_FOLDER}`, asPerson, g, note: null };
-        }
-      } catch {
-        // falls through to their own Drive, said in the note
-      }
-    }
-    const mine = await googleFor(me.email);
-    return { folderId: "root", folderUrl: "https://drive.google.com/drive/my-drive", place: "your own Drive", asPerson: mine.asPerson, g: mine.g, note: `${facts.name}'s Headquarters folder couldn't be found or opened, so it's in your own Drive for now: paste the HQ link on the client page (account sheet) and new ones file there.` };
-  }
-  if (where.kind === "prospect") {
-    const shared = await googleFor(process.env.GOOGLE_DRIVE_USER ?? me.email, process.env.GOOGLE_SHARED_DRIVE_ID ?? "root");
-    const sales = await salesRoot(admin, shared.g);
-    const prospects = (await findOrCreateFolder(folders(shared.g), sales, PROSPECTS_FOLDER)).id;
-    const id = (await findOrCreateFolder(folders(shared.g), prospects, where.name.replace(/[\\/:*?"<>|]+/g, " ").trim().slice(0, 80) || "Prospect")).id;
-    const { g, asPerson } = await googleFor(me.email, id).catch(() => ({ g: shared.g, asPerson: false }));
-    return { folderId: id, folderUrl: `https://drive.google.com/drive/folders/${id}`, place: `${SALES_FOLDER} › ${PROSPECTS_FOLDER} › ${where.name}`, asPerson, g, note: null };
-  }
-  const { g, asPerson } = await googleFor(me.email);
-  return { folderId: "root", folderUrl: "https://drive.google.com/drive/my-drive", place: "your own Drive", asPerson, g, note: null };
+/** The Google identity that writes into a settled destination (the person when Google allows it) */
+export async function filedAt(email: string, d: Destination): Promise<Filed> {
+  const { pathText } = await import("@/lib/drive-destination-core");
+  const { g, asPerson } = await googleFor(email, d.id);
+  return { folderId: d.id, folderUrl: d.link ?? `https://drive.google.com/drive/folders/${d.id}`, place: pathText(d.path), asPerson, g };
 }
 
 export type MadeGoogle = { id: string; url: string; kind: "doc" | "slides"; pdf: Buffer | null; footer: boolean };
@@ -242,10 +194,4 @@ export async function makeGoogleFile(doc: KDoc, filed: Filed, me: { email: strin
   if (!filed.asPerson) await g.call("POST", `${DRIVE}/${made.id}/permissions${q({ sendNotificationEmail: "false" })}`, { json: { role: "writer", type: "user", emailAddress: me.email } }).catch(() => undefined);
   const pdf = await g.raw(`${DRIVE}/${made.id}/export?mimeType=application/pdf`).catch(() => null);
   return { ...made, pdf, footer };
-}
-
-/** A prospect's documents moved into their Headquarters › Proposals & SOWs once they're a client */
-export async function moveToFolder(g: GoogleAs, fileId: string, folderId: string) {
-  const meta = await g.call<{ parents?: string[] }>("GET", `${DRIVE}/${fileId}${q({ fields: "parents" })}`);
-  await g.call("PATCH", `${DRIVE}/${fileId}${q({ addParents: folderId, removeParents: (meta.parents ?? []).join(","), fields: "id" })}`, { json: {} });
 }

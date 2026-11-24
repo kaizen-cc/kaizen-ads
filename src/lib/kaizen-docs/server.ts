@@ -31,11 +31,17 @@ export type MakeDocInput = {
   /** The service line it's about (email, meta, google, social, creative, web) */
   line?: string | null;
   title?: string | null;
+  /** The Drive folder they named or linked in this conversation */
+  folder?: string | null;
+  /** Their yes to the folder said back (remembered, or Kaizen's default) */
+  folderYes?: boolean;
 };
 
 export type MadeDoc =
-  | { ok: true; id: string; template: TemplateKey; title: string; url: string; kind: "doc" | "slides"; place: string; folderUrl: string; note: string | null; placeholders: string[]; pdf: string | null; footerSet: boolean; rateCardEmpty: boolean }
-  | { ok: false; error: string; ask?: string };
+  | { ok: true; id: string; template: TemplateKey; title: string; url: string; kind: "doc" | "slides"; place: string; folderUrl: string; saved: string; placeholders: string[]; pdf: string | null; footerSet: boolean; rateCardEmpty: boolean }
+  | { ok: false; error: string; ask?: string }
+  /** Where it goes in Drive isn't settled yet: say this to the person (asked before anything is written) */
+  | { ok: false; where: Record<string, unknown> };
 
 /** The rate card (empty until the executives fill it) and the email packages, as prices a document may quote */
 export async function storedRates(admin: SupabaseClient): Promise<{ rates: RatePrice[]; rateCardEmpty: boolean; lines: string[] }> {
@@ -93,6 +99,11 @@ export async function makeKaizenDoc(input: MakeDocInput): Promise<MadeDoc> {
   const line = (input.line ?? "").toLowerCase();
   const dated = new Date().toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "America/New_York" });
 
+  // Where it goes in Drive, settled before the minute of writing: named, or said back for a yes (never a guess)
+  const { docDestination } = await import("./destination");
+  const where = await docDestination({ admin, me, template, client, prospect, folder: input.folder, confirmed: input.folderYes });
+  if ("reply" in where) return { ok: false, where: where.reply };
+
   let doc: KDoc;
   if (template === "sow" && client && (line.startsWith("email") || line === "sms" || /\bemail|klaviyo|sms\b/i.test(input.ask)) ) {
     // An email SOW comes from the Email SOW Generator (Sprint Recap and Ongoing Management structure, email packages)
@@ -125,11 +136,11 @@ export async function makeKaizenDoc(input: MakeDocInput): Promise<MadeDoc> {
     doc = cleanKDoc(raw, { template, client: client?.name ?? prospect, preparedBy: `${me.fullName}, Kaizen Marketing Agency`, dated, prices: [...rates, ...confirmed], figures: [...dollarsIn(facts), ...dollarsIn(input.ask), ...dollarsIn(input.brief)] });
   }
 
-  const { fileFor, makeGoogleFile } = await import("./google");
+  const { filedAt, makeGoogleFile } = await import("./google");
   let filed;
   let made;
   try {
-    filed = await fileFor(admin, me, client ? { kind: "client", clientId: client.id } : prospect ? { kind: "prospect", name: prospect } : { kind: "mine" });
+    filed = await filedAt(me.email, where.save);
     made = await makeGoogleFile(doc, filed, me);
   } catch (e) {
     const m = e instanceof Error ? e.message : String(e);
@@ -174,34 +185,48 @@ export async function makeKaizenDoc(input: MakeDocInput): Promise<MadeDoc> {
     prospect_name: prospect,
   });
   if (error) return { ok: false, error: `It was made in Google (${made.url}) but couldn't be kept in Kaizen OS: ${error.message}` };
+  const { rememberDestination } = await import("@/lib/drive-destination");
+  const { savedLine } = await import("@/lib/drive-destination-core");
+  await rememberDestination(admin, where.key, where.save).catch(() => undefined);
   const { rateCardEmpty } = await storedRates(admin);
-  return { ok: true, id, template, title: doc.title, url: made.url, kind: made.kind, place: filed.place, folderUrl: filed.folderUrl, note: filed.note, placeholders: doc.placeholders, pdf: path ? `/api/documents/${id}?download=1` : null, footerSet: made.footer, rateCardEmpty };
+  return { ok: true, id, template, title: doc.title, url: made.url, kind: made.kind, place: filed.place, folderUrl: filed.folderUrl, saved: savedLine(made.url, where.save), placeholders: doc.placeholders, pdf: path ? `/api/documents/${id}?download=1` : null, footerSet: made.footer, rateCardEmpty };
 }
 
 /**
- * Prospects' documents, moved into their Headquarters › Proposals & SOWs once they're a client (matched by name), and
- * attached to the client in Kaizen OS. Run by the cron.
+ * Prospects' documents, moved once they're a client (matched by name), only into the folder that person confirmed for
+ * this client and kind of document (the Drive rule: no one to ask in a cron, so never a guess). With none remembered,
+ * the person is asked in the app to move it (making a new document for the client says the folder back for a yes).
+ * Run by the cron.
  */
-export async function fileProspectDocs(admin: SupabaseClient): Promise<{ moved: number }> {
-  const { data: docs } = await admin.from("kaizen_documents").select("id, prospect_name, google_id, profile_id").is("client_id", null).not("prospect_name", "is", null).not("google_id", "is", null).limit(50);
-  if (!docs?.length) return { moved: 0 };
-  const { data: clients } = await admin.from("clients").select("id, name").is("archived_at", null);
+export async function fileProspectDocs(admin: SupabaseClient): Promise<{ moved: number; asked: number }> {
+  const { data: docs } = await admin.from("kaizen_documents").select("id, title, template, prospect_name, google_id, google_url, profile_id").is("client_id", null).not("prospect_name", "is", null).not("google_id", "is", null).limit(50);
+  if (!docs?.length) return { moved: 0, asked: 0 };
+  const { data: clients } = await admin.from("clients").select("id, name, slug").is("archived_at", null);
   const { looseKey } = await import("@/lib/copy-docs/hq-path");
-  const { fileFor, moveToFolder } = await import("./google");
+  const { backgroundDestination, moveToDestination } = await import("@/lib/drive-destination");
+  const { pathText } = await import("@/lib/drive-destination-core");
   let moved = 0;
+  let asked = 0;
   for (const d of docs) {
     const c = (clients ?? []).find((x) => looseKey(x.name as string) === looseKey(d.prospect_name as string));
     if (!c) continue;
     try {
+      const dest = await backgroundDestination(admin, { profileId: d.profile_id as string, clientId: c.id as string, docType: String(d.template ?? "doc") });
+      if (!dest) {
+        // Attached to the client in Kaizen OS; the file stays where it is until they say where it goes
+        await admin.from("kaizen_documents").update({ client_id: c.id, updated_at: new Date().toISOString() }).eq("id", d.id);
+        await admin.from("notifications").upsert([{ profile_id: d.profile_id, kind: "assistant", title: `${c.name} is a client now: where should "${String(d.title).slice(0, 80)}" go in Drive?`, body: `It's still in Kaizen Sales › Prospects. Tell your assistant the folder (their Headquarters › Proposals & SOWs, or another) and it will move it.`, href: d.google_url, client_id: c.id, key: `prospect-doc-move:${d.id}`, priority: "normal" }], { onConflict: "profile_id,key", ignoreDuplicates: true });
+        asked++;
+        continue;
+      }
       const { data: who } = await admin.from("profiles").select("email").eq("id", d.profile_id as string).maybeSingle();
-      const filed = await fileFor(admin, { email: (who?.email as string | null) ?? process.env.GOOGLE_DRIVE_USER ?? "" }, { kind: "client", clientId: c.id as string });
-      if (filed.folderId === "root") continue;
-      await moveToFolder(filed.g, d.google_id as string, filed.folderId);
-      await admin.from("kaizen_documents").update({ client_id: c.id, folder_id: filed.folderId, folder_place: filed.place, updated_at: new Date().toISOString() }).eq("id", d.id);
+      if (!who?.email) continue;
+      const m = await moveToDestination(who.email as string, d.google_id as string, dest);
+      await admin.from("kaizen_documents").update({ client_id: c.id, folder_id: m.dest.id, folder_place: pathText(m.dest.path), updated_at: new Date().toISOString() }).eq("id", d.id);
       moved++;
     } catch {
       // tried again next run
     }
   }
-  return { moved };
+  return { moved, asked };
 }
