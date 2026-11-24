@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CallCopyDoc } from "@/lib/agent-call/core";
 import { findOrCreateFolder, folderIdOf } from "@/lib/creative-drive-paths";
-import { changedLines, copyFieldProblems, copyLines, COPY_SCHEMA, liftSectionLabels, docKindsFor, copyDocHtml, copyDocName, EMAIL_FOLDER, normalizeCopy, setCopyLine, toLooseCopy, type CopyComment, type CopyContent, type CopyStatus } from "./core";
+import { changedLines, copyFieldProblems, copyLines, COPY_SCHEMA, liftSectionLabels, docKindsFor, copyDocHtml, copyDocLines, copyDocName, docAppendRequests, EMAIL_FOLDER, googleDocIdOf, nextEmailNumber, normalizeCopy, setCopyLine, toLooseCopy, type CopyComment, type CopyContent, type CopyStatus } from "./core";
 
 // Copy documents on the server: saved (each change a new version, the old ones kept), read through the person's own
 // session, revised by the AI copywriter from a note or the open comments, approved into a Google Doc in the client's
@@ -365,6 +365,51 @@ export async function approveCopyDoc(admin: Admin, db: SupabaseClient, me: Me, i
   }
   await admin.from("copy_docs").update({ status: "approved", approved_by: me.id, approved_at: new Date().toISOString(), doc_id: made.id, doc_url: made.url, folder_id: folder, updated_at: new Date().toISOString() }).eq("id", id);
   return { ok: true, docUrl: made.url, folder: folderName, asPerson, already: false, hqUrl: `https://drive.google.com/drive/folders/${hqId}` };
+}
+
+const DOCS_SCOPE = "https://www.googleapis.com/auth/documents";
+type GDoc = { title?: string; body?: { content?: { endIndex?: number; paragraph?: { elements?: { textRun?: { content?: string } }[] } }[] } };
+
+export type AddToDocResult = { ok: true; docUrl: string; title: string; added: number; from: number; asPerson: boolean } | { ok: false; error: string };
+
+/**
+ * Adds a copy document's emails to the end of a Google Doc the team already keeps (the client's "November campaigns"
+ * doc), in the same layout and numbered on from the emails already there, as the person when Google lets Kaizen OS act
+ * as them (else the shared Drive user). Needs edit access to that doc for whoever writes, and the service account's
+ * domain-wide delegation with https://www.googleapis.com/auth/documents (the same scope Kaizen documents use).
+ */
+export async function addCopyToGoogleDoc(db: SupabaseClient, me: Me, id: string, link: string, opts: { from?: number | null } = {}): Promise<AddToDocResult> {
+  const docId = googleDocIdOf(link);
+  if (!docId) return { ok: false, error: "That isn't a Google Doc link: ask for the doc's link (docs.google.com/document/d/…)." };
+  const d = await loadCopyDoc(db, id);
+  if (!d) return { ok: false, error: "That copy isn't one you can see." };
+  if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON) return { ok: false, error: "Google isn't connected to Kaizen OS yet." };
+  const { googleTokenFor } = await import("@/lib/context/google");
+  const tries = [me.email, process.env.GOOGLE_DRIVE_USER].filter((x, i, a): x is string => Boolean(x) && a.indexOf(x) === i);
+  const url = `https://docs.googleapis.com/v1/documents/${docId}`;
+  let last = "";
+  for (const who of tries) {
+    try {
+      const token = await googleTokenFor(who, DOCS_SCOPE);
+      const headers = { authorization: `Bearer ${token}` };
+      const got = await fetch(url, { headers, cache: "no-store" });
+      if (!got.ok) throw new Error(`${got.status} ${(await got.text()).slice(0, 200)}`);
+      const doc = (await got.json()) as GDoc;
+      const content = doc.body?.content ?? [];
+      const text = content.map((c) => (c.paragraph?.elements ?? []).map((e) => e.textRun?.content ?? "").join("")).join("");
+      const from = opts.from && opts.from > 0 ? Math.floor(opts.from) : nextEmailNumber(text);
+      const lines = copyDocLines(d.content, { client: d.client ?? "", from });
+      const requests = docAppendRequests(lines, content.at(-1)?.endIndex ?? 1);
+      const put = await fetch(`${url}:batchUpdate`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ requests }), cache: "no-store" });
+      if (!put.ok) throw new Error(`${put.status} ${(await put.text()).slice(0, 200)}`);
+      return { ok: true, docUrl: `https://docs.google.com/document/d/${docId}/edit`, title: doc.title ?? "the doc", added: d.content.emails.length, from, asPerson: who === me.email };
+    } catch (e) {
+      last = e instanceof Error ? e.message : String(e);
+    }
+  }
+  if (/unauthorized_client|access_denied/i.test(last)) return { ok: false, error: "Google hasn't allowed Kaizen OS to edit Docs yet: an admin adds https://www.googleapis.com/auth/documents to the service account's domain-wide delegation. Until then, copy the preview doc's text into the doc." };
+  if (/\b(?:403|404)\b/.test(last)) return { ok: false, error: `Google won't let Kaizen OS edit that doc: it needs edit access for ${me.email ?? "you"}${process.env.GOOGLE_DRIVE_USER ? ` or ${process.env.GOOGLE_DRIVE_USER}` : ""} (Share, Editor). Until then, copy the preview doc's text into it.` };
+  return { ok: false, error: `Google Docs had a problem: ${last.slice(0, 160)}` };
 }
 
 /** Keeps a Headquarters link given on a call on the client's account sheet tab for the line (only when it had none) */

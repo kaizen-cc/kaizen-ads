@@ -522,6 +522,108 @@ export function copyDocHtml(c: CopyContent, p: { client: string }) {
   return `<html><head><meta charset="utf-8"><title>${esc(c.title)}</title></head><body style="font-family:Arial,sans-serif"><h1>${esc(c.title)}</h1><p>${esc(p.client)} · ${esc(REQUEST_TYPE[c.kind])}</p>${briefRows.map(([k, v]) => `<p><b>${esc(k)}:</b> ${esc(v)}</p>`).join("")}${rules}${signoff}<hr>${emails}</body></html>`;
 }
 
+/** One paragraph written into an existing Google Doc: its text, how many leading characters are bold, and whether it's a bullet */
+export type DocLine = { text: string; bold: number; bullet?: boolean };
+
+/**
+ * The copy as paragraphs for a Google Doc the team already keeps (a client's "November campaigns" doc), in the same
+ * layout as copyDocHtml: email copy in the Template Library layout, numbered on from the emails already in the doc
+ * (`from`: the first one's number), anything else as its entries and sections.
+ */
+export function copyDocLines(c: CopyContent, p: { client: string; from?: number }): DocLine[] {
+  const out: DocLine[] = [];
+  const label = (l: string, v: string | null | undefined) => {
+    const head = `${l}: `;
+    const [first, ...more] = String(v ?? "").split("\n");
+    out.push({ text: `${head}${first}`, bold: head.length });
+    for (const m of more) out.push({ text: m, bold: 0 });
+  };
+  const notes = (ns: string[]) => {
+    if (!ns.length) return;
+    out.push({ text: "Design Notes:", bold: "Design Notes:".length });
+    for (const n of ns) out.push({ text: n.replace(/\n/g, " "), bold: 0, bullet: true });
+  };
+  const from = Math.max(1, Math.floor(p.from ?? 1));
+  const email = c.kind === "campaign" || c.kind === "flow" || c.kind === "sms";
+  const group = copyGroupName(c);
+  c.emails.forEach((e, i) => {
+    if (i) out.push({ text: "", bold: 0 });
+    if (email) {
+      const heading = copyEmailHeading(p.client, group, c.kind, from - 1 + i);
+      out.push({ text: heading, bold: heading.length });
+      const [hero, ...rest] = e.sections;
+      if (c.kind === "sms") {
+        label("Message", e.sections.map((s) => [s.heading, s.body].filter(Boolean).join("\n")).join("\n\n"));
+        if (e.cta) label("Link", e.cta.url || e.cta.label);
+      } else {
+        label("Subject Line", e.subject);
+        label("Preview Text", e.preview);
+        label("Headline", hero?.heading);
+        label("Sub-headline", hero?.body);
+        label("Hero CTA", e.cta ? `${e.cta.label}${e.cta.url ? ` (${e.cta.url})` : ""}` : "");
+        rest.forEach((s, j) => {
+          if (s.heading) label(`Block ${j + 1} Headline`, s.heading);
+          if (s.body) label(`Block ${j + 1} Copy`, s.body);
+        });
+      }
+    } else {
+      const name = `${e.name}${e.timing ? ` (${e.timing})` : ""}`;
+      out.push({ text: name, bold: name.length });
+      for (const s of e.sections) {
+        if (s.heading) out.push({ text: s.heading, bold: s.heading.length });
+        for (const b of s.body.split("\n")) out.push({ text: b, bold: 0 });
+      }
+      if (e.cta) label("Button", `${e.cta.label}${e.cta.url ? ` (${e.cta.url})` : ""}`);
+    }
+    notes(e.designNotes);
+  });
+  return out;
+}
+
+/** The number the next email in a doc gets: one past the highest "Email #n" (or "Text #n") already in it */
+export function nextEmailNumber(docText: string): number {
+  const ns = [...docText.matchAll(/\b(?:Email|Text)\s*#\s*(\d{1,3})\b/gi)].map((m) => Number(m[1]));
+  return ns.length ? Math.max(...ns) + 1 : 1;
+}
+
+/** A Google Doc's id from its link (or the bare id) */
+export function googleDocIdOf(link: string): string | null {
+  const s = link.trim();
+  return s.match(/docs\.google\.com\/document\/(?:u\/\d+\/)?d\/([\w-]{20,})/)?.[1] ?? (/^[\w-]{25,}$/.test(s) ? s : null);
+}
+
+/**
+ * The Google Docs batchUpdate requests that add these paragraphs at the end of a doc whose body ends at `endIndex`
+ * (the last structural element's endIndex): one insert, then plain normal text (not the last paragraph's heading,
+ * bullets or bold), then the labels in bold and the design notes as bullets. Indexes are UTF-16, like JS strings.
+ */
+export function docAppendRequests(lines: readonly DocLine[], endIndex: number): Record<string, unknown>[] {
+  if (!lines.length) return [];
+  const at = Math.max(1, endIndex - 1);
+  const text = `\n${lines.map((l) => l.text).join("\n")}`;
+  const range = { startIndex: at + 1, endIndex: at + text.length };
+  const reqs: Record<string, unknown>[] = [
+    { insertText: { location: { index: at }, text } },
+    { updateParagraphStyle: { range, paragraphStyle: { namedStyleType: "NORMAL_TEXT" }, fields: "namedStyleType" } },
+    { deleteParagraphBullets: { range } },
+    { updateTextStyle: { range, textStyle: { bold: false, italic: false, underline: false }, fields: "bold,italic,underline" } },
+  ];
+  const bullets: { startIndex: number; endIndex: number }[] = [];
+  let pos = at + 1;
+  for (const l of lines) {
+    const bold = Math.min(l.bold, l.text.length);
+    if (bold > 0) reqs.push({ updateTextStyle: { range: { startIndex: pos, endIndex: pos + bold }, textStyle: { bold: true }, fields: "bold" } });
+    if (l.bullet) {
+      const last = bullets.at(-1);
+      if (last && last.endIndex === pos) last.endIndex = pos + l.text.length + 1;
+      else bullets.push({ startIndex: pos, endIndex: pos + l.text.length + 1 });
+    }
+    pos += l.text.length + 1;
+  }
+  for (const b of bullets) reqs.push({ createParagraphBullets: { range: { startIndex: b.startIndex, endIndex: Math.min(b.endIndex, range.endIndex) }, bulletPreset: "BULLET_DISC_CIRCLE_SQUARE" } });
+  return reqs;
+}
+
 /** The Asana task's description: the brief, the way the team writes one */
 export function requestDescription(c: CopyContent, p: { copyUrl: string | null; hqUrl: string | null; website: string | null; figma: string | null; platform: string | null; requestedBy: string }) {
   const b = c.brief;
