@@ -272,7 +272,8 @@ export async function keepShopify(admin: SupabaseClient, budgetMs = 8 * 60_000) 
     synced[r.id as string] = await syncShopify(admin, r.id as string, Math.min(end, Date.now() + 180_000)).catch((e) => String(e));
   }
   const hints = Date.now() < end - 30_000 ? await scanStoreHints(admin, 6).catch((e) => String(e)) : "no time";
-  return { synced, hints };
+  const linked = await autoLinkWaiting(admin).catch((e) => String(e));
+  return { synced, hints, linked };
 }
 
 // ─── What the numbers say ──────────────────────────────────────────────────
@@ -580,4 +581,16 @@ export async function clientForShop(admin: SupabaseClient, shop: string): Promis
 export async function pendingInstalls(admin: SupabaseClient): Promise<{ shop: string; name: string | null; at: string }[]> {
   const { data } = await admin.from("shopify_pending_installs").select("shop, name, created_at").order("created_at", { ascending: false });
   return (data ?? []).map((r) => ({ shop: r.shop as string, name: (r.name as string | null) ?? null, at: r.created_at as string }));
+}
+
+/** Waiting installs whose client became known since (a store address found on a client's site or in onboarding): linked */
+export async function autoLinkWaiting(admin: SupabaseClient) {
+  const out: string[] = [];
+  for (const w of await pendingInstalls(admin)) {
+    const clientId = await clientForShop(admin, w.shop);
+    if (!clientId) continue;
+    const r = await linkPending(admin, clientId, w.shop, null);
+    if (r.ok) out.push(w.shop);
+  }
+  return out;
 }

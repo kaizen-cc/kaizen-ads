@@ -1,4 +1,7 @@
 import Link from "next/link";
+import { requireStaff } from "@/lib/auth";
+import { mayEditSetup } from "@/lib/setup-access";
+import { LinkWaiting } from "./link-waiting";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -16,6 +19,10 @@ export async function ClientStores() {
     import("@/lib/shopify/store"),
   ]);
   const [todo, waiting] = await Promise.all([shopifyToConnect(db), import("@/lib/shopify/store").then((m) => m.pendingInstalls(createAdminClient()))]);
+  const me = await requireStaff();
+  const canLink = mayEditSetup(me) && !me.viewAs;
+  const { data: clientRows } = waiting.length ? await db.from("clients").select("id, name").is("archived_at", null).order("name") : { data: [] };
+  const clientList = (clientRows ?? []).map((c) => ({ id: c.id as string, name: c.name as string }));
   const ready = Boolean(process.env.SHOPIFY_API_KEY && process.env.SHOPIFY_API_SECRET);
   return (
     <div className="grid gap-6">
@@ -50,14 +57,12 @@ export async function ClientStores() {
         <section className="grid gap-3">
           <div>
             <h2 className="font-heading text-[18px]">Installed, waiting to be linked</h2>
-            <p className="mt-1 text-sm text-muted">These stores installed the Kaizen OS app from Shopify&apos;s side. Link each on its client&apos;s page (Store revenue › Link to this client).</p>
+            <p className="mt-1 text-sm text-muted">These stores installed the Kaizen OS app from Shopify&apos;s side. Pick the client each belongs to and Link; its history starts reading right away.</p>
           </div>
           <ul className="grid gap-2">
             {waiting.map((w) => (
-              <li key={w.shop} className="flex min-h-11 flex-wrap items-center gap-x-3 rounded-[12px] border border-line bg-surface px-3.5 py-2.5 text-sm">
-                <span className="font-medium">{w.name ?? w.shop}</span>
-                <span className="text-[12px] text-faint">{w.shop}</span>
-                <span className="ml-auto text-[12px] text-faint">{day(w.at.slice(0, 10))}</span>
+              <li key={w.shop}>
+                <LinkWaiting shop={w.shop} name={w.name} clients={clientList} canLink={canLink} />
               </li>
             ))}
           </ul>

@@ -98,7 +98,7 @@ export function StorePanel({ clientId, overview, split, hint, canEdit, suggest, 
   const [error, setError] = useState<string | null>(flash === "error" ? `Shopify didn't connect${sp.get("reason") ? `: ${sp.get("reason")}` : ""}.` : null);
   const [pending, start] = useTransition();
   const [startDate, setStartDate] = useState(overview?.start.source === "set" ? (overview.start.date ?? "") : "");
-  if (!overview && !hint && !suggest) return null;
+  if (!overview && !hint && !suggest && !waiting.length) return null;
   const cur = overview?.currency ?? "USD";
   const l = overview?.last30;
   const p = overview?.prior30;
