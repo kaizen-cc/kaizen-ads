@@ -1064,7 +1064,11 @@ export async function loadToday(db: SupabaseClient, me: Staff): Promise<Today> {
   // Snoozed to a later day: off their day until then (src/lib/item-state.ts snoozeItem)
   const todayNY = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
   const snoozed = new Set((mine ?? []).filter((m) => m.snoozed_until && String(m.snoozed_until) > todayNY).map((m) => m.key as string));
-  const drafts = all.filter((d) => !asHidden(d.key) && !snoozed.has(d.key));
+  // Management talk about a person on the team is never on anyone's day but an exec's, whatever built the item (an
+  // escalation, a promise, an ask, a call follow-up): src/lib/people-matters.ts, person-bound so ad work stays
+  const { isPeopleMatter } = await import("@/lib/people-matters");
+  const aboutPeople = (d: Draft) => isPeopleMatter([d.title, d.story, ...(d.context ?? []).map((c) => c.text)].join(" \n "));
+  const drafts = all.filter((d) => !asHidden(d.key) && !snoozed.has(d.key) && (me.isExec || !aboutPeople(d)));
   const state = new Map((mine ?? []).map((m) => [m.key as string, m]));
   const startOfDay = new Date(new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }) + "T04:00:00Z").toISOString();
   const items: TodayItem[] = drafts
