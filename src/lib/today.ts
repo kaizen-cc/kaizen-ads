@@ -234,7 +234,7 @@ export function forCreative<T extends { key: string; score: number }>(items: T[]
 }
 
 /** Clients someone said are probably leaving (a dated risk note in the client's memory, lately): their work climbs */
-async function atRiskNow(db: SupabaseClient): Promise<Set<string>> {
+export async function atRiskNow(db: SupabaseClient): Promise<Set<string>> {
   const { RISK_DAYS, RISK_PREFIX, atRiskClients } = await import("@/lib/client-risk");
   const { data } = await db
     .from("client_memory")
@@ -809,8 +809,9 @@ const inBlock = (d: Draft): Draft => {
  * Open draft), or is its own "email ready" item when it answers nothing on their day.
  */
 async function withDesk(db: SupabaseClient, me: Staff, drafts: Draft[]): Promise<Draft[]> {
-  const [{ myDrafts }, { myReviewTodos }, { DRAFT_KIND_LABEL }] = await Promise.all([import("@/lib/email-drafts/server"), import("@/lib/csuite/load"), import("@/lib/email-drafts/core")]);
-  const [rows, todos] = await Promise.all([myDrafts(db, me.id).catch(() => []), myReviewTodos(db, me.id).catch(() => [])]);
+  const [{ myDrafts, CREATIVE_MAKERS }, { myReviewTodos }, { DRAFT_KIND_LABEL }] = await Promise.all([import("@/lib/email-drafts/server"), import("@/lib/csuite/load"), import("@/lib/email-drafts/core")]);
+  // Designers, editors, builders and copywriters never send client emails: none on their day (owner, Nov 24 2026)
+  const [rows, todos] = await Promise.all([CREATIVE_MAKERS.has(me.role) ? Promise.resolve([]) : myDrafts(db, me.id).catch(() => []), myReviewTodos(db, me.id).catch(() => [])]);
   const out = [...drafts];
   const at = new Map(out.map((d, i) => [d.key, i]));
   for (const r of rows as unknown as { id: string; client_id: string | null; kind: string; subject: string; body: string; to_emails: string[] | null; reason: string | null; source_kind: string | null; source_id: string | null; status: string; attachments?: { document_id: string; name: string }[] | null; clients: { name: string; slug: string } | null }[]) {

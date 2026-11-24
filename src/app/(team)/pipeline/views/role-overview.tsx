@@ -10,6 +10,7 @@ import { asanaLabel, BLOCK_TONE, itemChips } from "./exec-blocks";
 import { HiddenLog } from "./hidden-log";
 import { PageHeader } from "./shared";
 import { TodayHero, TodayHeroSkeleton } from "./today-hero";
+import { OverviewWidgets } from "./widgets";
 
 // Everyone's Overview (owner, Nov 23 2026), the exec design for every role: the Wrapped hero, then designed blocks
 // that open in place: their items (one owner each, living tasks), Next for me in Asana, and the panels their role
@@ -104,6 +105,10 @@ export async function RoleOverview({ db, me, kind, base, subtitle, folded = {}, 
         <TodayHero db={db} me={me} />
       </Suspense>
       <Blocks blocks={blocks} />
+      {/* Their own widgets under the blocks, and "Add widget" (./widgets.tsx) */}
+      <Suspense fallback={null}>
+        <OverviewWidgets me={me} />
+      </Suspense>
       <HiddenLog items={hidden.map((r) => ({ key: r.key, how: r.how as "done" | "dismissed", label: r.label, href: r.href, at: r.hidden_at }))} />
     </div>
   );

@@ -402,6 +402,8 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
         const due = DAY.test(String(input.due ?? "")) ? String(input.due) : null;
         // Handing over something on their own plate: tied back to it, and it leaves their dashboard (creative team, Nov 20
         // 2026: a task delegated through the assistant kept resurfacing on the old owner's dashboard)
+        // Management talk about someone on the team never goes out as a task (src/lib/people-matters.ts)
+        if ((await import("@/lib/people-matters")).isPeopleMatter(`${title} ${clip(input.context, 800)}`)) return { sent: false, note: "That's management talk about someone on the team (performance, pay, hiring, health or personal life): it isn't sent as a task to anyone. Say so in one line; offer to save it as a private reminder for them instead." };
         // Said twice within minutes (a retry, a reworded repeat): it's already with them, once (owner, Nov 24 2026)
         {
           const { sameAsk, SAME_ASK_WINDOW_MS } = await import("@/lib/agent-asks-core");

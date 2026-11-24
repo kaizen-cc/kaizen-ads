@@ -21,6 +21,7 @@ import { RoleOverview } from "./views/role-overview";
 import { UnfinishedCallout } from "./views/unfinished-callout";
 import { isCustomerSuccess, isMaker } from "@/lib/maker-day-core";
 import { ReadyCallout } from "./views/ready-callout";
+import { OverviewWidgets } from "./views/widgets";
 import { NudgeCallout } from "@/components/nudge-callout";
 import { isCreativeLead } from "@/lib/lead-creative-core";
 
@@ -67,6 +68,10 @@ async function ExecOverview({ db, me, base }: { db: SupabaseClient; me: Staff; b
         <StepinsSection db={db} me={me} />
       </Suspense>
       <ExecBlocks tabs={tabs} owner={owner} />
+      {/* Their own widgets under the blocks, and "Add widget" (src/app/(team)/pipeline/views/widgets.tsx) */}
+      <Suspense fallback={null}>
+        <OverviewWidgets me={me} />
+      </Suspense>
     </div>
   );
 }

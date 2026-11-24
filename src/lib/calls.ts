@@ -6,6 +6,7 @@ import { googleConfigured, gmailMailboxes, googleDriveToken } from "@/lib/contex
 import { compact, getCursor, rememberLessons, saveItems, setCursor, trimBody, type Lesson } from "@/lib/context/shared";
 import { LIVE } from "@/lib/live";
 import { promiseSince } from "@/lib/promise-window";
+import { isPeopleMatter, PEOPLE_RULE, scrubPeopleMatters, withoutPeopleMatters } from "@/lib/people-matters";
 
 // Calls: meeting notes from Gemini (Google Meet saves "Notes by Gemini" docs in the organizer's Drive) and Fireflies
 // (its API, with FIREFLIES_API_KEY). Each call is matched to its client, read by the AI (what the client said, what
@@ -278,10 +279,21 @@ async function readCall(admin: SupabaseClient, id: string, clients: { id: string
     // Older calls (the history backfill) are context only, their promises never briefed or chased: the small model reads
     // them. Recent calls stay on the agent's own model, since what was promised on them becomes work
     ...(Date.now() - Date.parse(call.occurred_at) > 10 * 86_400_000 ? { override: { model: "haiku" as const, effort: "low" as const } } : {}),
-    system: READ_SYSTEM,
+    system: `${READ_SYSTEM}\n${PEOPLE_RULE}`,
     schema: READ_SCHEMA,
     prompt: `Clients:\n${clients.map((c) => c.name).join("\n")}\n\nCall: "${call.title}" on ${call.occurred_at.slice(0, 10)}${main ? `\nThis looks like a call with ${main.name}.` : ""}\n${hostOnTeam === true ? "The host is on the paid ads and creative team." : hostOnTeam === false ? "The host is NOT on the paid ads and creative team (they work on another Kaizen service)." : "Who hosted it isn't known."}\n\n<notes>\n${call.notes}\n</notes>`,
   });
+  // Management talk about people on the team never leaves the call (src/lib/people-matters.ts): the hard stop behind
+  // the model's own instruction, on every line that's kept or turned into work
+  out.overview = scrubPeopleMatters(out.overview);
+  out.clients = out.clients.map((m) => ({
+    ...m,
+    summary: scrubPeopleMatters(m.summary),
+    clientSaid: withoutPeopleMatters(m.clientSaid),
+    decisions: withoutPeopleMatters(m.decisions),
+    lessons: (m.lessons ?? []).filter((l) => !isPeopleMatter(JSON.stringify(l))),
+    commitments: m.commitments.filter((c) => !isPeopleMatter(`${c.what} ${c.why} ${c.evidence ?? ""}`)),
+  })) as typeof out.clients;
   // By name (a number let the model fall back on the first client in the list)
   const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
   const byName = new Map(clients.map((c) => [key(c.name), c.id]));

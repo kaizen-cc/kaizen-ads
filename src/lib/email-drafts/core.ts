@@ -92,7 +92,9 @@ const SEAT_OF: Record<DraftLine, readonly string[]> = {
   tiktok: ["tiktok_buyer", "meta_buyer"],
   email: ["email_strategist"],
   social: ["social_manager"],
-  creative: ["graphic_designer", "video_editor"],
+  // An email to the client about creative is the account's (its buyer), never the designer's or editor's (owner, Nov 24
+  // 2026: designers were handed client emails they don't send)
+  creative: ["meta_buyer", "google_buyer", "tiktok_buyer", "social_manager"],
   account: ["meta_buyer", "google_buyer", "email_strategist", "social_manager"],
 };
 

@@ -9,6 +9,7 @@ import { TranscriptButton } from "@/components/assistant-call-parts";
 import { useVisualViewport } from "@/lib/use-visual-viewport";
 import { asanaLabel, BLURB, TONE, chips, type Tone } from "./exec-blocks";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
+import { applyFilters, filterChoices, KIND_LABEL, type Filters } from "@/lib/item-filters";
 import { nudgeLead, takeItOver } from "../../exec-actions";
 import { delegateOptions } from "../../delegate-actions";
 import { transferQuickItem } from "../../item-actions";
@@ -227,16 +228,22 @@ function BlockItems({ id, cards, empty, note }: { id: string; cards: ExecCard[];
     const v = subsLeft(c, closed);
     return v ? [v] : [];
   });
+  // Needs me narrowed down by kind, client, where it was said and line (in the address: nk, nc, np, nl)
+  const f = { kind: useParam("nk"), client: useParam("nc"), place: useParam("np"), line: useParam("nl") };
+  const filterable = id === "needs" && cards.length >= 6;
+  const all0 = cards;
+  if (filterable) cards = applyFilters(cards, f);
   // Asana by when it's due: overdue, today, tomorrow, this week; later and undated wait behind "more" (src/lib/asana-due.ts)
   const ordered = id === "asana" ? orderAsana(cards) : null;
   const capped = capTab(ordered ? ordered.soon : cards);
   const shown = capped.shown;
   const more = ordered ? capped.more + ordered.later.length : capped.more;
   const list = all ? (ordered ? [...ordered.soon, ...ordered.later] : cards) : shown;
-  if (!cards.length) return <p className="px-2 py-4 text-sm text-ink/60">{empty}</p>;
+  if (!all0.length) return <p className="px-2 py-4 text-sm text-ink/60">{empty}</p>;
   return (
     <div className="grid gap-3">
       {note && <p className="px-1 text-sm text-ink/55">{note}</p>}
+      {filterable && <NeedsFilters cards={all0} f={f} shown={cards.length} />}
       <ul className="grid gap-3">
         {list.map((c) => (
           <li key={c.key}>
@@ -249,6 +256,66 @@ function BlockItems({ id, cards, empty, note }: { id: string; cards: ExecCard[];
           {all ? "Show fewer" : ordered?.later.length ? `${more} more (later and no date)` : `${more} more`}
         </button>
       )}
+    </div>
+  );
+}
+
+/** Needs me's filters: kind as chips, then client, where it was said and line (only what has items); in the address */
+function NeedsFilters({ cards, f, shown }: { cards: ExecCard[]; f: Filters; shown: number }) {
+  const ch = filterChoices(cards);
+  const set = (k: "nk" | "nc" | "np" | "nl", v: string | null) => pushParams({ [k]: v || null, all: null });
+  const chip = (on: boolean) => `inline-flex min-h-11 items-center gap-1 rounded-full px-3.5 text-[13px] transition-colors sm:min-h-8 sm:px-3 sm:text-[12px] ${on ? "bg-fg text-bg" : "border border-ink/15 text-ink/70 hover:border-ink/30 hover:text-fg"}`;
+  const select = "h-11 min-w-0 max-w-full rounded-full border border-ink/15 bg-transparent px-3 text-[16px] text-fg sm:h-8 sm:text-[12px]";
+  const any = Boolean(f.kind || f.client || f.place || f.line);
+  return (
+    <div className="grid gap-2 px-1" role="group" aria-label="Filter Needs me">
+      <div className="flex flex-wrap gap-1.5">
+        <button type="button" onClick={() => set("nk", null)} className={chip(!f.kind)}>
+          All <span className="opacity-60">{cards.length}</span>
+        </button>
+        {ch.kinds.map(([k, n]) => (
+          <button key={k} type="button" aria-pressed={f.kind === k} onClick={() => set("nk", f.kind === k ? null : k)} className={chip(f.kind === k)}>
+            {KIND_LABEL[k]} <span className="opacity-60">{n}</span>
+          </button>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {ch.clients.length > 1 && (
+          <select aria-label="Client" value={f.client ?? ""} onChange={(e) => set("nc", e.target.value)} className={select}>
+            <option value="">Every client</option>
+            {ch.clients.map(([c, n]) => (
+              <option key={c} value={c}>
+                {c} ({n})
+              </option>
+            ))}
+          </select>
+        )}
+        {ch.places.length > 1 && (
+          <select aria-label="Where" value={f.place ?? ""} onChange={(e) => set("np", e.target.value)} className={select}>
+            <option value="">Anywhere</option>
+            {ch.places.map(([p, n]) => (
+              <option key={p} value={p}>
+                {p} ({n})
+              </option>
+            ))}
+          </select>
+        )}
+        {ch.lines.length > 1 && (
+          <select aria-label="Line" value={f.line ?? ""} onChange={(e) => set("nl", e.target.value)} className={select}>
+            <option value="">Every line</option>
+            {ch.lines.map(([l, n]) => (
+              <option key={l} value={l}>
+                {l.replace(/^./, (x) => x.toUpperCase())} ({n})
+              </option>
+            ))}
+          </select>
+        )}
+        {any && (
+          <button type="button" onClick={() => pushParams({ nk: null, nc: null, np: null, nl: null })} className="min-h-11 px-2 text-[12.5px] text-ink/60 underline underline-offset-2 hover:text-fg sm:min-h-8">
+            Clear ({shown} shown)
+          </button>
+        )}
+      </div>
     </div>
   );
 }

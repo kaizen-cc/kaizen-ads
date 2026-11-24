@@ -209,3 +209,20 @@ Internal first (the executives and leads), front-facing later. Prices come only 
 - **Lead generation:** spend, leads (by source and form), cost per lead, booked and closed deals and their value from the CRM, close rate and cost per closed deal, and the GoHighLevel pipeline by stage (new, contacted, booked, showed, won/lost) with where leads stall. Leads with no CRM follow-up surface as an item.
 - **E-commerce:** spend, revenue (the store's), ROAS and blended MER, new vs returning customers, AOV, and the funnel with its drop-off (sessions → product views → add to cart → checkout → purchase, from GA4 and the pixel), with the biggest leak called out.
 A client's business model (already known per client) picks the default; either can be opened.
+
+## Asana to Kaizen OS: delegation moves fully into the OS (added Nov 24 2026, exec call decision)
+
+Aligned on the Nov 24 exec call: once delegation in Kaizen OS is validated, it moves out of Asana entirely. Until then
+Asana stays the place work is assigned, and Kaizen OS mirrors it both ways (the Asana bridge).
+
+1. **Export the delegation rules (first step).** Write down, in Kaizen OS, every rule Asana delegation runs on today:
+   which project and section a request lands in, who it's assigned to by line and role, due-date conventions, the
+   templates and custom fields (client ID, priority, sizes), the automations and rules on each project, and who reviews
+   what. Source: each Asana project's rules, sections, templates and custom fields (read through the Asana API), plus
+   the heads of each line confirming what's real. Kept as a page in Settings that the assistant and agents can read.
+2. **Delegate in Kaizen OS by those rules.** Requests, briefs and tasks created in Kaizen OS are assigned by the same
+   rules (line, role, client seat, due dates), still written to Asana so nothing is lost while both run.
+3. **Validate side by side.** For two weeks, compare what Kaizen OS assigned with what Asana would have: same person,
+   same due date, nothing missed. Each line head signs off.
+4. **Switch.** Delegation happens only in Kaizen OS; Asana projects go read only and are archived when every open task
+   has moved (with its comments and files).

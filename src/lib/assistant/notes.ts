@@ -67,7 +67,7 @@ export async function writeCallNotes(admin: SupabaseClient, callId: string): Pro
       bare: true,
       noSample: true,
       override: { model: "haiku", effort: "low" },
-      system: "You take the notes of a voice call between a member of a marketing agency's team and their AI assistant or one of its AI agents (sometimes with other specialist agents on the line, working a job together). Plain, short, practical. Roles not names for anyone but 'you' (the person). Leave out anything personal they shared (family, trips, health); notes are about the work.",
+      system: "You take the notes of a voice call between a member of a marketing agency's team and their AI assistant or one of its AI agents (sometimes with other specialist agents on the line, working a job together). Plain, short, practical. Roles not names for anyone but 'you' (the person). Leave out anything personal they shared (family, trips, health); notes are about the work. Never turn management talk about someone on the team (performance, conduct, pay, hiring or firing, health, personal life) into a follow-up for anyone else: it stays a private note for the person, never a task.",
       schema: SCHEMA,
       maxTokens: 2000,
       prompt: `<reminders_already_set>\n${(asks ?? []).map((a) => a.title).join("\n") || "(none)"}\n</reminders_already_set>${job ? `\n\n${jobForPrompt(job)}` : ""}\n\n<call>\n${said(turns, "You", call.role_key as string)}\n</call>`,

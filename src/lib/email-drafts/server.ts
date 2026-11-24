@@ -1,4 +1,5 @@
 import "server-only";
+import { scrubPeopleMatters } from "@/lib/people-matters";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { aiEnabled, askJson } from "@/lib/ai";
 import type { Staff } from "@/lib/auth";
@@ -83,7 +84,8 @@ async function sourcesFor(admin: SupabaseClient, clientId: string, sinceDays: nu
   for (const c of (calls.data ?? []) as { id: string; title: string; occurred_at: string; host: string | null; notes: string; summary: unknown }[]) {
     hosts.set(c.id, c.host);
     const sum = c.summary ? clip(JSON.stringify(c.summary), 1800) : "";
-    lines.push(`[call id=${c.id}] ${c.occurred_at.slice(0, 10)} "${clip(c.title, 120)}"${c.host ? ` (notes by ${c.host})` : ""}: ${sum || clip(c.notes, 2400)}`);
+    // Management talk about people on the team never reaches a client email (src/lib/people-matters.ts)
+    lines.push(`[call id=${c.id}] ${c.occurred_at.slice(0, 10)} "${clip(c.title, 120)}"${c.host ? ` (notes by ${c.host})` : ""}: ${scrubPeopleMatters(sum || clip(c.notes, 2400))}`);
   }
   for (const p of (promises.data ?? []) as { id: string; kind: string; what: string; why: string | null; due_at: string; status: string }[]) lines.push(`[commitment id=${p.id}] promised (${p.kind}, due ${p.due_at.slice(0, 10)}, ${p.status}): ${clip(p.what, 300)}${p.why ? ` because ${clip(p.why, 200)}` : ""}`);
   for (const x of (ctx.data ?? []) as { id: string; source: string; occurred_at: string; author: string | null; title: string | null; body: string | null }[]) lines.push(`[${x.source === "gmail" ? "email" : "slack"} id=${x.id}] ${x.occurred_at.slice(0, 10)} ${x.author ?? "someone"}${x.title ? ` "${clip(x.title, 100)}"` : ""}: ${clip(x.body, 500)}`);
@@ -100,11 +102,22 @@ async function staffByHost(admin: SupabaseClient, host: string | null | undefine
   return (hit?.id as string | undefined) ?? null;
 }
 
+/** Whether this teammate makes the creative (a designer or an editor): never the one to email a client */
+async function makerById(admin: SupabaseClient, id: string): Promise<boolean> {
+  const { data } = await admin.from("profiles").select("role").eq("id", id).maybeSingle();
+  return CREATIVE_MAKERS.has(String(data?.role ?? ""));
+}
+
+/** The people who make the work: designers and editors (leads included), email builders and designers, copywriters */
+export const CREATIVE_MAKERS = new Set(["graphic_designer", "video_editor", "lead_graphic_designer", "lead_video_editor", "email_designer", "email_builder", "copywriter"]);
+
 async function save(admin: SupabaseClient, clientId: string, items: DraftItem[], o: { seats: Seats; to: string[]; createdBy: string | null; ownerId?: string | null; hosts?: Map<string, string | null> }) {
   const rows = [];
   for (const d of items) {
     const host = d.sourceKind === "call" && d.sourceId ? o.hosts?.get(d.sourceId) : null;
-    const speaker = o.ownerId ?? (host ? await staffByHost(admin, host) : null);
+    // Whoever ran the call sends the follow-up, unless they make the creative (a designer or editor never emails clients)
+    const hostId = host ? await staffByHost(admin, host) : null;
+    const speaker = o.ownerId ?? (hostId && !(await makerById(admin, hostId)) ? hostId : null);
     const owner = pickOwner({ line: d.line, speakerId: speaker, seats: o.seats, fallbackId: o.createdBy });
     if (!owner) continue;
     rows.push({ client_id: clientId, owner_id: owner, kind: d.kind, subject: d.subject, body: d.body, to_emails: o.to, reason: d.reason || null, source_kind: d.sourceKind, source_id: d.sourceId, source_key: draftKey(clientId, d), created_by: o.createdBy });
