@@ -509,11 +509,16 @@ export function assistantGreeting(input: {
 
 // ─── Safety review ──────────────────────────────────────────────────────────
 
-/** What the review looks for: genuinely concerning content only, never ordinary frustration or swearing */
-export const SAFETY_CATEGORIES = ["threat", "harassment", "discrimination", "confidential_data", "fraud", "deceiving_clients", "distress"] as const;
+/** What the review looks for: genuinely concerning content only, never ordinary frustration or swearing.
+ * assistant_reliability is about the AI itself (an unsourced or wrong claim it made): logged for the people who build
+ * Kaizen OS, never held against the person and never an alert. */
+export const SAFETY_CATEGORIES = ["threat", "harassment", "discrimination", "confidential_data", "fraud", "deceiving_clients", "distress", "assistant_reliability"] as const;
 export type SafetyCategory = (typeof SAFETY_CATEGORIES)[number];
+/** Who said a flagged moment: only the person themselves counts against them; the AI's own words only for assistant_reliability */
+export const SAFETY_SPEAKERS = ["the_person", "someone_else_or_media", "the_ai", "unclear"] as const;
+export type SafetySpeaker = (typeof SAFETY_SPEAKERS)[number];
 
-export type SafetyMoment = { at_seconds: number; category: SafetyCategory; note: string };
+export type SafetyMoment = { at_seconds: number; category: SafetyCategory; note: string; speaker?: SafetySpeaker };
 export type SafetyResult = { flagged: boolean; categories: SafetyCategory[]; severity: "low" | "medium" | "high" | null; summary: string; moments: SafetyMoment[]; distress: boolean };
 
 export const SAFETY_SCHEMA = {
@@ -527,44 +532,65 @@ export const SAFETY_SCHEMA = {
     summary: { type: "string", description: "One or two plain sentences on what is concerning, empty when nothing is" },
     moments: {
       type: "array",
-      items: { type: "object", additionalProperties: false, required: ["at_seconds", "category", "note"], properties: { at_seconds: { type: "number" }, category: { type: "string", enum: [...SAFETY_CATEGORIES] }, note: { type: "string" } } },
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["at_seconds", "category", "note", "speaker"],
+        properties: {
+          at_seconds: { type: "number" },
+          category: { type: "string", enum: [...SAFETY_CATEGORIES] },
+          note: { type: "string" },
+          speaker: { type: "string", enum: [...SAFETY_SPEAKERS], description: "Who said it: the person on the call, someone else or media in the background, the AI itself, or unclear" },
+        },
+      },
     },
-    distress: { type: "boolean", description: "The person sounds in genuine personal distress (not just a busy or annoyed day), said by them about themselves; never background media, quotes, jokes or small talk" },
-    distress_confidence: { type: "string", enum: ["none", "low", "medium", "high"], description: "high only when it's unmistakable, in their own words, about themselves" },
+    distress: { type: "boolean", description: "An explicit crisis cue from the person about themselves (self-harm, harming others, saying they're unsafe or in crisis); never stress, venting, tiredness, garbled speech, background media or the system's own alerts" },
+    distress_confidence: { type: "string", enum: ["none", "low", "medium", "high"], description: "high only for an explicit crisis cue in their own words" },
   },
 };
 
-/** A distress read holds when it's high confidence, or when two distress moments at least a minute apart show it */
-export function distressHolds(confidence: unknown, moments: readonly { at_seconds: number; category: string }[]): boolean {
-  if (confidence === "high") return true;
-  const at = moments.filter((m) => m.category === "distress").map((m) => m.at_seconds).sort((a, b) => a - b);
-  return at.length >= 2 && at[at.length - 1] - at[0] >= 60;
+/** Distress holds only on an explicit crisis cue (high confidence) from the person themselves */
+export function distressHolds(confidence: unknown, moments: readonly { category: string; speaker?: string }[]): boolean {
+  return confidence === "high" && moments.some((m) => m.category === "distress" && m.speaker === "the_person");
+}
+
+/** What can reach the executives: medium or high, about the person (not only the AI's reliability); low is logged only */
+export function safetyAlerts(r: Pick<SafetyResult, "flagged" | "severity" | "categories">): boolean {
+  return r.flagged && (r.severity === "medium" || r.severity === "high") && r.categories.some((c) => c !== "assistant_reliability");
 }
 
 /**
- * The review's answer, checked: only the listed categories; flagged only when there is a category (distress counts);
- * moments within the call's length, at most ten. A malformed answer flags nothing (it is retried by the cron).
+ * The review's answer, checked: only the listed categories, each needing a moment the person said (the AI's own
+ * words count only for assistant_reliability; someone else, a TV or a quote never count; a moment whose speaker is
+ * unclear keeps its category but caps the severity at low). Distress needs an explicit crisis cue. Moments within the
+ * call's length, at most ten. A malformed answer flags nothing (it is retried by the cron).
  */
 export function parseSafetyReview(raw: unknown, callSeconds = Infinity): SafetyResult {
   const r = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
-  const cats = Array.isArray(r.categories) ? [...new Set(r.categories.filter((c): c is SafetyCategory => SAFETY_CATEGORIES.includes(c as SafetyCategory)))] : [];
-  let moments = (Array.isArray(r.moments) ? r.moments : [])
+  const asked = Array.isArray(r.categories) ? [...new Set(r.categories.filter((c): c is SafetyCategory => SAFETY_CATEGORIES.includes(c as SafetyCategory)))] : [];
+  const all: SafetyMoment[] = (Array.isArray(r.moments) ? r.moments : [])
     .map((m) => (m && typeof m === "object" ? (m as Record<string, unknown>) : {}))
     .filter((m) => SAFETY_CATEGORIES.includes(m.category as SafetyCategory) && Number.isFinite(Number(m.at_seconds)))
-    .map((m) => ({ at_seconds: Math.max(0, Math.min(Math.round(Number(m.at_seconds)), Number.isFinite(callSeconds) ? callSeconds : Number.MAX_SAFE_INTEGER)), category: m.category as SafetyCategory, note: clip(m.note, 300) }))
+    .map((m) => ({
+      at_seconds: Math.max(0, Math.min(Math.round(Number(m.at_seconds)), Number.isFinite(callSeconds) ? callSeconds : Number.MAX_SAFE_INTEGER)),
+      category: m.category as SafetyCategory,
+      note: clip(m.note, 300),
+      speaker: (SAFETY_SPEAKERS.includes(m.speaker as SafetySpeaker) ? m.speaker : "unclear") as SafetySpeaker,
+    }))
     .slice(0, 10);
-  // Distress needs a high-confidence read or two separate moments (at least a minute apart): an open microphone hears
-  // TV shows, other people and jokes, and a false "the caller may need support" alert to management does harm
-  const said = r.distress === true || cats.includes("distress");
+  const counts = (m: SafetyMoment) => (m.category === "assistant_reliability" ? m.speaker === "the_ai" : m.speaker === "the_person" || m.speaker === "unclear");
+  let moments = all.filter(counts);
+  const said = r.distress === true || asked.includes("distress");
   const distress = said && distressHolds(r.distress_confidence, moments);
-  if (!distress) {
-    const at = cats.indexOf("distress");
-    if (at >= 0) cats.splice(at, 1);
-    moments = moments.filter((m) => m.category !== "distress");
-  } else if (!cats.includes("distress")) cats.push("distress");
+  if (!distress) moments = moments.filter((m) => m.category !== "distress");
+  const cats = asked.filter((c) => moments.some((m) => m.category === c));
+  if (distress && !cats.includes("distress")) cats.push("distress");
   const flagged = r.flagged === true && cats.length > 0;
   const sev = r.severity === "low" || r.severity === "medium" || r.severity === "high" ? r.severity : null;
-  return { flagged, categories: flagged ? cats : [], severity: flagged ? (sev ?? "low") : null, summary: flagged ? clip(r.summary, 600) : "", moments: flagged ? moments : [], distress: flagged && distress };
+  // Not sure it was the person, or only about the AI: logged, never an alert
+  const sure = cats.some((c) => c !== "assistant_reliability" && moments.some((m) => m.category === c && m.speaker === "the_person"));
+  const severity = !flagged ? null : sure ? (sev ?? "low") : "low";
+  return { flagged, categories: flagged ? cats : [], severity, summary: flagged ? clip(r.summary, 600) : "", moments: flagged ? moments : [], distress: flagged && distress };
 }
 
 /** Flagged audio is kept this many days; everything else is deleted right after the review */

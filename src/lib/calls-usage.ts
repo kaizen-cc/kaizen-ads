@@ -39,6 +39,8 @@ export type CallLogEntry = LogEntry & {
   categories: string[];
   messages: number | null;
   href: string;
+  /** Flagged low (or only about the AI's reliability): logged, never an alert, shown collapsed */
+  logged: boolean;
 };
 
 /** Every call and chat in the range that passes the filters, flagged or not, with who, how long, which agents and clients */
@@ -77,13 +79,16 @@ export async function loadCallLog(f: LogFilters): Promise<{ entries: CallLogEntr
   for (const c of callRows) {
     const p = c.profile_id ? staff.get(c.profile_id) : undefined;
     const r = reviewOf.get(c.id);
+    // What alerts: medium or high, about the person; the rest of what's flagged is logged only
+    const alerts = Boolean(r?.flagged) && (r?.severity === "medium" || r?.severity === "high") && (r?.categories ?? []).some((x) => x !== "assistant_reliability");
     const end = c.ended_at ?? c.last_turn_at ?? c.started_at;
     const agents = [...new Set([roleName(c.role_key), ...(c.guest_roles ?? []).map(roleName), ...(c.notes?.agents ?? []).map((a) => a.label ?? "").filter(Boolean)])];
     entries.push({
       id: c.id,
       kind: "call",
       team: teamOf(p?.role, p?.is_exec),
-      flagged: Boolean(r?.flagged),
+      flagged: alerts,
+      logged: Boolean(r?.flagged) && !alerts,
       at: c.started_at,
       person: p?.full_name ?? "Someone",
       personId: c.profile_id,
@@ -116,6 +121,7 @@ export async function loadCallLog(f: LogFilters): Promise<{ entries: CallLogEntr
         kind: "chat",
         team: teamOf(p?.role, p?.is_exec),
         flagged: false,
+        logged: false,
         at: t.last_at,
         person: p?.full_name ?? "Someone",
         personId: t.profile_id,
@@ -132,7 +138,7 @@ export async function loadCallLog(f: LogFilters): Promise<{ entries: CallLogEntr
       });
     }
   }
-  const filtered = entries.filter((e) => (!f.team || e.team === f.team) && (!f.flag || (f.flag === "flagged") === e.flagged));
+  const filtered = entries.filter((e) => (!f.team || e.team === f.team) && (!f.flag || (f.flag === "flagged" ? e.flagged : !e.flagged)));
   const seen = [...new Set(entries.map((e) => e.personId).filter((x): x is string => Boolean(x)))];
   const list = [...staff.values()].filter((p) => p.is_active || seen.includes(p.id)).map((p) => ({ id: p.id, name: p.full_name ?? "Someone", team: teamOf(p.role, p.is_exec) })).sort((a, b) => a.name.localeCompare(b.name));
   return { entries: filtered, people: list, capped: callRows.length >= 800 };

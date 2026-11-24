@@ -13,6 +13,7 @@ import {
   orderForToday,
   ownMemory,
   parseSafetyReview,
+  safetyAlerts,
   routeTurn,
   safeAppPath,
   safeLink,
@@ -169,29 +170,44 @@ describe("the assistant's hello", () => {
 });
 
 describe("the safety review", () => {
-  it("flags only listed categories, with moments inside the call", () => {
-    const r = parseSafetyReview({ flagged: true, categories: ["harassment", "made_up"], severity: "medium", summary: "Demeaning remarks about a colleague.", moments: [{ at_seconds: 95.4, category: "harassment", note: "remark" }, { at_seconds: 9999, category: "harassment", note: "late" }, { at_seconds: 5, category: "bogus", note: "x" }], distress: false }, 600);
-    expect(r).toEqual({ flagged: true, categories: ["harassment"], severity: "medium", summary: "Demeaning remarks about a colleague.", moments: [{ at_seconds: 95, category: "harassment", note: "remark" }, { at_seconds: 600, category: "harassment", note: "late" }], distress: false });
+  it("flags only listed categories, with moments inside the call that the person said", () => {
+    const r = parseSafetyReview({ flagged: true, categories: ["harassment", "made_up"], severity: "medium", summary: "Demeaning remarks about a colleague.", moments: [{ at_seconds: 95.4, category: "harassment", note: "remark", speaker: "the_person" }, { at_seconds: 9999, category: "harassment", note: "late", speaker: "the_person" }, { at_seconds: 5, category: "bogus", note: "x", speaker: "the_person" }], distress: false }, 600);
+    expect(r).toEqual({ flagged: true, categories: ["harassment"], severity: "medium", summary: "Demeaning remarks about a colleague.", moments: [{ at_seconds: 95, category: "harassment", note: "remark", speaker: "the_person" }, { at_seconds: 600, category: "harassment", note: "late", speaker: "the_person" }], distress: false });
+    expect(safetyAlerts(r)).toBe(true);
   });
   it("never flags without a category, and a malformed answer flags nothing", () => {
     expect(parseSafetyReview({ flagged: true, categories: [] }).flagged).toBe(false);
     expect(parseSafetyReview(null)).toEqual({ flagged: false, categories: [], severity: null, summary: "", moments: [], distress: false });
   });
-  it("treats unmistakable distress as a flag that asks for support", () => {
-    const r = parseSafetyReview({ flagged: true, categories: [], distress: true, distress_confidence: "high", severity: "none" });
-    expect(r).toMatchObject({ flagged: true, categories: ["distress"], distress: true, severity: "low" });
+  it("alerts only on medium or high; low is logged only", () => {
+    expect(safetyAlerts({ flagged: true, severity: "low", categories: ["deceiving_clients"] })).toBe(false);
+    expect(safetyAlerts({ flagged: true, severity: "high", categories: ["threat"] })).toBe(true);
+    expect(safetyAlerts({ flagged: false, severity: null, categories: [] })).toBe(false);
   });
-  it("drops a distress read that is only one medium moment (a show in the background, a joke)", () => {
-    const tv = parseSafetyReview({ flagged: true, categories: ["distress"], distress: true, distress_confidence: "medium", severity: "high", summary: "Said they can't go on.", moments: [{ at_seconds: 2400, category: "distress", note: "dramatic line" }] }, 3600);
-    expect(tv).toMatchObject({ flagged: false, categories: [], distress: false, moments: [] });
+  it("distress: only an explicit crisis cue in the person's own words", () => {
+    const crisis = parseSafetyReview({ flagged: true, categories: ["distress"], distress: true, distress_confidence: "high", severity: "high", summary: "Said they want to hurt themselves.", moments: [{ at_seconds: 300, category: "distress", note: "explicit", speaker: "the_person" }] }, 3600);
+    expect(crisis).toMatchObject({ flagged: true, categories: ["distress"], distress: true, severity: "high" });
+    // Real flags from Nov 22-24, anonymized: venting before a busy week, a late-night garbled call
+    const venting = parseSafetyReview({ flagged: true, categories: ["distress"], distress: true, distress_confidence: "medium", severity: "low", moments: [{ at_seconds: 2495, category: "distress", note: "'not gonna eat', 'don't wanna have to do this'", speaker: "the_person" }] }, 3600);
+    expect(venting.flagged).toBe(false);
+    const lateNight = parseSafetyReview({ flagged: true, categories: ["distress"], distress: true, distress_confidence: "low", moments: [{ at_seconds: 0, category: "distress", note: "dozing off", speaker: "the_person" }, { at_seconds: 1801, category: "distress", note: "repeated phrases", speaker: "unclear" }] }, 3600);
+    expect(lateNight.flagged).toBe(false);
   });
-  it("keeps distress shown at two separate moments, and other categories whatever happens to distress", () => {
-    const two = parseSafetyReview({ flagged: true, categories: ["distress"], distress: true, distress_confidence: "medium", moments: [{ at_seconds: 300, category: "distress", note: "a" }, { at_seconds: 900, category: "distress", note: "b" }] }, 3600);
-    expect(two).toMatchObject({ flagged: true, distress: true });
-    const close = parseSafetyReview({ flagged: true, categories: ["distress"], distress: true, distress_confidence: "low", moments: [{ at_seconds: 300, category: "distress", note: "a" }, { at_seconds: 320, category: "distress", note: "b" }] }, 3600);
-    expect(close.flagged).toBe(false);
-    const other = parseSafetyReview({ flagged: true, categories: ["harassment", "distress"], distress: true, distress_confidence: "low", moments: [{ at_seconds: 60, category: "harassment", note: "remark" }] }, 3600);
-    expect(other).toMatchObject({ flagged: true, categories: ["harassment"], distress: false });
+  it("never self-triggers on the system's own alert read back", () => {
+    const echo = parseSafetyReview({ flagged: true, categories: ["distress"], distress: true, distress_confidence: "high", severity: "low", moments: [{ at_seconds: 4374, category: "distress", note: "notice titled 'A call needs a look: distress'", speaker: "the_ai" }] }, 4400);
+    expect(echo.flagged).toBe(false);
+  });
+  it("threats and harassment count only when the person said them; another voice or a show never, unclear is logged", () => {
+    const room = parseSafetyReview({ flagged: true, categories: ["threat", "harassment"], severity: "high", summary: "Threatening remarks.", moments: [{ at_seconds: 1220, category: "threat", note: "'burn that place'", speaker: "someone_else_or_media" }, { at_seconds: 1700, category: "harassment", note: "remarks about a coworker", speaker: "someone_else_or_media" }] }, 1800);
+    expect(room.flagged).toBe(false);
+    const unsure = parseSafetyReview({ flagged: true, categories: ["threat"], severity: "high", summary: "Threatening remark.", moments: [{ at_seconds: 1220, category: "threat", note: "'burn that place'", speaker: "unclear" }] }, 1800);
+    expect(unsure).toMatchObject({ flagged: true, severity: "low" });
+    expect(safetyAlerts(unsure)).toBe(false);
+  });
+  it("the AI's own unsourced claims are its reliability, logged for us, never against the person", () => {
+    const ai = parseSafetyReview({ flagged: true, categories: ["deceiving_clients", "assistant_reliability"], severity: "medium", summary: "The assistant gave an unsourced date.", moments: [{ at_seconds: 200, category: "assistant_reliability", note: "made-up launch date", speaker: "the_ai" }, { at_seconds: 210, category: "deceiving_clients", note: "unsourced claim", speaker: "the_ai" }] }, 900);
+    expect(ai).toMatchObject({ flagged: true, categories: ["assistant_reliability"], severity: "low" });
+    expect(safetyAlerts(ai)).toBe(false);
   });
   it("times the transcript from the call's start", () => {
     expect(timedTranscript([{ who: "Sam", text: "hi", at: "2026-11-17T10:02:13Z" }], "2026-11-17T10:00:00Z")).toBe("[2:13] Sam: hi");

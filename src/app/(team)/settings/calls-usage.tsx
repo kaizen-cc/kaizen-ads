@@ -68,7 +68,9 @@ async function LogView({ sp }: { sp: Record<string, string | string[] | undefine
     q: typeof sp.q === "string" ? sp.q.slice(0, 80) : "",
   };
   const { entries, people, capped } = await loadCallLog(f);
-  const groups = groupLog(entries);
+  const groups = groupLog(entries.filter((e) => !e.logged));
+  // Low flags (or only about the AI's own reliability): logged, never an alert, out of the way
+  const logged = entries.filter((e) => e.logged);
   return (
     <div className="grid gap-5">
       <CallFilters
@@ -80,7 +82,7 @@ async function LogView({ sp }: { sp: Record<string, string | string[] | undefine
         {entries.length} {entries.length === 1 ? "conversation" : "conversations"}
         {capped ? " (the newest 800 calls; narrow the dates to see older ones)" : ""}. Unflagged calls keep their transcript only: their audio is deleted after the safety review. Flagged calls keep audio about 90 days.
       </p>
-      {!groups.length && <p className="rounded-2xl bg-surface p-6 text-sm text-muted">Nothing matches these filters.</p>}
+      {!groups.length && !logged.length && <p className="rounded-2xl bg-surface p-6 text-sm text-muted">Nothing matches these filters.</p>}
       {groups.map((g) => (
         <section key={String(g.flagged)} className={`grid gap-4 rounded-[22px] p-4 sm:p-5 ${g.flagged ? "border border-bad/30 bg-bad-soft/30" : "border border-line"}`}>
           <h3 className={`text-[11px] uppercase tracking-[0.16em] ${g.flagged ? "text-bad" : "text-muted"}`}>{g.flagged ? "Flagged by the safety review" : "Normal"}</h3>
@@ -98,6 +100,24 @@ async function LogView({ sp }: { sp: Record<string, string | string[] | undefine
           ))}
         </section>
       ))}
+      {logged.length > 0 && (
+        <details className="group rounded-[22px] border border-line p-4 sm:p-5">
+          <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 text-[11px] uppercase tracking-[0.16em] text-muted">
+            <span>
+              Low, logged only <span className="text-faint">· {logged.length}</span>
+            </span>
+            <span aria-hidden className="text-faint transition-transform group-open:rotate-180">
+              ▾
+            </span>
+          </summary>
+          <p className="mt-2 text-[12.5px] text-faint">The safety review noted these but they didn&apos;t qualify for an alert (low, not confirmed by the second check, or about the AI&apos;s own reliability).</p>
+          <ul className="mt-3 grid gap-2">
+            {logged.map((e) => (
+              <LogRow key={`${e.kind}-${e.id}`} e={e} />
+            ))}
+          </ul>
+        </details>
+      )}
     </div>
   );
 }

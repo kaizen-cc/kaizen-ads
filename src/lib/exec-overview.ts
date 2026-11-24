@@ -30,7 +30,7 @@ async function needsMe(db: SupabaseClient, admin: SupabaseClient, me: Staff, dra
   const [owed, said, { data: safety }, { data: conflicts }] = await Promise.all([
     loadOwedReplies(db, me, false).catch(() => []),
     loadSaidPromises(db, me).catch(() => []),
-    admin.from("call_safety_reviews").select("call_id, severity, distress, categories, reviewed_at, moments, summary").eq("flagged", true).is("resolved_at", null).order("reviewed_at", { ascending: false }).limit(20),
+    admin.from("call_safety_reviews").select("call_id, severity, distress, categories, reviewed_at, moments, summary").eq("flagged", true).in("severity", ["medium", "high"]).is("resolved_at", null).order("reviewed_at", { ascending: false }).limit(20),
     admin.from("agent_learnings").select("id, agent_key, lesson, updated_at").eq("status", "conflict").limit(20),
   ]);
   const cards: ExecCard[] = [];
