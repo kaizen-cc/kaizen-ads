@@ -28,6 +28,7 @@ import { createClient } from "@/lib/supabase/server";
 import type { ChatMessage, Change, RoleChatMessage } from "./actions";
 import { AgentDetail, AgentsNav, KnowledgeView, LinesOverview, RoleDetail, RolesOverview, type Agent, type AssistantUse, type Item, type Role } from "./agents";
 import { Expenses, rollupFrom, type CostRow } from "./expenses";
+import { WorkspaceUsage } from "./workspace-usage";
 import { YouTubeLearning } from "./youtube";
 import { cachedActivity, cachedCostRollup, cachedLastRuns, type Activity } from "@/lib/ai-agents-cache";
 import { addUsage, costOf, emptyUsage, isGemini, type ModelKey, type Usage } from "@/lib/ai-costs";
@@ -311,14 +312,17 @@ async function Agents({ me, open: askedAgent, role: askedRole, line: askedLine, 
         ) : section === "knowledge" ? (
           <KnowledgeBlocks items={items} spine={{ body: spineRow?.body ?? "", updatedAt: spineRow?.updated_at ?? null, updatedBy: (spineRow?.profiles as unknown as { full_name: string } | null)?.full_name ?? null }} />
         ) : section === "expenses" ? (
-          <Expenses
-            rows={costRows}
-            people={(staff ?? []).map((p) => ({ id: p.id as string, name: p.full_name as string, role: roleLabel(p.role as TeamRole) }))}
-            roles={roles.map((r) => ({ key: r.key, label: r.label, icon: r.icon }))}
-            skills={list.map((a) => ({ key: a.key, label: a.label, roleKey: a.roleKey }))}
-            range={range}
-            by={by}
-          />
+          <div className="grid gap-6">
+            <Expenses
+              rows={costRows}
+              people={(staff ?? []).map((p) => ({ id: p.id as string, name: p.full_name as string, role: roleLabel(p.role as TeamRole) }))}
+              roles={roles.map((r) => ({ key: r.key, label: r.label, icon: r.icon }))}
+              skills={list.map((a) => ({ key: a.key, label: a.label, roleKey: a.roleKey }))}
+              range={range}
+              by={by}
+            />
+            <WorkspaceUsage />
+          </div>
         ) : (
           (() => {
             // Executives see the service lines first and open one (?line=email); a head lands directly in their own line

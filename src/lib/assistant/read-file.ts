@@ -72,6 +72,14 @@ export async function readGoogleFile(email: string, link: string): Promise<Googl
   if (!googleConfigured()) return { ok: false, problem: "other", say: "Google isn't connected to Kaizen OS yet." };
   if (!email) return { ok: false, problem: "other", say: "Your profile has no Kaizen email, so Google can't be opened as you." };
   try {
+    // Through Google's Drive MCP server when WORKSPACE_MCP is on (an AI agent's Workspace access must use MCP)
+    const viaMcp = await (await import("@/lib/workspace-agent")).mcpReadDriveFile(email, l.id, l.url);
+    if (viaMcp) {
+      const base = { ok: true as const, title: viaMcp.title, url: viaMcp.url, modified: viaMcp.modified };
+      if (viaMcp.folder) return { ...base, kind: "folder", text: viaMcp.text };
+      const read = capped(viaMcp.text);
+      if (read.text) return { ...base, kind: viaMcp.mime.endsWith("spreadsheet") ? "sheet" : viaMcp.mime.endsWith("presentation") ? "slides" : viaMcp.mime.endsWith("document") ? "doc" : "file", text: read.text, note: read.note };
+    }
     const token = await googleDriveToken(email);
     const meta = (await (await driveGet(token, `files/${l.id}`, { fields: "id,name,mimeType,size,webViewLink,modifiedTime,owners(displayName)" })).json()) as DriveMeta;
     const base = { ok: true as const, title: meta.name, url: meta.webViewLink ?? l.url, modified: meta.modifiedTime ?? null };

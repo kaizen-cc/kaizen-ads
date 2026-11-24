@@ -118,6 +118,9 @@ export function lookupTools(ctx: AssistantCtx): LoopTool[] {
         const { gmailToken, google, googleConfigured } = await import("@/lib/context/google");
         if (!googleConfigured()) return { error: "Google isn't connected to Kaizen OS." };
         try {
+          // Through Google's Gmail MCP server when WORKSPACE_MCP is on (an AI agent's Workspace access must use MCP)
+          const viaMcp = await (await import("@/lib/workspace-agent")).mcpSearchEmail(ctx.me.email, q, Math.min(25, Number(input.limit) || 12));
+          if (viaMcp) return viaMcp;
           const token = await gmailToken(ctx.me.email);
           const list = await google<{ messages?: { id: string; threadId: string }[]; resultSizeEstimate?: number }>(token, "https://gmail.googleapis.com/gmail/v1/users/me/messages", { q, maxResults: String(Math.min(25, Number(input.limit) || 12)) });
           type Meta = { id: string; threadId: string; snippet?: string; internalDate: string; payload: { headers: { name: string; value: string }[] } };
@@ -143,6 +146,8 @@ export function lookupTools(ctx: AssistantCtx): LoopTool[] {
         if (!/^[0-9a-f]{8,24}$/i.test(id)) return { error: "That isn't a thread id from search_my_email." };
         const { gmailToken, google, plainText, withoutQuotes } = await import("@/lib/context/google");
         try {
+          const viaMcp = await (await import("@/lib/workspace-agent")).mcpThreadLines(ctx.me.email, id);
+          if (viaMcp) return { emails: viaMcp.length, ...textAnswer(viaMcp.join("\n\n---\n\n"), input) };
           const t = await google<{ messages: GmailMessage[] }>(await gmailToken(ctx.me.email), `https://gmail.googleapis.com/gmail/v1/users/me/threads/${id}`, { format: "full" });
           const lines = t.messages.map((m) => {
             const h = (n: string) => m.payload.headers.find((x) => x.name.toLowerCase() === n)?.value ?? "";

@@ -33,6 +33,13 @@ export async function saveGmailDraft(admin: SupabaseClient, e: EmailToDraft): Pr
     const { attached, missing } = await mailFiles(admin, e.files ?? []);
     if (missing.length) throw new Error(`files missing: ${missing.join(", ")}`);
     const signature = await gmailSignature(e.mailbox);
+    // Through Google's Gmail MCP server when WORKSPACE_MCP is on (plain text, their signature as text under it); a
+    // draft with files stays on REST: Google's create_draft can't attach files
+    if (!attached.length) {
+      const sig = signature ? signatureText(signature) : "";
+      const viaMcp = await (await import("@/lib/workspace-agent")).mcpGmailDraft({ mailbox: e.mailbox, to: e.to, cc: e.cc ?? null, subject: e.subject, body: sig ? `${e.body}\n\n${sig}` : e.body, threadId: e.threadId ?? null });
+      if (viaMcp) return { ok: true, draftId: viaMcp.draftId, messageId: viaMcp.messageId, href: gmailDraftLink(e.mailbox, viaMcp.messageId) };
+    }
     const raw = rawEmail({ from: `${e.fromName} <${e.mailbox}>`, to: e.to, cc: e.cc ?? null, subject: e.subject, body: e.body, inReplyTo: e.inReplyTo ?? null, references: e.references ?? null, attachments: attached, signature });
     const token = await gmailComposeToken(e.mailbox);
     const made = await googlePost<{ id: string; message?: { id: string } }>(token, "https://gmail.googleapis.com/gmail/v1/users/me/drafts", { message: { raw, ...(e.threadId ? { threadId: e.threadId } : {}) } });
@@ -126,4 +133,15 @@ export async function placeCallDraft(admin: SupabaseClient, me: { id: string; em
   await putDraft(admin, callId, next);
   if (d.clientDraftId) await admin.from("client_email_drafts").update({ status: "opened", gmail_draft_id: r.draftId, updated_at: new Date().toISOString() }).eq("id", d.clientDraftId).eq("owner_id", me.id);
   return { ok: true, draft: next, where: "your Gmail drafts", href: r.href };
+}
+
+/** A Gmail signature (HTML) as plain text, for a draft made through the MCP server */
+function signatureText(html: string): string {
+  return html
+    .replace(/<(br|\/p|\/div|\/li)[^>]*>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }

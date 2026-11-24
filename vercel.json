@@ -107,6 +107,10 @@
       "schedule": "40 11 * * *"
     },
     {
+      "path": "/api/cron/context?step=workspace_retention",
+      "schedule": "5 7 * * *"
+    },
+    {
       "path": "/api/cron/context?step=connectors",
       "schedule": "50 10 * * *"
     },
