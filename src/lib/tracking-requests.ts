@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isTrackingRequest, SOURCE_LABEL, trackingTaskTitle } from "@/lib/tracking-requests-core";
+import { createItemIfNew } from "@/lib/reality-check";
 
 // Requests about a landing page, a tracking setup or a fix, said in Slack, Gmail, Asana, on a call or in Gemini meeting notes
 // (read from Drive into calls: context_items source "call"), become a task for
@@ -36,7 +37,8 @@ export async function trackingRequests(admin: SupabaseClient, now = new Date()):
   let made = 0;
   for (const f of found.slice(0, 30)) {
     if (done.has(f.ref)) continue;
-    const { error } = await admin.from("agent_asks").insert({
+    // Dedupe against reality (owner, Nov 24 2026): already done or in motion anywhere, nothing new is made
+    const r = await createItemIfNew(admin, {
       kind: "task",
       owner_id: owner,
       asked_by: owner,
@@ -45,7 +47,7 @@ export async function trackingRequests(admin: SupabaseClient, now = new Date()):
       detail: `Asked in ${SOURCE_LABEL[f.source] ?? f.source}: "${f.text.replace(/\s+/g, " ").slice(0, 600)}"${f.url ? `\n${f.url}` : ""}`.slice(0, 2000),
       source_ref: f.ref,
     });
-    if (!error) made++;
+    if (r.id && r.state === "new") made++;
   }
   return { made };
 }

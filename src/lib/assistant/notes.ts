@@ -116,7 +116,14 @@ async function saveFollowUps(admin: SupabaseClient, c: { callId: string; profile
       return { what: f.what, due: f.due, clientId: k?.id ?? null, client: k?.name ?? null };
     }),
   );
-  for (const r of reminders) {
+  // Dedupe against reality (owner, Nov 24 2026): a follow-up already done or already in motion anywhere is left off
+  const { loadReality } = await import("@/lib/reality-check");
+  const { decide } = await import("@/lib/reality-check-core");
+  const found = await loadReality(admin, { clientIds: reminders.map((r) => r.clientId), ownerIds: [c.profileId] }).catch(() => []);
+  for (const r0 of reminders) {
+    const checklist = r0.checklist.filter((i) => decide({ title: i.text, clientId: r0.clientId, ownerId: c.profileId }, found).state === "new");
+    if (!checklist.length) continue;
+    const r = { ...r0, checklist };
     const base = { kind: "reminder", owner_id: c.profileId, asked_by: c.profileId, role_key: c.roleKey, call_id: c.callId, client_id: r.clientId, title: r.title, detail: "", due_on: r.due };
     const { error } = await admin.from("agent_asks").insert({ ...base, checklist: r.checklist, with_transcript: true });
     // Before the checklist's migration: the items go in the detail instead
