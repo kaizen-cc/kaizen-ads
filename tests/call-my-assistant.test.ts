@@ -177,9 +177,21 @@ describe("the safety review", () => {
     expect(parseSafetyReview({ flagged: true, categories: [] }).flagged).toBe(false);
     expect(parseSafetyReview(null)).toEqual({ flagged: false, categories: [], severity: null, summary: "", moments: [], distress: false });
   });
-  it("treats distress as a flag that asks for support", () => {
-    const r = parseSafetyReview({ flagged: true, categories: [], distress: true, severity: "none" });
+  it("treats unmistakable distress as a flag that asks for support", () => {
+    const r = parseSafetyReview({ flagged: true, categories: [], distress: true, distress_confidence: "high", severity: "none" });
     expect(r).toMatchObject({ flagged: true, categories: ["distress"], distress: true, severity: "low" });
+  });
+  it("drops a distress read that is only one medium moment (a show in the background, a joke)", () => {
+    const tv = parseSafetyReview({ flagged: true, categories: ["distress"], distress: true, distress_confidence: "medium", severity: "high", summary: "Said they can't go on.", moments: [{ at_seconds: 2400, category: "distress", note: "dramatic line" }] }, 3600);
+    expect(tv).toMatchObject({ flagged: false, categories: [], distress: false, moments: [] });
+  });
+  it("keeps distress shown at two separate moments, and other categories whatever happens to distress", () => {
+    const two = parseSafetyReview({ flagged: true, categories: ["distress"], distress: true, distress_confidence: "medium", moments: [{ at_seconds: 300, category: "distress", note: "a" }, { at_seconds: 900, category: "distress", note: "b" }] }, 3600);
+    expect(two).toMatchObject({ flagged: true, distress: true });
+    const close = parseSafetyReview({ flagged: true, categories: ["distress"], distress: true, distress_confidence: "low", moments: [{ at_seconds: 300, category: "distress", note: "a" }, { at_seconds: 320, category: "distress", note: "b" }] }, 3600);
+    expect(close.flagged).toBe(false);
+    const other = parseSafetyReview({ flagged: true, categories: ["harassment", "distress"], distress: true, distress_confidence: "low", moments: [{ at_seconds: 60, category: "harassment", note: "remark" }] }, 3600);
+    expect(other).toMatchObject({ flagged: true, categories: ["harassment"], distress: false });
   });
   it("times the transcript from the call's start", () => {
     expect(timedTranscript([{ who: "Sam", text: "hi", at: "2026-11-17T10:02:13Z" }], "2026-11-17T10:00:00Z")).toBe("[2:13] Sam: hi");

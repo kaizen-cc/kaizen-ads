@@ -514,7 +514,7 @@ export type SafetyResult = { flagged: boolean; categories: SafetyCategory[]; sev
 export const SAFETY_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["flagged", "categories", "severity", "summary", "moments", "distress"],
+  required: ["flagged", "categories", "severity", "summary", "moments", "distress", "distress_confidence"],
   properties: {
     flagged: { type: "boolean" },
     categories: { type: "array", items: { type: "string", enum: [...SAFETY_CATEGORIES] } },
@@ -524,9 +524,17 @@ export const SAFETY_SCHEMA = {
       type: "array",
       items: { type: "object", additionalProperties: false, required: ["at_seconds", "category", "note"], properties: { at_seconds: { type: "number" }, category: { type: "string", enum: [...SAFETY_CATEGORIES] }, note: { type: "string" } } },
     },
-    distress: { type: "boolean", description: "The person sounds in genuine personal distress (not just a busy or annoyed day)" },
+    distress: { type: "boolean", description: "The person sounds in genuine personal distress (not just a busy or annoyed day), said by them about themselves; never background media, quotes, jokes or small talk" },
+    distress_confidence: { type: "string", enum: ["none", "low", "medium", "high"], description: "high only when it's unmistakable, in their own words, about themselves" },
   },
 };
+
+/** A distress read holds when it's high confidence, or when two distress moments at least a minute apart show it */
+export function distressHolds(confidence: unknown, moments: readonly { at_seconds: number; category: string }[]): boolean {
+  if (confidence === "high") return true;
+  const at = moments.filter((m) => m.category === "distress").map((m) => m.at_seconds).sort((a, b) => a - b);
+  return at.length >= 2 && at[at.length - 1] - at[0] >= 60;
+}
 
 /**
  * The review's answer, checked: only the listed categories; flagged only when there is a category (distress counts);
@@ -535,14 +543,21 @@ export const SAFETY_SCHEMA = {
 export function parseSafetyReview(raw: unknown, callSeconds = Infinity): SafetyResult {
   const r = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const cats = Array.isArray(r.categories) ? [...new Set(r.categories.filter((c): c is SafetyCategory => SAFETY_CATEGORIES.includes(c as SafetyCategory)))] : [];
-  const distress = r.distress === true || cats.includes("distress");
-  if (distress && !cats.includes("distress")) cats.push("distress");
-  const flagged = r.flagged === true && cats.length > 0;
-  const moments = (Array.isArray(r.moments) ? r.moments : [])
+  let moments = (Array.isArray(r.moments) ? r.moments : [])
     .map((m) => (m && typeof m === "object" ? (m as Record<string, unknown>) : {}))
     .filter((m) => SAFETY_CATEGORIES.includes(m.category as SafetyCategory) && Number.isFinite(Number(m.at_seconds)))
     .map((m) => ({ at_seconds: Math.max(0, Math.min(Math.round(Number(m.at_seconds)), Number.isFinite(callSeconds) ? callSeconds : Number.MAX_SAFE_INTEGER)), category: m.category as SafetyCategory, note: clip(m.note, 300) }))
     .slice(0, 10);
+  // Distress needs a high-confidence read or two separate moments (at least a minute apart): an open microphone hears
+  // TV shows, other people and jokes, and a false "the caller may need support" alert to management does harm
+  const said = r.distress === true || cats.includes("distress");
+  const distress = said && distressHolds(r.distress_confidence, moments);
+  if (!distress) {
+    const at = cats.indexOf("distress");
+    if (at >= 0) cats.splice(at, 1);
+    moments = moments.filter((m) => m.category !== "distress");
+  } else if (!cats.includes("distress")) cats.push("distress");
+  const flagged = r.flagged === true && cats.length > 0;
   const sev = r.severity === "low" || r.severity === "medium" || r.severity === "high" ? r.severity : null;
   return { flagged, categories: flagged ? cats : [], severity: flagged ? (sev ?? "low") : null, summary: flagged ? clip(r.summary, 600) : "", moments: flagged ? moments : [], distress: flagged && distress };
 }

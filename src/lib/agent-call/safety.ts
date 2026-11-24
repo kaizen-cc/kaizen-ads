@@ -24,11 +24,16 @@ Flag ONLY genuinely concerning content:
 - confidential_data: trying to take client or company confidential data out (sending it to a personal address, a competitor, copying client lists or logins away);
 - fraud: fraud, faking numbers or invoices, misusing client money or ad accounts;
 - deceiving_clients: planning to fabricate or misstate numbers to a client, fake a report, bill for work not done, or hide a material fact about the client's own account (spend, results, a problem) in a way that misleads them about it;
-- distress: the person themselves in genuine distress (talk of self harm, crisis, feeling unsafe, overwhelming despair).
+- distress: the person themselves in genuine distress (talk of self harm, crisis, feeling unsafe, overwhelming despair), said by them, about themselves, to the assistant or to a colleague.
 
 Selective emphasis is not deception: marketing material such as a case study, a pitch or a proposal that leads with the wins and leaves out a confusing chart or a weaker metric, with every number shown true, is normal agency work. So is choosing what to put in front of a client first. Flag deceiving_clients only for fabrication, misstated numbers, or hiding a material fact that misleads the client about their own account.
 
+The transcript is speech-to-text from an open microphone: it also picks up whatever is around the person. Distress is NEVER: a TV show, film, video, song, podcast or stream playing in the background (dialogue that doesn't fit the call, characters, dramatic lines); someone else in the room; lines the person quotes or reads out; jokes, sarcasm or exaggeration ("this report is killing me"); personal small talk about their weekend, family or health in passing; being tired, a late-night call, long pauses, or garbled, repeated or fragmented speech-to-text; venting about workload or slow replies; anything the AI says or reads out (a notification or alert titled "distress" is the system talking, not the person). Flag distress only when the person is clearly speaking to the assistant or a colleague about their own real crisis. distress_confidence: high only when that is unmistakable (they say it plainly, in their own words, about themselves); medium when it seems so but could be background or a joke; low otherwise. A distress flag needs high confidence or at least two separate moments, minutes apart, that each show it.
+
 Do NOT flag: ordinary frustration, swearing, venting about a busy day or a hard client, jokes, criticism of work, disagreement, honest mistakes, or normal business talk about numbers and clients. When in doubt it is not flagged. For each moment give the second it starts (from the [m:ss] stamps) and a short neutral note. No speculation about the person beyond what was said.`;
+
+/** Bumped when the review's rules change; recent flags from an older rule are re-scored (rescoreRecentFlags) */
+export const SAFETY_RULE_VERSION = 2;
 
 /** Reviews one ended call (never throws). Returns whether it was flagged, or null when it couldn't run. */
 export async function reviewCallSafety(admin: SupabaseClient, callId: string): Promise<boolean | null> {
@@ -72,6 +77,7 @@ export async function reviewCallSafety(admin: SupabaseClient, callId: string): P
       summary: result.summary || null,
       moments: result.moments,
       distress: result.distress,
+      rule_version: SAFETY_RULE_VERSION,
       reviewed_at: now.toISOString(),
       audio_delete_after: Number(call.audio_parts ?? 0) > 0 || shots > 0 ? deleteAfter.toISOString() : null,
     },
@@ -148,6 +154,7 @@ export async function sweepCallSafety(admin: SupabaseClient): Promise<{ reviewed
     if (r !== null) reviewed++;
     if (r) flagged++;
   }
+  await rescoreRecentFlags(admin).catch((e) => console.error("[call safety] rescore", e instanceof Error ? e.message : e));
   const { data: due } = await admin.from("call_safety_reviews").select("call_id, audio_delete_after, audio_deleted_at").is("audio_deleted_at", null).not("audio_delete_after", "is", null).lte("audio_delete_after", new Date().toISOString()).limit(100);
   for (const d of due ?? []) {
     if (!audioDue({ endedAt: null, deleteAfter: d.audio_delete_after as string, deletedAt: null })) continue;
@@ -172,4 +179,43 @@ export async function sweepCallSafety(admin: SupabaseClient): Promise<{ reviewed
     deleted++;
   }
   return { reviewed, flagged, deleted };
+}
+
+/**
+ * Flags from an older rule in the last three days that nobody resolved, reviewed again under the current rule (a few
+ * per run). One that no longer holds (a TV show taken for distress, a joke) is resolved for every executive, its alert
+ * cleared, and its audio deleted like any unflagged call's; one that still holds stays as it is.
+ */
+export async function rescoreRecentFlags(admin: SupabaseClient, max = 5): Promise<{ rescored: number; cleared: number }> {
+  const { data } = await admin
+    .from("call_safety_reviews")
+    .select("call_id, categories")
+    .eq("flagged", true)
+    .is("resolved_at", null)
+    .lt("rule_version", SAFETY_RULE_VERSION)
+    .gte("reviewed_at", new Date(Date.now() - 3 * 86_400_000).toISOString())
+    .limit(max);
+  let rescored = 0;
+  let cleared = 0;
+  for (const r of data ?? []) {
+    const callId = r.call_id as string;
+    await admin.from("ai_role_calls").update({ safety_reviewed_at: null }).eq("id", callId);
+    const still = await reviewCallSafety(admin, callId);
+    if (still === null) {
+      // Couldn't run: marked as seen by this rule so it isn't retried forever; the old flag stands
+      await admin.from("call_safety_reviews").update({ rule_version: SAFETY_RULE_VERSION }).eq("call_id", callId);
+      await admin.from("ai_role_calls").update({ safety_reviewed_at: new Date().toISOString() }).eq("id", callId);
+      continue;
+    }
+    rescored++;
+    if (still) continue;
+    const now = new Date().toISOString();
+    const was = ((r.categories as string[] | null) ?? []).map((c) => c.replace(/_/g, " ")).join(", ") || "a concern";
+    await admin.from("call_safety_reviews").update({ resolved_at: now, resolved_by: null, resolution: `Re-scored under the stricter rule: not ${was} (background speech, a joke or small talk). Cleared automatically.` }).eq("call_id", callId);
+    const key = safetyAlertKey(callId);
+    await admin.from("notifications").update({ read_at: now }).eq("key", key).is("read_at", null);
+    await admin.from("notifications").update({ cleared_at: now }).eq("key", key).is("cleared_at", null);
+    cleared++;
+  }
+  return { rescored, cleared };
 }
