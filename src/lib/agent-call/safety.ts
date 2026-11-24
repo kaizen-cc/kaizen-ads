@@ -23,8 +23,10 @@ Flag ONLY genuinely concerning content:
 - discrimination: discriminating against people for race, gender, religion, age, disability, orientation or similar;
 - confidential_data: trying to take client or company confidential data out (sending it to a personal address, a competitor, copying client lists or logins away);
 - fraud: fraud, faking numbers or invoices, misusing client money or ad accounts;
-- deceiving_clients: planning to lie to or mislead a client (hiding results, fake reports, billing for work not done);
+- deceiving_clients: planning to fabricate or misstate numbers to a client, fake a report, bill for work not done, or hide a material fact about the client's own account (spend, results, a problem) in a way that misleads them about it;
 - distress: the person themselves in genuine distress (talk of self harm, crisis, feeling unsafe, overwhelming despair).
+
+Selective emphasis is not deception: marketing material such as a case study, a pitch or a proposal that leads with the wins and leaves out a confusing chart or a weaker metric, with every number shown true, is normal agency work. So is choosing what to put in front of a client first. Flag deceiving_clients only for fabrication, misstated numbers, or hiding a material fact that misleads the client about their own account.
 
 Do NOT flag: ordinary frustration, swearing, venting about a busy day or a hard client, jokes, criticism of work, disagreement, honest mistakes, or normal business talk about numbers and clients. When in doubt it is not flagged. For each moment give the second it starts (from the [m:ss] stamps) and a short neutral note. No speculation about the person beyond what was said.`;
 

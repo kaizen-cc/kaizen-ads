@@ -225,6 +225,10 @@
     {
       "path": "/api/cron/context?step=slack_seats",
       "schedule": "56 * * * *"
+    },
+    {
+      "path": "/api/cron/context?step=after_call",
+      "schedule": "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
     }
   ]
 }

@@ -100,3 +100,22 @@ export function repeatKey(text: string): string | null {
 
 /** Whether two moments are close enough for the same words to be one utterance sent twice */
 export const withinRepeat = (now: number, then: number, windowMs = REPEAT_WINDOW_MS) => now - then >= 0 && now - then <= windowMs;
+
+/**
+ * The person's earlier lines this turn replaces: when they talked over the agent, the cut-off turn is sent again with
+ * the rest of what they said, so each attempt was saved and the transcript showed one utterance three or four times
+ * (Nov 21 2026). Every earlier line within the window that this turn starts with (or that is this very turn again) is
+ * superseded: the transcript keeps one line per utterance, the full one.
+ */
+export function supersededLines(rows: readonly { id: string; content: string; at: number }[], text: string, saidAt: number, windowMs = REPEAT_WINDOW_MS * 2): string[] {
+  const full = norm(text);
+  if (!full) return [];
+  return rows
+    .filter((r) => r.at < saidAt && saidAt - r.at <= windowMs)
+    .filter((r) => {
+      const t = norm(r.content);
+      // A short reply ("yes") followed by a longer one is two answers, not one utterance sent again
+      return t.split(" ").length >= 6 && t.length <= full.length && full.startsWith(t);
+    })
+    .map((r) => r.id);
+}

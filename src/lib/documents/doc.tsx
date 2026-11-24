@@ -18,8 +18,9 @@ const SOFT = "#f4f6f9";
 const BODY = "#2c3a4b";
 
 const s = StyleSheet.create({
-  page: { fontFamily: "Helvetica", color: INK, backgroundColor: "#ffffff", paddingTop: 40, paddingBottom: 54, fontSize: 10.5, lineHeight: 1.45 },
-  body: { paddingHorizontal: PAD, paddingTop: 26 },
+  page: { fontFamily: "Helvetica", color: INK, backgroundColor: "#ffffff", paddingTop: 40, paddingBottom: 54, fontSize: 10.5 },
+  // Line height lives on the body, not the page: a page-level lineHeight pushes the rendered footer (page numbers) off the page
+  body: { paddingHorizontal: PAD, paddingTop: 26, lineHeight: 1.45 },
   kicker: { fontSize: 8.5, fontFamily: "Helvetica-Bold", letterSpacing: 1.4, textTransform: "uppercase" },
   h2: { fontSize: 14, fontFamily: "Helvetica-Bold", letterSpacing: -0.2, marginBottom: 8 },
   para: { fontSize: 10.5, color: BODY, lineHeight: 1.5 },

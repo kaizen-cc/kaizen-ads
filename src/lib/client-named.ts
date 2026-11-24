@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { pickClientByName } from "@/lib/client-name-match";
+import { closestClients, pickClientByName } from "@/lib/client-name-match";
 
 // The client a tool was asked for, by name: the one shared resolver for the assistant's, the agents' (calls and their
 // chats) and Kaizen AI's tools. Reads the clients this person's session can see (RLS), so nobody reaches a client
@@ -18,7 +18,7 @@ export class ClientNameError extends Error {
 }
 
 /** The visible client named, or a ClientNameError saying none matched or which ones to choose between */
-export async function clientNamed(db: SupabaseClient, name: unknown): Promise<NamedRow> {
+export async function clientNamed(db: SupabaseClient, name: unknown, meId?: string | null): Promise<NamedRow> {
   const asked = String(name ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
   if (!asked) throw new ClientNameError("Which client?");
   const { data } = await db.from("clients").select("id, name, slug").is("archived_at", null).order("name").limit(2000);
@@ -28,6 +28,10 @@ export async function clientNamed(db: SupabaseClient, name: unknown): Promise<Na
   const { hit, close } = pickClientByName(asked, rows);
   if (hit) return hit;
   if (close.length) throw new ClientNameError(`"${asked}" could be ${close.map((c) => c.name).join(" or ")}. Ask which one they mean.`, close.map((c) => c.name));
+  // Said aloud or misspelled ("Alucova" for Aldecoa Coffee): the closest names, to confirm, never "I can't find it"
+  const mine = meId ? new Set(((await db.from("client_assignments").select("client_id").eq("profile_id", meId).limit(500)).data ?? []).map((r) => String(r.client_id))) : undefined;
+  const near = closestClients(asked, rows, 3, mine);
+  if (near.length) throw new ClientNameError(`No client is called "${asked}" exactly. The closest ${near.length === 1 ? "is" : "are"} ${near.map((c) => c.name).join(" or ")}: ask "Did you mean ${near[0].name}?" and carry on with it on their yes.`, near.map((c) => c.name));
   throw new ClientNameError(`No client called "${asked}" that you can see.`);
 }
 

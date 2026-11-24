@@ -35,7 +35,7 @@ export const TIPS: readonly Tip[] = [
   { key: "briefs", tools: ["create_brief", "ready_briefs", "approve_brief", "reject_brief", "my_unfinished_briefs", "discard_unfinished_brief", "creative_allotments", "creative_assessment", "brief_asset_waivers", "waive_brief_asset", "rate_drafted_brief"], text: "you can write, approve or send back creative briefs with me, and ask how each client's creative allotment is pacing?" },
   { key: "tickets", tools: ["move_ticket"], text: "you can have me move a ticket to its next stage on the board? Just tell me which one and where." },
   { key: "reports", tools: ["create_report", "draft_weekly_report", "custom_report_data", "report_style", "set_report_recipients"], text: "you can build a client report just by asking me? I'll draft it in the Kaizen style, compare offers or before and after a change, and remember who the email goes to." },
-  { key: "documents", tools: ["create_document", "make_deck", "export_to_google_doc", "export_to_google_sheet", "deliverable"], text: "I can turn anything we work on into a branded PDF, a deck, or a Google Doc or Sheet in your Drive?" },
+  { key: "documents", tools: ["create_document", "make_deck", "export_to_google_doc", "export_to_google_sheet", "deliverable", "create_case_study", "upload_to_drive"], text: "I can turn anything we work on into a branded PDF, a deck, a client-ready case study, or a Google Doc or Sheet, and drop it straight into the Drive folder you name?" },
   { key: "growth", tools: ["upsell_opportunities", "client_wins", "draft_client_emails"], text: "I can find clients ready for another service and wins worth sharing, then draft the emails for you to send?" },
   { key: "files", tools: ["read_google_file", "search_my_drive", "read_figma", "read_asana_task", "search_asana", "read_upload", "read_uploads", "read_pasted_text", "ask_for_files"], text: "you can paste a screenshot straight into our chat, or share a file, a Drive or Figma link, or an Asana task, and I'll look at it and work from it?" },
   { key: "kaizen_ai", tools: ["read_my_kaizen_ai", "search_my_kaizen_ai"], text: "I can pick up anything you worked on in Kaizen AI, so you don't have to explain it twice?" },
@@ -48,6 +48,7 @@ export const TIPS: readonly Tip[] = [
   { key: "review", tools: ["account_review", "review_item", "assign_review_todo"], text: "I can run the weekly account review with you step by step, and capture each decision as a to-do?" },
   { key: "risk", tools: ["flag_client_risk"], text: "if you think a client might leave, you can tell me and I'll flag it to the right people right away?" },
   { key: "feedback", tools: ["submit_feedback"], text: "if something in Kaizen OS isn't working or could be better, you can tell me and I'll file it for you?" },
+  { key: "after_call", tools: ["run_after_call"], text: "you can hand me a list of long jobs, like case studies for several clients, and hang up? I keep working after the call and tell you as each one is ready." },
   { key: "layout", tools: ["overview_layout"], text: "you can switch your Overview to a simple list view just by asking me?" },
 ];
 

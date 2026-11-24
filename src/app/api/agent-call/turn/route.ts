@@ -6,7 +6,7 @@ import { parseCallContext } from "@/lib/agent-call/call-context";
 import { talkModeOf } from "@/lib/agent-call/modality";
 import { PASTE_CHARS } from "@/lib/assistant/long-text";
 import { callTimer } from "@/lib/agent-call/timing";
-import { isRepeatTurn, repeatKey, REPEAT_WINDOW_MS } from "@/lib/agent-call/transcript";
+import { isRepeatTurn, repeatKey, REPEAT_WINDOW_MS, supersededLines } from "@/lib/agent-call/transcript";
 import { requireStaff } from "@/lib/auth";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -49,6 +49,14 @@ async function claimTurn(admin: ReturnType<typeof createAdminClient>, callId: st
   // Before the migration (no such columns): this server's own check above is all there is
   if (error) return true;
   return (data ?? []).length > 0;
+}
+
+/** The person's earlier lines this turn replaces (a cut-off turn sent again in full), taken out of the transcript */
+async function dropSuperseded(admin: ReturnType<typeof createAdminClient>, callId: string, text: string, saidAt: number) {
+  const since = new Date(saidAt - REPEAT_WINDOW_MS * 2).toISOString();
+  const { data } = await admin.from("ai_role_chats").select("id, content, created_at").eq("call_id", callId).eq("role", "user").gte("created_at", since).order("created_at");
+  const ids = supersededLines((data ?? []).map((r) => ({ id: r.id as string, content: String(r.content ?? ""), at: Date.parse(r.created_at as string) })), text, saidAt);
+  if (ids.length) await admin.from("ai_role_chats").delete().in("id", ids);
 }
 
 /** A turn that didn't go through can be said again right away: its claim is let go */
@@ -104,6 +112,8 @@ export async function POST(request: Request) {
         .then(() => {
           // Answered: the same words again in a moment are a repeat (a turn that failed may be said again)
           if (request.signal.aborted) return;
+          // One line per utterance: earlier saves of a cut-off turn this one finished are dropped from the transcript
+          void dropSuperseded(admin, call.id, text, startedAt).catch(() => undefined);
           if (LAST_SAID.size > 500) LAST_SAID.clear();
           LAST_SAID.set(call.id, { text, at: startedAt });
         })

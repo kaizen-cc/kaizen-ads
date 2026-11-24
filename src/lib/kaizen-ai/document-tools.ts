@@ -15,7 +15,7 @@ const CLIENT = { type: "string", description: "The client's name (or slug). Leav
 const r2 = (x: number | null | undefined) => (x == null || !Number.isFinite(x) ? null : Math.round(x * 100) / 100);
 
 /** Every tool name here (the email and social teams get them too) */
-export const DOCUMENT_TOOLS = ["package_details", "client_wins", "create_document"] as const;
+export const DOCUMENT_TOOLS = ["package_details", "client_wins", "create_document", "create_case_study", "upload_to_drive", "run_after_call"] as const;
 
 const ITEMS = { type: "array", items: { type: "string" } };
 
@@ -152,6 +152,96 @@ export function documentTools(ctx: ToolCtx): ChatTool[] {
           ...(made.placeholders.length ? { placeholders: made.placeholders, note: `These are drawn as "${PRICE_PLACEHOLDER}" because no price is stored for them: say so in a line. The card is on screen.` } : { note: "The card is on screen (Open, Download, Edit). Say what's in it in a line; don't repeat it." }),
           ...(c ? { filed: `In ${c.name}'s documents` } : {}),
         };
+      },
+    },
+    {
+      name: "create_case_study",
+      description:
+        "Makes a client-ready case study PDF in Kaizen's own case-study look (dark, bold, charts of the months), from the client's real monthly numbers (each ad account's spend, results and value from the synced data, email and store revenue) and their context: the wins first, the story of how we got them, every number true, nothing invented, never a price, a placeholder or next steps. It takes a minute. notes: what they asked for (what to feature, what to leave out, the angle). accent: a different accent colour (hex) only if they ask. It's kept with the client's documents and shown as a card; put it in their Drive with upload_to_drive. For several clients at once, or when they're signing off, use run_after_call.",
+      input_schema: { type: "object", properties: { client: CLIENT, notes: { type: "string" }, accent: { type: "string", description: "A hex colour, e.g. #e11d2e (Kaizen red, the default)" }, document_id: { type: "string", description: "A case study you made, to make again" } }, additionalProperties: false },
+      status: (input, client) => `Writing the case study for ${clip(input.client, 40) || client || "the client"}…`,
+      run: async (input) => {
+        if (!seesAccountNumbers(ctx.me)) return { made: false, error: "Case studies are built from account numbers, which aren't part of your view." };
+        const c = await clientNamedForTools(ctx, input);
+        const { writeCaseStudy, makeCaseStudy } = await import("@/lib/documents/case-study-server");
+        const cs = await writeCaseStudy(ctx.admin, { id: c.id, name: c.name }, clip(input.notes, 2000));
+        if (typeof input.accent === "string" && /^#[0-9a-f]{6}$/i.test(input.accent.trim())) cs.accent = input.accent.trim().toLowerCase();
+        const id = /^[0-9a-f-]{36}$/i.test(String(input.document_id ?? "")) ? String(input.document_id) : null;
+        const made = await makeCaseStudy(ctx.admin, { id: ctx.me.id }, { id: c.id, name: c.name }, cs, id);
+        ctx.cards.push({ type: "link", title: `Case study: ${c.name}`, detail: made.title, href: made.href, cta: "Open the case study", external: false });
+        return { made: true, document_id: made.id, version: made.version, title: made.title, results: cs.results.map((r) => `${r.value} ${r.label}`), charts: cs.charts.map((x) => x.title), note: "The card is on screen. Say the headline in a line; put it in Drive with upload_to_drive when they asked for that." };
+      },
+    },
+    {
+      name: "upload_to_drive",
+      description:
+        "Puts documents Kaizen OS made (case studies, SOWs, proposals: their document_id) into a Google Drive folder the person points to, as them: the folder's link, or its path as they say it (\"00-Business Manifesto/08-Kaizen Content\": a shared drive or any folder they can reach, then subfolders). subfolder: a folder inside it to put them in, made when it isn't there (\"Case Studies\"). A file with the same name there is replaced with the new version. Returns each file's Drive link. When the folder isn't found, say so and ask for its link.",
+      input_schema: { type: "object", properties: { document_ids: ITEMS, folder: { type: "string", description: "A Drive folder link, or a path of folder names" }, subfolder: { type: "string" } }, required: ["document_ids", "folder"], additionalProperties: false },
+      status: () => "Putting it in Drive…",
+      run: async (input) => {
+        if (ctx.me.viewAs) return { error: "While viewing as someone, nothing is put in their Drive." };
+        const ids = (Array.isArray(input.document_ids) ? input.document_ids : []).map(String).filter((x) => /^[0-9a-f-]{36}$/i.test(x)).slice(0, 20);
+        if (!ids.length) return { error: "Which documents? Use their document_id." };
+        const { driveFolder, uploadToFolder, documentBytes } = await import("@/lib/drive-push");
+        const f = await driveFolder(ctx.me.email, clip(input.folder, 500), clip(input.subfolder, 120) || null);
+        if ("error" in f) return { uploaded: false, error: f.error };
+        const out: { file: string; link: string | null }[] = [];
+        const missing: string[] = [];
+        for (const id of ids) {
+          const d = await documentBytes(ctx.db, ctx.admin, id);
+          if (!d) {
+            missing.push(id);
+            continue;
+          }
+          const up = await uploadToFolder(ctx.me.email, f.id, d.name, d.bytes, "application/pdf");
+          out.push({ file: d.name, link: up.link });
+        }
+        if (f.link) ctx.cards.push({ type: "link", title: `In Drive: ${f.name}`, detail: `${out.length} file${out.length === 1 ? "" : "s"}${f.made ? ", in a new folder" : ""}`, href: f.link, cta: "Open the folder", external: true });
+        return { uploaded: out.length, folder: f.name, folder_link: f.link, made_folder: f.made, files: out, ...(missing.length ? { not_found: missing.length } : {}) };
+      },
+    },
+    {
+      name: "run_after_call",
+      description:
+        "Keeps working after the call or chat ends: case studies for a list of clients, each written, drawn and (when they named a folder) put into their Google Drive, one after another in the background. They're told in the app as each one is ready, with the file linked. Use it when they ask for several at once or are signing off (\"I'm going to bed, do all of these\"); never say you can only work while they're on the call. Say the list back and ask once; confirmed: true after their yes.",
+      input_schema: {
+        type: "object",
+        properties: {
+          clients: { type: "array", items: { type: "object", properties: { client: { type: "string" }, notes: { type: "string", description: "What to feature or leave out for this one" } }, required: ["client"], additionalProperties: false } },
+          notes: { type: "string", description: "What applies to all of them" },
+          folder: { type: "string", description: "A Drive folder link or path to put them in (optional)" },
+          subfolder: { type: "string", description: "A folder inside it, made when needed (e.g. Case Studies)" },
+          confirmed: { type: "boolean", description: "True only after they said yes to this list" },
+        },
+        required: ["clients"],
+        additionalProperties: false,
+      },
+      status: () => "Lining up the work…",
+      run: async (input) => {
+        if (ctx.me.viewAs) return { error: "While viewing as someone, nothing is started as them." };
+        if (!seesAccountNumbers(ctx.me)) return { error: "Case studies are built from account numbers, which aren't part of your view." };
+        const asked = (Array.isArray(input.clients) ? input.clients : []).slice(0, 20) as { client?: unknown; notes?: unknown }[];
+        if (!asked.length) return { error: "Which clients?" };
+        const items: { client_id: string; client: string; notes: string }[] = [];
+        const unknown: string[] = [];
+        for (const a of asked) {
+          try {
+            const c = await clientNamedForTools(ctx, { client: a.client });
+            items.push({ client_id: c.id, client: c.name, notes: [clip(input.notes, 1000), clip(a.notes, 1000)].filter(Boolean).join(" ") });
+          } catch (e) {
+            unknown.push(`${clip(a.client, 60)}: ${e instanceof Error ? e.message : "not found"}`);
+          }
+        }
+        if (unknown.length) return { queued: false, unknown, note: "Some names didn't match a client you can see: ask about these first (offer the closest match), then queue them all together." };
+        if (input.confirmed !== true) return { queued: false, list: items.map((i) => i.client), note: "Say the list back in one line (and the Drive folder) and ask once; call again with confirmed: true on their yes." };
+        if (input.folder) {
+          const { driveFolder } = await import("@/lib/drive-push");
+          const f = await driveFolder(ctx.me.email, clip(input.folder, 500), null);
+          if ("error" in f) return { queued: false, error: `${f.error} Ask for the folder's link, or queue them without Drive.` };
+        }
+        const { queueJob } = await import("@/lib/assistant/after-call-jobs");
+        const id = await queueJob(ctx.admin, { profileId: ctx.me.id, callId: null, title: `Case studies (${items.length})`, items, folder: clip(input.folder, 500) || null, subfolder: clip(input.subfolder, 120) || null });
+        return { queued: true, job: id, clients: items.map((i) => i.client), note: "Queued: they run in the background now, about a minute or two each, and they'll get a notice in the app as each is ready (and in Drive when a folder was given). Say so in a line." };
       },
     },
   ];

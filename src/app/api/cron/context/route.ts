@@ -117,6 +117,7 @@ function due(step: string | null) {
   if (step === "market") return hour === 8;
   if (step === "creative_drive") return true; // every 10 minutes (vercel.json): ticket creative copied into each client's Drive, retries
   if (step === "bibles") return true; // every 10 minutes (vercel.json): every client gets a Brand Bible, kept current
+  if (step === "after_call") return true; // every 5 minutes (vercel.json): work approved on a call that keeps going after it (case studies), one item at a time
   if (step === "slack_seats") return true; // hourly (vercel.json), but runs once a day: everyone on a client's seats in its Slack channels
   if (step === "meta_tokens") return true; // daily (vercel.json): each Business Manager's Meta token checked, execs told when one stops working
   if (step === "connectors") return true; // daily (vercel.json): the MCP registry's remote servers into the connector catalog, offered ones kept current
@@ -208,6 +209,7 @@ export async function GET(request: Request) {
       const boostFlags = await boosts.boostAlerts(admin).catch((e) => String(e));
       return Response.json({ ...synced, pace, adPosts, boostFlags });
     }
+    if (step === "after_call") return Response.json(await (await import("@/lib/assistant/after-call-jobs")).runAfterCallJobs(admin));
     if (step === "slack_seats") {
       // Once a day: the hourly call does nothing when the last audit is under 20 hours old (so the first runs soon after a deploy)
       const { data: last } = await admin.from("slack_seat_audits").select("ran_at").order("ran_at", { ascending: false }).limit(1).maybeSingle();

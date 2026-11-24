@@ -181,3 +181,48 @@ export function pickClientByName<C extends { name: string }>(asked: string, clie
   const near = scored.filter((x) => top.cover - x.cover < 0.2);
   return near.length === 1 ? { hit: top.c, close: [] } : { hit: null, close: near.slice(0, 5).map((x) => x.c) };
 }
+
+/** Edits between two strings (insert, delete, change) */
+function editDistance(a: string, b: string): number {
+  const row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cur = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = cur;
+    }
+  }
+  return row[b.length];
+}
+
+const closeness = (a: string, b: string) => (a && b ? 1 - editDistance(a, b) / Math.max(a.length, b.length) : 0);
+
+/**
+ * The clients a name probably means when nothing matched: how it sounds and how it's spelled, against the whole name,
+ * the brand, the location and each word ("Alucova" or "the COA" for Aldecoa Coffee, "Glen Hook" or "Glenmark" for
+ * Gleannloch Farms). A suggestion to confirm ("Did you mean Aldecoa Coffee?"), never a match on its own. Closest first,
+ * only those near the best.
+ */
+/** mine: the person's own clients (ids), which win a near tie and come first */
+export function closestClients<C extends { name: string; id?: string }>(asked: string, clients: readonly C[], max = 3, mine?: ReadonlySet<string>): C[] {
+  const said = words(asked).filter((w) => !STOP.has(w.t)).map((w) => w.t);
+  const k = said.join("");
+  if (k.length < 3) return [];
+  const sk = skeleton(k);
+  const scored = clients.map((c) => {
+    const { brand, location } = splitName(c.name);
+    const parts = [c.name, brand, location, ...words(c.name).filter((w) => !STOP.has(w.t)).map((w) => w.t)].map((x) => words(x).filter((w) => !STOP.has(w.t)).map((w) => w.t).join("")).filter(Boolean);
+    let best = 0;
+    for (const p of parts) {
+      best = Math.max(best, closeness(k, p), sk.length >= 3 ? closeness(sk, skeleton(p)) * 0.95 : 0);
+      // A short spoken piece of the name ("COA" for Aldecoa)
+      if (k.length >= 3 && p.length > k.length && (p.endsWith(k) || p.startsWith(k))) best = Math.max(best, 0.75);
+    }
+    return { c, score: best > 0 && c.id && mine?.has(c.id) ? best + 0.08 : best };
+  });
+  const top = scored.sort((x, y) => y.score - x.score)[0];
+  if (!top || top.score < 0.55) return [];
+  return scored.filter((x) => top.score - x.score <= 0.1 && x.score >= 0.55).slice(0, max).map((x) => x.c);
+}

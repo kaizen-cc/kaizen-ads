@@ -82,7 +82,7 @@ async function clientOf(ctx: ToolCtx, input: Record<string, unknown>): Promise<C
   if (asked) {
     let hit: ClientRow;
     try {
-      hit = (await clientNamed(ctx.db, asked)) as ClientRow;
+      hit = (await clientNamed(ctx.db, asked, ctx.me.id)) as ClientRow;
     } catch (e) {
       throw new Error(e instanceof ClientNameError && e.choices.length ? e.message : `No client called "${asked}" that you can see. Use list_clients to find the right name.`);
     }
