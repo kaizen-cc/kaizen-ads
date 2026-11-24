@@ -47,12 +47,21 @@ export async function caseStudyFacts(admin: SupabaseClient, clientId: string, mo
     if (!t.ad_account_id) continue;
     const account = String(t.ad_account_id).replace(/^act_/, "");
     const table = t.platform === "google" ? "google_campaign_daily" : "meta_campaign_daily";
-    const { data: rows } = await admin.from(table).select("date, spend, actions, action_values").eq("ad_account_id", account).gte("date", since).limit(20000);
+    const { data: rows } = await admin.from(table).select("date, campaign_id, campaign_name, spend, actions, action_values").eq("ad_account_id", account).gte("date", since).limit(20000);
     const conv = conversionFor(String(t.conversion ?? ""));
-    const s = monthlySeries((rows ?? []) as DailyRow[], t.platform === "google" ? ["conversions"] : (conv.types ?? []));
+    let daily = (rows ?? []) as DailyRow[];
+    let types = t.platform === "google" ? ["conversions"] : (conv.types ?? []);
+    // "Each campaign's own goal": counted the way the KPI board does (each campaign's goal, else its strongest result)
+    if (conv.key === "campaign_goal") {
+      const [{ toDays }, { goalsFor }] = await Promise.all([import("@/lib/kpi/calc"), import("@/lib/kpi/sync")]);
+      const goals = await goalsFor(admin, account, String(t.platform));
+      daily = toDays((rows ?? []) as Parameters<typeof toDays>[0], null, null, goals, String(t.platform)).map((d) => ({ date: d.date, spend: d.spend, actions: { campaign_goal: d.actions.campaign_goal ?? 0 }, action_values: { campaign_goal: d.values.campaign_goal ?? 0 } }));
+      types = ["campaign_goal"];
+    }
+    const s = monthlySeries(daily, types);
     const key = `${t.platform === "google" ? "google_ads" : "meta_ads"}${t.label ? `_${String(t.label).replace(/\W+/g, "_")}` : ""}`;
     series[key] = s;
-    out.push(seriesText(key, s, conv.label.toLowerCase()));
+    out.push(seriesText(key, s, conv.key === "campaign_goal" ? "results (each campaign's own goal)" : conv.label.toLowerCase()));
   }
   const [{ data: email }, { data: store }] = await Promise.all([
     admin.from("klaviyo_daily").select("date, revenue").eq("client_id", clientId).gte("date", since).limit(400),
