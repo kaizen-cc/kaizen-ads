@@ -47,3 +47,9 @@ export const subPath = (s: string | null | undefined) =>
 
 /** The key a remembered folder is stored under for its client or prospect ("" when neither) */
 export const destinationClientKey = (k: Pick<DestinationKey, "clientId" | "prospect">) => (k.clientId ? k.clientId : k.prospect?.trim() ? `p:${k.prospect.trim().toLowerCase()}` : "");
+
+/** The same folder name written differently: spacing, dashes, underscores and case set aside ("08-Kaizen Content" = "08 - Kaizen Content") */
+export const sameFolderName = (a: string, b: string) => {
+  const n = (x: string) => x.toLowerCase().replace(/[\s\-_–—.]+/g, "");
+  return n(a) !== "" && n(a) === n(b);
+};

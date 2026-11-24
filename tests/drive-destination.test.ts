@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { candidatesLine, confirmLine, destinationClientKey, nextStep, pathText, savedLine, subPath, type Destination } from "@/lib/drive-destination-core";
+import { candidatesLine, confirmLine, destinationClientKey, nextStep, sameFolderName, pathText, savedLine, subPath, type Destination } from "@/lib/drive-destination-core";
 import { parseFolderRef } from "@/lib/drive-push-core";
 
 const hq: Destination = { id: "f1", path: ["Shared drives", "Kaizen HQ", "Case Studies"], link: "https://drive.google.com/drive/folders/f1" };
@@ -47,5 +47,14 @@ describe("Kaizen documents' filing", () => {
   });
   it("takes a folder or shared drive by its id from code", () => {
     expect(parseFolderRef("id:0AFxYz123456789Uk9PVA")).toEqual({ id: "0AFxYz123456789Uk9PVA" });
+  });
+});
+
+describe("folder names written differently", () => {
+  it("matches the same name with other spacing, dashes or case, never a nearby name", () => {
+    expect(sameFolderName("08 - Kaizen Content", "08-Kaizen Content")).toBe(true);
+    expect(sameFolderName("Case_Studies", "case studies")).toBe(true);
+    expect(sameFolderName("08 - Kaizen Content", "07-Kaizen Content")).toBe(false);
+    expect(sameFolderName("Kaizen Contents", "Kaizen Content")).toBe(false);
   });
 });

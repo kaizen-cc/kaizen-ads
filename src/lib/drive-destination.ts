@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { driveQuote, parseFolderRef } from "./drive-push-core";
-import { candidatesLine, confirmLine, destinationClientKey, nextStep, pathText, subPath, type Destination, type DestinationKey } from "./drive-destination-core";
+import { candidatesLine, confirmLine, destinationClientKey, nextStep, pathText, sameFolderName, subPath, type Destination, type DestinationKey } from "./drive-destination-core";
 
 // The Drive side of the destination rule (src/lib/drive-destination-core.ts), one helper for every tool that saves or
 // moves a file in Drive (the assistant, Kaizen AI, the agents, Kaizen documents' filing):
@@ -71,7 +71,11 @@ async function fullPath(token: string, f: Item): Promise<string[]> {
 
 async function children(token: string, parentId: string, name: string): Promise<Item[]> {
   const r = await get<{ files?: Item[] }>(token, "files", { ...ALL, q: `${driveQuote(parentId)} in parents and name = ${driveQuote(name)} and mimeType = '${FOLDER}' and trashed = false`, fields: `files(${FIELDS})`, pageSize: "5" });
-  return r.files ?? [];
+  if (r.files?.length) return r.files;
+  // The same name written differently ("08-Kaizen Content" for "08 - Kaizen Content"): only an exact match once
+  // spacing, dashes and case are set aside, never a nearby name
+  const all = await get<{ files?: Item[] }>(token, "files", { ...ALL, q: `${driveQuote(parentId)} in parents and mimeType = '${FOLDER}' and trashed = false`, fields: `files(${FIELDS})`, pageSize: "200" }).catch(() => ({ files: [] as Item[] }));
+  return (all.files ?? []).filter((f) => sameFolderName(f.name, name));
 }
 
 async function makeFolder(token: string, parentId: string, name: string): Promise<Item> {
