@@ -1,3 +1,4 @@
+import { isPeopleMatter } from "@/lib/people-matters";
 // The general done-check, the pure part (tests/done-check.test.ts): items on anyone's Today or Overview close
 // themselves when Slack, Gmail or call and Gemini notes show they're done (the owner, Nov 20 2026). Precision first:
 // an item only closes on a quote that's really in what was said, said after the item opened, and that says it's done
@@ -102,7 +103,8 @@ export const sourceWord = (s: string) => SOURCE_WORD[s] ?? s;
 /** "Closed automatically: "tracking's verified" (Slack, Nov 18)" */
 export function closedNote(quote: string, source: string, at: string): string {
   const day = new Date(at).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" });
-  const q = quote.replace(/\s+/g, " ").trim();
+  // A people matter is never quoted where the team can see it (owner, Nov 24 2026)
+  const q = isPeopleMatter(quote) ? "confirmed in the messages" : quote.replace(/\s+/g, " ").trim();
   return `Closed automatically: "${q.length > 140 ? `${q.slice(0, 137)}…` : q}" (${sourceWord(source)}, ${day})`;
 }
 

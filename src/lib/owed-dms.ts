@@ -1,4 +1,5 @@
 import "server-only";
+import { isPeopleMatter } from "@/lib/people-matters";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getCursor, setCursor, trimBody } from "@/lib/context/shared";
 import { dmOwed, isDmKey, type DmMessage } from "./owed-dms-core";
@@ -76,7 +77,7 @@ export async function scanDms(admin: Admin, who: Who): Promise<{ people: number;
         });
       }
       if (rows.length) {
-        const { error } = await admin.from("owed_replies").upsert(rows, { onConflict: "source,message_key,target_id", ignoreDuplicates: true });
+        const { error } = await admin.from("owed_replies").upsert(rows.filter((r) => !isPeopleMatter(String(r.body ?? ""))), { onConflict: "source,message_key,target_id", ignoreDuplicates: true });
         if (error) throw new Error(error.message);
         out.found += rows.length;
       }

@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson, clientContext, contextBlock } from "@/lib/ai";
 import type { RoutineReport } from "@/lib/routines-core";
+import { PEOPLE_RULE } from "@/lib/people-matters";
 
 // Call prep (owner, Nov 24 2026; docs/kyle-scheduled-runs.md "Owner's additions" and #9's per-meeting prep): about an
 // hour before each client or sales call on the person's calendar, a brief lands on their Routines page and in the
@@ -85,7 +86,7 @@ async function clientBrief(admin: Admin, me: Me, m: M, client: { id: string; nam
     clientId: client.id,
     override: { model: "sonnet", effort: "low" },
     maxTokens: 2500,
-    system: `You prep a ${me.role.replace(/_/g, " ")} at Kaizen, a paid ads, creative, email and social agency, for a client call in about an hour. Sections: "Goal" (one line), "What we owe" (each, and whether it's done), "What they owe", "Top risk" (with numbers), "Talking points" (2-3 points or questions), "Before the call" (anything to do or send first${down.length ? "; start with the connections that are down" : ""}), and "Heads-up" only if the meeting has no agenda or no video link. Never state what Kaizen charges the client. Tag inferred claims likely or guessing. Short lines.`,
+    system: `You prep a ${me.role.replace(/_/g, " ")} at Kaizen, a paid ads, creative, email and social agency, for a client call in about an hour. Sections: "Goal" (one line), "What we owe" (each, and whether it's done), "What they owe", "Top risk" (with numbers), "Talking points" (2-3 points or questions), "Before the call" (anything to do or send first${down.length ? "; start with the connections that are down" : ""}), and "Heads-up" only if the meeting has no agenda or no video link. Never state what Kaizen charges the client. Tag inferred claims likely or guessing. Short lines. ${PEOPLE_RULE}`,
     schema: BRIEF,
     prompt: [
       ctx ? contextBlock(ctx, undefined, { allotment: false }) : `<client>${client.name}</client>`,
@@ -111,7 +112,7 @@ async function salesBrief(admin: Admin, me: Me, m: M): Promise<RoutineReport> {
     bare: true,
     override: { model: "sonnet", effort: "low" },
     maxTokens: 2000,
-    system: `You prep a ${me.role.replace(/_/g, " ")} at Kaizen, a paid ads, creative, email and social agency, for a call in about an hour with people outside Kaizen who aren't a client (a prospect, or a vendor or partner: say which if you can tell). Sections: "What we know" (from the prospect record and emails; say plainly when there's nothing), "Discovery questions" (3, specific to what's known), "Heads-up" only if there's no agenda or no video link. Short lines; never invent facts.`,
+    system: `You prep a ${me.role.replace(/_/g, " ")} at Kaizen, a paid ads, creative, email and social agency, for a call in about an hour with people outside Kaizen who aren't a client (a prospect, or a vendor or partner: say which if you can tell). Sections: "What we know" (from the prospect record and emails; say plainly when there's nothing), "Discovery questions" (3, specific to what's known), "Heads-up" only if there's no agenda or no video link. Short lines; never invent facts. ${PEOPLE_RULE}`,
     schema: BRIEF,
     prompt: `<meeting>${m.title} at ${m.start}; guests ${m.external.join(", ")}; ${m.agenda ? "has an agenda" : "no agenda"}; ${m.link ? "video link set" : "no video link"}</meeting>\n<prospect>${hit ? JSON.stringify({ name: hit.name, website: hit.website, status: hit.status, notes: hit.notes, brief: hit.brief }).slice(0, 4000) : "none on file"}</prospect>\n<emails>${(mail ?? []).map((e) => `[${String(e.occurred_at).slice(0, 10)}] ${e.title ?? ""}: ${String(e.body ?? "").replace(/\s+/g, " ").slice(0, 300)}`).join("\n")}</emails>`,
   });

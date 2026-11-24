@@ -1,4 +1,5 @@
 import "server-only";
+import { isPeopleMatter } from "@/lib/people-matters";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { LIVE, isLive } from "@/lib/live";
@@ -267,7 +268,7 @@ async function scanSlack(admin: Admin) {
         }
       }
       if (rows.length) {
-        const { error } = await admin.from("owed_replies").upsert(rows, { onConflict: "source,message_key,target_id", ignoreDuplicates: true });
+        const { error } = await admin.from("owed_replies").upsert(rows.filter((r) => !isPeopleMatter(String(r.body ?? ""))), { onConflict: "source,message_key,target_id", ignoreDuplicates: true });
         if (error) throw new Error(error.message);
         found += rows.length;
       }
@@ -444,7 +445,7 @@ async function scanGmail(admin: Admin) {
         });
       }
       if (rows.length) {
-        const { error } = await admin.from("owed_replies").upsert(rows, { onConflict: "source,message_key,target_id", ignoreDuplicates: true });
+        const { error } = await admin.from("owed_replies").upsert(rows.filter((r) => !isPeopleMatter(String(r.body ?? ""))), { onConflict: "source,message_key,target_id", ignoreDuplicates: true });
         if (error) throw new Error(error.message);
         found += rows.length;
       }

@@ -1,4 +1,5 @@
 import "server-only";
+import { isPeopleMatter } from "@/lib/people-matters";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { parseTopic } from "@/lib/agent-call/core";
@@ -121,7 +122,8 @@ async function saveFollowUps(admin: SupabaseClient, c: { callId: string; profile
   const { decide } = await import("@/lib/reality-check-core");
   const found = await loadReality(admin, { clientIds: reminders.map((r) => r.clientId), ownerIds: [c.profileId] }).catch(() => []);
   for (const r0 of reminders) {
-    const checklist = r0.checklist.filter((i) => decide({ title: i.text, clientId: r0.clientId, ownerId: c.profileId }, found).state === "new");
+    // People matters never become a follow-up (owner, Nov 24 2026); done or in-motion work is left off too
+    const checklist = r0.checklist.filter((i) => !isPeopleMatter(i.text) && decide({ title: i.text, clientId: r0.clientId, ownerId: c.profileId }, found).state === "new");
     if (!checklist.length) continue;
     const r = { ...r0, checklist };
     const base = { kind: "reminder", owner_id: c.profileId, asked_by: c.profileId, role_key: c.roleKey, call_id: c.callId, client_id: r.clientId, title: r.title, detail: "", due_on: r.due };

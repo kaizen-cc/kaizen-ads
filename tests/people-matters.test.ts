@@ -44,3 +44,21 @@ describe("management talk about people never becomes work", () => {
     expect(withoutPeopleMatters(["Refresh the ads", "Discuss his salary"])).toEqual(["Refresh the ads"]);
   });
 });
+
+import { blockedForPeople } from "@/lib/people-matters";
+import { closedNote } from "@/lib/done-check-core";
+
+describe("people matters never become work for anyone (Nov 24 2026)", () => {
+  it("blocks a generated item that's a people matter, flagged personnel, or owned by the person it's about", () => {
+    expect(blockedForPeople({ text: "Put him on a PIP after the Granite delays" })).toBe(true);
+    expect(blockedForPeople({ text: "Follow up with the client", personnel: true })).toBe(true);
+    expect(blockedForPeople({ text: "Hand over Limelight's handoff doc", ownerName: "Matheus", about: ["Matheus"] })).toBe(true);
+    expect(blockedForPeople({ text: "Hand over Limelight's handoff doc", ownerName: "Lucas Moreira", about: ["Matheus"] })).toBe(false);
+    // Ad work isn't a people matter
+    expect(blockedForPeople({ text: "The ad set is underperforming: cut the budget" })).toBe(false);
+  });
+  it("a done-check close never quotes a people matter", () => {
+    expect(closedNote("We're letting him go on Friday", "slack_internal", "2026-11-24T15:00:00Z")).not.toMatch(/letting him go/);
+    expect(closedNote("Tracking is set up and verified", "slack_internal", "2026-11-24T15:00:00Z")).toContain("Tracking is set up");
+  });
+});

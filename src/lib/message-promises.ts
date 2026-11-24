@@ -6,6 +6,7 @@ import { asanaSince } from "@/lib/calls";
 import { openableLink, slack } from "@/lib/context/slack";
 import { addresses, gmailToken, google, plainText, withoutQuotes, type GmailMessage } from "@/lib/context/google";
 import { isCalendarEmail } from "@/lib/email-filters";
+import { isPeopleMatter } from "@/lib/people-matters";
 import { LEAD_OF, notify, plain, workingHours, type Msg, type SlackWho } from "@/lib/owed-replies";
 import { loadGroups, shadowedMessages, type PromiseGroup } from "@/lib/promise-groups";
 import { matchClientName } from "@/lib/client-name-match";
@@ -130,7 +131,8 @@ promise: true only when it's a real commitment by the person named as saying it.
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const rows = batch.map(({ before, ...c }, n) => {
       const v = verdict.get(n + 1);
-      const real = Boolean(v?.promise && v.what.trim());
+      // People matters are never a promise anyone is chased on (owner, Nov 24 2026)
+      const real = Boolean(v?.promise && v.what.trim()) && !isPeopleMatter(`${v?.what ?? ""} ${v?.ask ?? ""} ${c.said}`);
       const days = Math.max(0, Math.min(15, v?.dueDays ?? 2));
       return {
         ...c,

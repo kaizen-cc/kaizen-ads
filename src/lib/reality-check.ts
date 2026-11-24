@@ -59,7 +59,10 @@ export async function createItemIfNew(
   admin: Admin,
   row: { kind?: "task" | "reminder"; owner_id: string; asked_by?: string | null; client_id: string | null; title: string; detail?: string | null; due_on?: string | null; source_ref?: string | null; urgent?: boolean; checklist?: unknown[] },
   found?: Existing[],
-): Promise<{ state: RealityState; id: string | null; match: Existing | null }> {
+): Promise<{ state: RealityState; id: string | null; match: Existing | null; blocked?: true }> {
+  // People matters never become an item (owner, Nov 24 2026): nothing is made, nothing is noted anywhere
+  const { isPeopleMatter } = await import("@/lib/people-matters");
+  if (isPeopleMatter(`${row.title}\n${row.detail ?? ""}`)) return { state: "done", id: null, match: null, blocked: true };
   if (row.source_ref) {
     const { data: same } = await admin.from("agent_asks").select("id, status").eq("source_ref", row.source_ref).limit(1).maybeSingle();
     if (same) return { state: same.status === "open" ? "in_motion" : "done", id: same.id as string, match: null };

@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { nyClock, type RecapLine, type RoutineReport } from "@/lib/routines-core";
 import { coverageGaps, dueOf, matchPerson, tagged, type Person as Teammate } from "@/lib/routine-sweeps-core";
+import { blockedForPeople, PEOPLE_RULE } from "@/lib/people-matters";
 
 // The call debrief sweep and the delegation tracker (owner, Nov 24 2026; docs/kyle-scheduled-runs.md #1 and #5).
 // Debrief: the calls the person was on (Gemini and Fireflies, already read and matched to clients by the calls step,
@@ -21,7 +22,7 @@ const ITEMS_SCHEMA = {
     type: { type: "string", enum: ["client", "internal", "vendor", "sales", "unclear"] },
     my_items: {
       type: "array",
-      items: { type: "object", properties: { title: { type: "string" }, due: { type: ["string", "null"] }, why: { type: "string" }, soon: { type: "boolean" } }, required: ["title", "due", "why", "soon"], additionalProperties: false },
+      items: { type: "object", properties: { title: { type: "string" }, due: { type: ["string", "null"] }, why: { type: "string" }, soon: { type: "boolean" }, personnel: { type: "boolean", description: "True when it's about a person on the team (performance, conduct, pay, hiring or firing, health, personal life)" } }, required: ["title", "due", "why", "soon", "personnel"], additionalProperties: false },
     },
     urgent: { type: ["string", "null"], description: "Only something that can't wait for the next recap: a client giving notice or churning, an angry or escalating client, a billing dispute, a launch or deliverable broken or blocked today, a hot prospect asking for something today. The action to take, in one sentence." },
     sales: {
@@ -53,7 +54,7 @@ const ITEMS_SCHEMA = {
   additionalProperties: false,
 };
 
-type CallRead = { type: string; my_items: { title: string; due: string | null; why: string; soon: boolean }[]; urgent: string | null; sales: null | Record<string, unknown> & { business: string; contact: string | null; no_show: boolean; snapshot: string; overview: string[]; services: { service: string; state: string }[]; next_steps: string[]; objections: string[]; fit: string; fit_tag: string } };
+type CallRead = { type: string; my_items: { title: string; due: string | null; why: string; soon: boolean; personnel: boolean }[]; urgent: string | null; sales: null | Record<string, unknown> & { business: string; contact: string | null; no_show: boolean; snapshot: string; overview: string[]; services: { service: string; state: string }[]; next_steps: string[]; objections: string[]; fit: string; fit_tag: string } };
 
 const SERVICES = "Meta, Google, TikTok, Email/SMS (Klaviyo), CRM build/automation, Website/landing pages, CRO/tracking, SEO/AEO, Organic social, Creative production, Claude AI instance/MCP integration";
 
@@ -90,7 +91,8 @@ export async function debrief(admin: Admin, me: Me): Promise<RoutineReport> {
         maxTokens: 3500,
         system: `You read one call's notes for a ${me.role.replace(/_/g, " ")} at Kaizen, a paid ads, creative, email and social agency (the person is "${me.full_name.split(" ")[0]}"; Gemini notes may use first names or nicknames). type: client (a Kaizen client), internal (only Kaizen people), vendor (a vendor, ad-platform rep, accountant, recruiter or candidate, referral partner), sales (a prospect: anyone else external${client ? "; this call is matched to a client, so it isn't sales" : ""}), unclear.
 my_items: ONLY things this person themselves must do (they said "I'll…", someone asked them specifically, a decision only they can make: pricing, fees, scope, hiring, approvals, churn/retention; or a teammate is blocked on them). Skip brainstorming, FYIs, things done on the call, and work for other teammates (the team's commitments are already routed). Verb-first titles, at most 6; merge related ones. due: a date said (YYYY-MM-DD) else null. soon: true when it's about a client, revenue or churn or someone is blocked. why: one line with the numbers that make it matter.
-sales (only for type sales, else null): business, contact, email, phone, website when known (else null); no_show; snapshot (one line); overview (5-8 bullets: the business, current marketing and spend, the problem in their words, numbers, what Kaizen recommended, how it ended); services: each of ${SERVICES} as requested / pitched / not discussed; budget, timeline, decision_maker ("unknown" when not said); objections; pricing exactly as said ("not discussed" when not); next_steps both sides; fit high/medium/low with a certainty tag. Never contact anyone.`,
+sales (only for type sales, else null): business, contact, email, phone, website when known (else null); no_show; snapshot (one line); overview (5-8 bullets: the business, current marketing and spend, the problem in their words, numbers, what Kaizen recommended, how it ended); services: each of ${SERVICES} as requested / pitched / not discussed; budget, timeline, decision_maker ("unknown" when not said); objections; pricing exactly as said ("not discussed" when not); next_steps both sides; fit high/medium/low with a certainty tag. Never contact anyone.
+${PEOPLE_RULE} Mark any such item personnel: true; it is never filed.`,
         schema: ITEMS_SCHEMA,
         prompt: `Call: ${c.title} (${String(c.occurred_at).slice(0, 16)})${client ? ` with ${client}` : ""}\nAttendees: ${((c.attendees as string[] | null) ?? []).join(", ")}\n\n${notes}`,
       });
@@ -100,6 +102,8 @@ sales (only for type sales, else null): business, contact, email, phone, website
     callLines.push({ text: `${c.title}${client ? ` (${client})` : ""}: ${read.type}${read.my_items.length ? `, ${read.my_items.length} for you` : ""}`, href: (c.url as string | null) ?? null, tag: null });
     if (read.urgent) urgent.push(read.urgent);
     for (const [n, it] of read.my_items.slice(0, 6).entries()) {
+      // People matters never become an item (owner, Nov 24 2026)
+      if (blockedForPeople({ text: `${it.title}\n${it.why}`, personnel: it.personnel })) continue;
       const r = await createItemIfNew(
         admin,
         { owner_id: me.id, client_id: (c.client_id as string | null) ?? null, title: tagged("Call", today, it.title), detail: `${it.why}\nFrom the call "${c.title}"${c.url ? `: ${c.url}` : ""}\n(Created by Kaizen OS from the call notes.)`, due_on: dueOf(today, it.due, it.soon, 1, 3), source_ref: `routine:call:${c.id}:${n}`, urgent: it.soon },
@@ -171,8 +175,8 @@ const ASKS_SCHEMA = {
       type: "array",
       items: {
         type: "object",
-        properties: { n: { type: "integer" }, owner: { type: ["string", "null"], description: "The teammate's name as written; null when it's a group ask with no single owner" }, scope: { type: "string" }, client: { type: ["string", "null"] }, due: { type: ["string", "null"] }, soon: { type: "boolean" }, done: { type: "string", description: "What done looks like, one line" } },
-        required: ["n", "owner", "scope", "client", "due", "soon", "done"],
+        properties: { n: { type: "integer" }, owner: { type: ["string", "null"], description: "The teammate's name as written; null when it's a group ask with no single owner" }, scope: { type: "string" }, client: { type: ["string", "null"] }, due: { type: ["string", "null"] }, soon: { type: "boolean" }, done: { type: "string", description: "What done looks like, one line" }, personnel: { type: "boolean", description: "True when it's about a person on the team (performance, conduct, pay, hiring or firing, health, personal life)" }, about: { type: "array", items: { type: "string" }, description: "Teammates the message is about (not who it's to)" } },
+        required: ["n", "owner", "scope", "client", "due", "soon", "done", "personnel", "about"],
         additionalProperties: false,
       },
     },
@@ -194,12 +198,12 @@ export async function delegation(admin: Admin, me: Me): Promise<RoutineReport> {
   const list = (msgs ?? []).filter((m) => String(m.body ?? "").trim().length > 8);
   const failed = ["Slack DMs and group DMs (read only when they allow it in Connections; internal channels were read)"];
   if (!list.length) return { headline: "No asks of teammates in Slack today.", sections: [], failedSources: failed };
-  const out = await askJson<{ asks: { n: number; owner: string | null; scope: string; client: string | null; due: string | null; soon: boolean; done: string }[] }>({
+  const out = await askJson<{ asks: { n: number; owner: string | null; scope: string; client: string | null; due: string | null; soon: boolean; done: string; personnel: boolean; about: string[] }[] }>({
     agent: "calls",
     label: "routine delegation tracker",
     override: { model: "sonnet", effort: "low" },
     maxTokens: 3000,
-    system: `You read Slack messages one person at Kaizen wrote today and pick out the asks they made of a specific teammate: "can you…", "please…", "@Name build…", "need X by Friday", a request in a reply. Skip FYIs, questions that only want a chat answer, brainstorming, anything to clients or outside people, things already marked done, and asks of themselves. owner: the teammate's name as written (an @mention or the name addressed), or null for a group ask with no single owner. scope: verb-first, what to do. client: the client it's about, if any. due: a date they said (YYYY-MM-DD) else null. soon: true when it's about a client, revenue or churn, or someone is blocked. done: what finished looks like. Several asks for the same thing to the same person are one ask. Teammates: ${team.map((t) => t.name).join(", ")}.`,
+    system: `You read Slack messages one person at Kaizen wrote today and pick out the asks they made of a specific teammate: "can you…", "please…", "@Name build…", "need X by Friday", a request in a reply. Skip FYIs, questions that only want a chat answer, brainstorming, anything to clients or outside people, things already marked done, and asks of themselves. owner: the teammate's name as written (an @mention or the name addressed), or null for a group ask with no single owner. scope: verb-first, what to do. client: the client it's about, if any. due: a date they said (YYYY-MM-DD) else null. soon: true when it's about a client, revenue or churn, or someone is blocked. done: what finished looks like. Several asks for the same thing to the same person are one ask. ${PEOPLE_RULE} Mark any such ask personnel: true and list who it's about. Teammates: ${team.map((t) => t.name).join(", ")}.`,
     schema: ASKS_SCHEMA,
     prompt: list.map((m, i) => `${i + 1}. [${String(m.occurred_at).slice(11, 16)}${m.title ? ` · ${m.title}` : ""}] ${String(m.body ?? "").replace(/\s+/g, " ").slice(0, 900)}`).join("\n"),
   });
@@ -216,6 +220,8 @@ export async function delegation(admin: Admin, me: Me): Promise<RoutineReport> {
       unclear.push({ text: a.scope, href: (m.url as string | null) ?? null, tag: null });
       continue;
     }
+    // People matters, or an ask whose owner is the person it's about, are never filed (owner, Nov 24 2026)
+    if (blockedForPeople({ text: `${a.scope}\n${String(m.body ?? "")}`, personnel: a.personnel, ownerName: a.owner, about: a.about })) continue;
     const who = matchPerson(a.owner, team);
     if (!who) {
       nomatch.push({ text: `${a.owner}: ${a.scope}`, href: (m.url as string | null) ?? null, tag: null });

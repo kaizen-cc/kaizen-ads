@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { DONE_MEANS, guard, type Evidence, type Verdict } from "@/lib/done-check-core";
+import { isPeopleMatter } from "@/lib/people-matters";
 
 // The general done-check (the owner, Nov 20 2026): every open item on anyone's Today or Overview that a message can
 // settle (tracking not set up, watchdog flags, tracking requests and tasks sent between people, onboarding blockers,
@@ -228,7 +229,7 @@ export async function runDoneChecks(admin: Admin, opts: { budget?: number; onlyK
     tally.checked++;
     const now = new Date().toISOString();
     tally.results.push({ key: item.key, kind: item.kind, client: item.client, title: item.title, state: res.verdict.state === "done" && !res.ev ? "moving" : res.verdict.state, quote: res.verdict.quote, source: res.ev?.source ?? null, link: res.ev?.url ?? null, at: res.ev?.at ?? null });
-    const base = { key: item.key, kind: item.kind, client_id: item.clientId, owner_id: item.ownerId, title: item.title.slice(0, 300), client_name: item.client, state: res.verdict.state, quote: res.verdict.quote.slice(0, 1000), source: res.ev?.source ?? null, link: res.ev?.url ?? null, said_at: res.ev?.at ?? null, checked_at: now, due: false };
+    const base = { key: item.key, kind: item.kind, client_id: item.clientId, owner_id: item.ownerId, title: item.title.slice(0, 300), client_name: item.client, state: res.verdict.state, quote: (isPeopleMatter(res.verdict.quote) ? "" : res.verdict.quote).slice(0, 1000), source: res.ev?.source ?? null, link: res.ev?.url ?? null, said_at: res.ev?.at ?? null, checked_at: now, due: false };
     if (res.verdict.state === "done" && res.ev) {
       const note = closedNote(res.verdict.quote, res.ev.source, res.ev.at);
       const prev = await writeBack(admin, item, note, now).catch((e) => {

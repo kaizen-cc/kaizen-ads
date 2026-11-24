@@ -43,6 +43,22 @@ export function scrubPeopleMatters(text: string | null | undefined): string {
     .trim();
 }
 
+/**
+ * Whether a generated item must never be made (owner, Nov 24 2026): it's a people matter by its words, the model
+ * flagged it, or the person it would go to is the person it's about. Every automated item generator checks this.
+ */
+export function blockedForPeople(it: { text: string; personnel?: boolean | null; ownerName?: string | null; about?: readonly (string | null | undefined)[] | null }): boolean {
+  if (it.personnel) return true;
+  if (isPeopleMatter(it.text)) return true;
+  const owner = String(it.ownerName ?? "").trim().toLowerCase();
+  if (!owner) return false;
+  const first = owner.split(" ")[0];
+  return (it.about ?? []).some((a) => {
+    const n = String(a ?? "").trim().toLowerCase().replace(/^@/, "");
+    return Boolean(n) && (n === owner || n === first || owner.startsWith(n));
+  });
+}
+
 /** For a model's instructions: the same rule in words */
 export const PEOPLE_RULE =
   "Never include management talk about people on the Kaizen team: anyone's performance, conduct, warnings, pay, hiring, firing or replacing someone, probation, health, or personal or family life. It stays with the execs: not in any summary, decision, lesson, promise, task or note, even when the same call talks about a client.";

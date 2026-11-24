@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson, clientContext, contextBlock } from "@/lib/ai";
 import { nyClock, type RecapLine, type RoutineReport } from "@/lib/routines-core";
 import { tagged } from "@/lib/routine-sweeps-core";
+import { isPeopleMatter, PEOPLE_RULE } from "@/lib/people-matters";
 
 // The nightly execution agent and the morning clean sweep (owner, Nov 24 2026; docs/kyle-scheduled-runs.md #6 and #7).
 // Nightly: works the person's open items with the context the OS has, and stages everything for their review: a
@@ -114,6 +115,11 @@ export async function nightly(admin: Admin, me: Me): Promise<RoutineReport> {
   let pdfs = 0;
   const dest = await (await import("@/lib/drive-destination")).backgroundDestination(admin, { profileId: me.id, clientId: null, docType: "nightly_deliverable" }).catch(() => null);
   for (const it of now) {
+    // A people matter is the person's own to handle: never drafted, staged or sent to anyone (owner, Nov 24 2026)
+    if (isPeopleMatter(`${it.title}\n${String(it.detail ?? "")}`)) {
+      cant.push({ text: `${it.title}: yours to handle personally`, href: "/pipeline", tag: null });
+      continue;
+    }
     const client = it.clients as unknown as { name: string; internal_slack_channel_id: string | null } | null;
     const ctx = it.client_id ? await clientContext(admin, it.client_id as string, { fresh: true }).catch(() => null) : null;
     const { data: said } = it.client_id ? await admin.from("context_items").select("source, occurred_at, author, body").eq("client_id", it.client_id).in("source", ["slack_internal", "slack_external", "gmail", "call"]).gte("occurred_at", new Date(Date.now() - 30 * DAY).toISOString()).order("occurred_at", { ascending: false }).limit(25) : { data: [] };
@@ -130,7 +136,7 @@ decision: execute (a brief, creative brief, summary or recap, research, an SOP o
 deliverable: for a substantive piece only (else null): a title and the document in markdown with ## sections.
 message: a drafted message (else null): internal_channel (the client's INTERNAL channel, tagging the audience by name), teammate (to one teammate, name them), or email (to, subject, a short body; long content goes in the deliverable). 1-3 lines of summary + what's needed + by when. Never client-facing Slack.
 staged: tasks for teammates, staged until they release them: person, verb-first scope, detail (the data behind it, the client), done (definition of done; kill/scale rules for any ad work). One per person.
-Never state what Kaizen charges a client. Tag inferred claims [likely] or [guessing] inline. Never invent numbers, links or dates: use [brackets].`,
+Never state what Kaizen charges a client. Tag inferred claims [likely] or [guessing] inline. Never invent numbers, links or dates: use [brackets]. ${PEOPLE_RULE} An item that is itself a people matter is cant.`,
         schema: PLAN,
         prompt: [
           ctx ? contextBlock(ctx, undefined, { allotment: false }) : "",
@@ -181,7 +187,7 @@ Never state what Kaizen charges a client. Tag inferred claims [likely] or [guess
         staged++;
       }
     }
-    const m = plan.message;
+    const m = plan.message && !isPeopleMatter(plan.message.text) ? plan.message : null;
     const internal = client?.internal_slack_channel_id ?? null;
     const draft: ItemDraft = m
       ? m.where === "email"

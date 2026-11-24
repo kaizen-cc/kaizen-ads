@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
+import { PEOPLE_RULE } from "@/lib/people-matters";
 import { dueRuns, nyClock, pushLine, routineOf, ROUTINES, type Days, type RecapSection, type RoutineKind, type RoutineReport } from "@/lib/routines-core";
 
 // Per-person routines (owner, Nov 24 2026): Kaizen OS does what an exec's Claude scheduled runs did, inside the OS, for
@@ -146,7 +147,7 @@ async function compose(me: Person, kind: RoutineKind, brief: string, data: unkno
     label: `routine ${kind}`,
     override: { model: "sonnet", effort: "medium" },
     maxTokens: 5000,
-    system: `You write ${routineOf(kind)?.label ?? "a recap"} for a ${me.role.replace(/_/g, " ")} at Kaizen, a paid ads, creative, email and social agency, inside Kaizen OS. ${brief}\n${RULES}`,
+    system: `You write ${routineOf(kind)?.label ?? "a recap"} for a ${me.role.replace(/_/g, " ")} at Kaizen, a paid ads, creative, email and social agency, inside Kaizen OS. ${brief}\n${RULES}\n${me.is_exec ? "People matters (a teammate's performance, conduct, pay, hiring or firing, health, personal life) may be mentioned here only as a private note to this executive, never as an action for anyone else." : PEOPLE_RULE}`,
     schema: REPORT_SCHEMA,
     prompt: `Today (New York): ${nyClock(new Date()).date}.\n${failed.length ? `Sources that couldn't be read (name them in one line at the end): ${failed.join("; ")}\n` : ""}\n<data>\n${JSON.stringify(data).slice(0, 60_000)}\n</data>`,
   });
