@@ -41,3 +41,21 @@ describe("the floating sweep never closes decisions, approvals or partial work (
     expect(mayAutoClose("Launch the BFCM ad set")).toBe(true);
   });
 });
+
+
+import { strictLikeness, STRICT_SAME, workWords } from "@/lib/reality-check-core";
+
+describe("the floating sweep's strict match, from its first run (Nov 24 2026)", () => {
+  it("never matches checklist summaries or on the client's name", () => {
+    expect(strictLikeness("Tin Lizzy's: 2 follow-ups from your call", "Tin Lizzy's: 2 follow-ups from your call", "Tin Lizzy's")).toBe(0);
+    expect(strictLikeness("Mama Betty's: 3 follow-ups from your call", "Mama Betty's: 2 follow-ups from your call", "Mama Betty's")).toBe(0);
+    expect(workWords("Remedy Place: check the landing page", "Remedy Place")).not.toContain("remedy");
+  });
+  it("loose message-text items don't match unrelated work", () => {
+    expect(strictLikeness("Landing page: Hey, just wanted to follow up and ask when we", "get the creatives done", "Seaspice")).toBeLessThan(STRICT_SAME);
+  });
+  it("the real ones still match", () => {
+    expect(strictLikeness("Seaspice: Repair the broken custom conversion event for Omakase", "Repair the broken custom conversion event for Omakase bookings on the ad account", "Seaspice")).toBeGreaterThanOrEqual(STRICT_SAME);
+    expect(strictLikeness("Check Tejas Brewery Placed Order event and set conversion metric", "Tejas Brewery: check why email gets zero credit for placed order event conversion metric", "Tejas Brewery")).toBeGreaterThanOrEqual(STRICT_SAME);
+  });
+});

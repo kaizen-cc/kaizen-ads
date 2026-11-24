@@ -24,10 +24,10 @@ export async function runFloating(admin: Admin, opts: { budget?: number } = {}) 
 }
 
 async function realityPass(admin: Admin) {
-  const { data: open } = await admin.from("agent_asks").select("id, title, detail, client_id, owner_id, created_at").eq("status", "open").not("client_id", "is", null).limit(2000);
+  const { data: open } = await admin.from("agent_asks").select("id, title, detail, client_id, owner_id, created_at, clients(name)").eq("status", "open").not("client_id", "is", null).limit(2000);
   const items = open ?? [];
   if (!items.length) return { inMotion: 0, closedElsewhere: 0 };
-  const [{ loadReality }, { decide, likeness }, { mayAutoClose }] = await Promise.all([import("@/lib/reality-check"), import("@/lib/reality-check-core"), import("@/lib/done-check-core")]);
+  const [{ loadReality }, { strictLikeness, STRICT_SAME }, { mayAutoClose }] = await Promise.all([import("@/lib/reality-check"), import("@/lib/reality-check-core"), import("@/lib/done-check-core")]);
   const found = await loadReality(admin, { clientIds: items.map((i) => i.client_id as string) });
   const { data: marked } = await admin.from("done_checks").select("key, state, closed_at, reopened_at").in("key", items.map((i) => `ask:${i.id}`).slice(0, 2000));
   const markOf = new Map((marked ?? []).map((m) => [m.key as string, m]));
@@ -39,9 +39,20 @@ async function realityPass(admin: Admin) {
     const m = markOf.get(key);
     // Put back by someone: left as it is
     if (m?.reopened_at) continue;
-    const others = found.filter((e) => !(e.source === "item" && e.id === it.id));
-    const d = decide({ title: String(it.title), clientId: it.client_id as string, ownerId: it.owner_id as string }, others);
-    if (d.state === "in_motion" && d.match && d.match.ownerId && d.match.ownerId !== it.owner_id) {
+    const client = (it.clients as unknown as { name: string } | null)?.name ?? null;
+    // The same client's work only, matched on the words that say what the work is (strict: never the client's name,
+    // filler or a checklist summary)
+    const same = found
+      .filter((e) => !(e.source === "item" && e.id === it.id) && e.clientId === it.client_id)
+      .map((e) => ({ e, score: strictLikeness(String(it.title), e.title, client) }))
+      .filter((x) => x.score >= STRICT_SAME)
+      .sort((a, b) => b.score - a.score);
+    const openMatch = same.find((x) => x.e.open)?.e ?? null;
+    const doneMatch = same.find((x) => !x.e.open && x.score >= DONE_ELSEWHERE)?.e ?? null;
+    const d = openMatch ? { state: "in_motion" as const, match: openMatch } : doneMatch ? { state: "done" as const, match: doneMatch } : { state: "new" as const, match: null };
+    // One owner: only the newer of two open items is marked (the older one keeps the work)
+    const older = d.match?.at ? Date.parse(d.match.at) <= Date.parse(String(it.created_at)) : true;
+    if (d.state === "in_motion" && d.match && d.match.ownerId && d.match.ownerId !== it.owner_id && older) {
       // Someone else has the same work open: one owner; this one shows who's on it instead of being chased
       const quote = `In motion with ${d.match.owner ?? "a teammate"}: ${d.match.title}`.slice(0, 300);
       if (m?.state !== "moving" || !m) {
@@ -52,7 +63,7 @@ async function realityPass(admin: Admin) {
       continue;
     }
     // Finished elsewhere, closely matched, after this item opened: closed with where (never a decision or approval)
-    if (d.state === "done" && d.match && mayAutoClose(String(it.title)) && likeness(String(it.title), d.match.title) >= DONE_ELSEWHERE && d.match.at && Date.parse(d.match.at) > Date.parse(String(it.created_at)) && ["item", "asana", "board", "done_check"].includes(d.match.source)) {
+    if (d.state === "done" && d.match && mayAutoClose(String(it.title)) && d.match.at && Date.parse(d.match.at) > Date.parse(String(it.created_at)) && ["item", "asana", "board", "done_check"].includes(d.match.source)) {
       const where = d.match.source === "asana" ? "in Asana" : d.match.source === "board" ? "on the creative board" : "on another item";
       const quote = `Done ${where}${d.match.owner ? ` by ${d.match.owner}` : ""}: ${d.match.title}`.slice(0, 300);
       await admin.from("agent_asks").update({ status: "done", done_at: now }).eq("id", it.id).eq("status", "open");

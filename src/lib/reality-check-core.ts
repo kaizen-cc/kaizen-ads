@@ -64,3 +64,27 @@ export function realityLine(d: { state: RealityState; match: Existing | null }):
   const who = d.match.owner ? ` (${d.match.owner} is on it)` : "";
   return d.state === "done" ? `Already done: ${d.match.title}` : `Already in motion${who}: ${d.match.title}`;
 }
+
+
+// The floating sweep's stricter test (owner, Nov 24 2026, after its first run matched "Tin Lizzy's: 2 follow-ups from
+// your call" to a teammate's different follow-ups): only the words that say what the work is count, never the client's
+// name or filler; a summary of a checklist never matches anything; both sides need at least 3 such words.
+const FILLER = new Set("follow ups up call calls recap update updates week hey hi hello just wanted ask asking checking check quick note thanks thank please here your our item items task tasks landing page tracking setup".split(" "));
+const SUMMARY = /\b\d+\s+follow-?ups?\s+from\b|\bfollow-?ups?\s+from\s+(your|the)\s+call\b/i;
+
+/** The words that say what the work is, without the client's name or filler */
+export function workWords(title: string, client: string | null | undefined): string[] {
+  const own = new Set(keyWords(String(client ?? "")));
+  return keyWords(title).filter((w) => !own.has(w) && !FILLER.has(w));
+}
+
+/** How alike two pieces of work are on their work words alone (0 when either is a checklist summary or too thin) */
+export function strictLikeness(a: string, b: string, client: string | null | undefined): number {
+  if (SUMMARY.test(a) || SUMMARY.test(b)) return 0;
+  const x = workWords(a, client);
+  const y = new Set(workWords(b, client));
+  if (x.length < 3 || y.size < 3) return 0;
+  const [short, long] = x.length <= y.size ? [x, y] : [[...y], new Set(x)];
+  return short.filter((w) => long.has(w)).length / short.length;
+}
+export const STRICT_SAME = 0.75;
