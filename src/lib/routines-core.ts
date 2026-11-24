@@ -71,7 +71,7 @@ export const mayUseRoutines = (me: { isExec?: boolean | null; isLead?: boolean |
 
 export type RecapLine = { text: string; href?: string | null; tag?: "certain" | "likely" | "guessing" | null };
 export type RecapSection = { title: string; lines: RecapLine[] };
-export type RoutineReport = { headline: string; sections: RecapSection[]; failedSources?: string[]; urgent?: boolean };
+export type RoutineReport = { headline: string; sections: RecapSection[]; failedSources?: string[]; urgent?: boolean; /** Calls a debrief already read (it reads each once) */ processed?: string[] };
 
 /** A report's first sentence, for the bell and the push (what the person must do first) */
 export const pushLine = (r: RoutineReport) => r.headline.split(/(?<=[.!?])\s/)[0].slice(0, 200);
