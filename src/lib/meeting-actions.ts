@@ -70,7 +70,9 @@ export async function meetingActionItems(admin: SupabaseClient, callId: string):
     if (!it.who || !it.task.trim()) continue;
     // People matters never become tasks, and nobody is given a task drawn from a conversation about them
     if (peopleMatter(it, team)) continue;
-    if (decide({ title: it.task, clientId: it.client?.id ?? null, ownerId: it.who.id }, found).state !== "new") continue;
+    // Only their own work counts as already in motion: an exec's commitment isn't dropped for a teammate's similar task
+    const theirs = found.filter((e) => e.ownerId === it.who?.id);
+    if (decide({ title: it.task, clientId: it.client?.id ?? null, ownerId: it.who.id }, theirs).state !== "new") continue;
     const ref = meetingRef(callId, it.i);
     const { data: had } = await admin.from("agent_asks").select("id").eq("source_ref", ref).maybeSingle();
     if (had) continue;
