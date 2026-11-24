@@ -12,6 +12,7 @@ import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { acknowledge, setItem } from "./actions";
 import { DoneBurst } from "@/components/done-burst";
 import { ItemContext } from "@/components/item-context";
+import { SubItems } from "@/components/sub-items";
 import { ItemQuickActions } from "@/components/item-quick-actions";
 import { ScorecardView } from "@/components/production";
 import type { Scorecard } from "@/lib/production";
@@ -815,6 +816,12 @@ function ItemBody({ i, status, big = false, onChoose, onAct, onNext }: { i: Toda
       ) : (
         <p className={`relative leading-relaxed text-white/75 ${big ? "text-[15px]" : "text-sm"}`}>{i.story}</p>
       )}
+      {/* A group's own items, each on its own (each flagged call, each saved reminder) */}
+      {i.subs?.length ? (
+        <div className="relative">
+          <SubItems id={i.key} subs={i.subs} dark noun={i.subs[0].key.startsWith("safety:") ? "calls" : "reminders"} />
+        </div>
+      ) : null}
       {i.evidence.length > 0 && (
         <ul className="relative grid gap-1.5">
           {i.evidence.map((e, n) => (

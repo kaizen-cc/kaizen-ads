@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
 import type { TodayDraft, TopicKey } from "@/lib/today";
 import { isInternalClient } from "@/lib/internal-clients";
-import { execHears, groupEscalated, sortCards, sortNeeds, type ExecCard, type ExecTab, type FireRow, type Rung3Row } from "@/lib/exec-overview-core";
+import { execHears, groupEscalated, safetySub, sortCards, sortNeeds, type ExecCard, type ExecTab, type FireRow, type Rung3Row } from "@/lib/exec-overview-core";
 
 // The executive Overview and morning recap (owner, Nov 23 2026; the rules in ./exec-overview-core.ts). One model, built
 // with the recap: Needs me (what's on the exec personally), Escalated (rung 3 of the ladder and fires), Accounts (their
@@ -29,7 +29,7 @@ async function needsMe(db: SupabaseClient, admin: SupabaseClient, me: Staff, dra
   const [owed, said, { data: safety }, { data: conflicts }] = await Promise.all([
     loadOwedReplies(db, me, false).catch(() => []),
     loadSaidPromises(db, me).catch(() => []),
-    admin.from("call_safety_reviews").select("call_id, severity, distress, categories, reviewed_at").eq("flagged", true).is("resolved_at", null).order("reviewed_at", { ascending: false }).limit(20),
+    admin.from("call_safety_reviews").select("call_id, severity, distress, categories, reviewed_at, moments, summary").eq("flagged", true).is("resolved_at", null).order("reviewed_at", { ascending: false }).limit(20),
     admin.from("agent_learnings").select("id, agent_key, lesson, updated_at").eq("status", "conflict").limit(20),
   ]);
   const cards: ExecCard[] = [];
@@ -64,7 +64,11 @@ async function needsMe(db: SupabaseClient, admin: SupabaseClient, me: Staff, dra
       action: { label: "Open it", href: p.url },
     });
   // Approvals only an exec gives: call safety reviews, agent learnings in conflict
-  const flagged = (safety ?? []) as { call_id: string; severity: string | null; distress: boolean | null; categories: string[] | null; reviewed_at: string | null }[];
+  const flagged = (safety ?? []) as { call_id: string; severity: string | null; distress: boolean | null; categories: string[] | null; reviewed_at: string | null; moments: { at_seconds: number; category: string; note: string }[] | null; summary: string | null }[];
+  // Each flagged call on its own (owner, Nov 24 2026): who called (role, name), when, what, how serious, the first moment
+  const { data: calls } = flagged.length ? await admin.from("ai_role_calls").select("id, started_at, profiles:profile_id(full_name, role)").in("id", flagged.map((f) => f.call_id)) : { data: [] };
+  const callOf = new Map(((calls ?? []) as unknown as { id: string; started_at: string; profiles: { full_name: string | null; role: string | null } | null }[]).map((c) => [c.id, c]));
+  const subs = flagged.map((f) => safetySub(f, callOf.get(f.call_id) ?? null));
   if (flagged.length)
     cards.push({
       key: `approve:safety:${today}`,
@@ -78,6 +82,7 @@ async function needsMe(db: SupabaseClient, admin: SupabaseClient, me: Staff, dra
       severity: flagged.some((f) => f.distress || f.severity === "high") ? "critical" : "high",
       due: flagged[flagged.length - 1].reviewed_at,
       action: { label: "Review", href: `/safety/${flagged[0].call_id}` },
+      subs,
     });
   // Only the agents on lines this exec oversees (by the agent's role, never a name); unassigned and cross-line ones
   // are the owner's (src/lib/youtube-core.ts decidesScoped)
@@ -448,6 +453,9 @@ export function cardToDraft(c: ExecCard): TodayDraft {
     // A card with no link of its own (Nudge the lead) opens on the Overview, where its composer is
     action: { label: c.action.label, href: c.action.href ?? `/pipeline?block=${c.tab}` },
     due: c.due ?? null,
+    // The story recap lists a group's own items too
+    ...(c.subs?.length ? { subs: c.subs } : {}),
+    ...(c.context?.length ? { context: c.context } : {}),
     exec: c,
   };
 }

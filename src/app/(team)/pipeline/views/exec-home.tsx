@@ -11,6 +11,7 @@ import { nudgeLead, takeItOver } from "../../exec-actions";
 import { openAsanaTask } from "@/components/asana-task-sheet";
 import { DraftActions } from "./emails-ready";
 import { ItemContext } from "@/components/item-context";
+import { SubItems } from "@/components/sub-items";
 
 // The executive Overview's blocks (owner, Nov 23 2026), under the Wrapped hero: Needs me, Escalated, Accounts, Pulse
 // and (the owner) System, each a designed block with its own color, a big number, one line and its sub-chips. A tap
@@ -217,6 +218,11 @@ function Card({ card }: { card: ExecCard }) {
           {card.context?.length ? (
             <div className="mt-3">
               <ItemContext lines={card.context} />
+            </div>
+          ) : null}
+          {card.subs?.length ? (
+            <div className="mt-3">
+              <SubItems id={card.key} subs={card.subs} noun={(card.subs[0].key.startsWith("safety:") ? "calls" : "reminders")} />
             </div>
           ) : null}
         </div>

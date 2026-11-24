@@ -58,6 +58,7 @@ function cardOf(i: TodayItem): ExecCard {
     // The email drafted for it (its main action) and the conversation behind it
     emailDraft: i.emailDraft ?? null,
     context: i.context ?? null,
+    subs: i.subs ?? null,
   };
 }
 

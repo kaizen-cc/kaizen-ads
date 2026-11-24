@@ -126,6 +126,8 @@ export async function transferItem(admin: SupabaseClient, me: { id: string; name
   if (error) return { ok: false, error: "Couldn't transfer it. Try again." };
   await admin.from("item_owner_log").insert({ key: stable, from_id: (was?.owner_id as string | null) ?? me.id, to_id: o.to, due_from: (was?.due_at as string | null) ?? null, due_to: due, by_id: me.id, note: o.note ?? null });
   await reclock(admin, stable);
+  // A task asked through an assistant moves with it: the new owner has it, and Done there closes it and tells the asker
+  if (stable.startsWith("ask:")) await admin.from("agent_asks").update({ owner_id: o.to, ...(o.due !== undefined ? { due_on: due ? due.slice(0, 10) : null } : {}) }).eq("id", stable.slice(4)).eq("status", "open");
   if (o.to !== me.id)
     await admin.from("notifications").upsert(
       { profile_id: o.to, actor_id: me.id, kind: "handoff", title: `${me.name.split(" ")[0]} transferred to you: ${[o.snapshot.client, o.snapshot.title].filter(Boolean).join(": ")}`.slice(0, 300), body: o.note ?? null, href: o.snapshot.href ?? "/pipeline", key: `transfer:${stable}:${o.to}`.slice(0, 200), client_id: o.snapshot.clientId ?? null, priority: "normal", read_at: null },
@@ -143,6 +145,7 @@ export async function setItemDue(admin: SupabaseClient, me: { id: string }, o: {
   const { error } = await admin.from("item_owners").upsert({ key: stable, owner_id: owner, due_at: due, snapshot: o.snapshot, updated_by: me.id, updated_at: new Date().toISOString() }, { onConflict: "key" });
   if (error) return { ok: false, error: "Couldn't change the date. Try again." };
   await admin.from("item_owner_log").insert({ key: stable, from_id: owner, to_id: owner, due_from: (was?.due_at as string | null) ?? null, due_to: due, by_id: me.id });
+  if (stable.startsWith("ask:")) await admin.from("agent_asks").update({ due_on: due ? due.slice(0, 10) : null }).eq("id", stable.slice(4)).eq("status", "open");
   await reclock(admin, stable);
   return { ok: true };
 }

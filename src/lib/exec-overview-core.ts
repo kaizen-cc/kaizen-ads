@@ -48,7 +48,37 @@ export type ExecCard = {
   context?: ItemContextLine[] | null;
   /** A teammate to call about it (Accounts: the buyer) */
   callee?: { id: string; name: string } | null;
+  /** A group's own items, each reviewed on its own (each flagged call, each reminder saved from a call) */
+  subs?: SubItem[] | null;
 };
+
+/**
+ * One item inside a group card: opens on its own page, Done or Dismiss on its own. key: what closing it closes
+ * ("safety:<call id>" resolves that call's review for every exec; "ask:<id>" closes that reminder or task).
+ */
+export type SubItem = { key: string; title: string; meta: string; detail?: string | null; href: string | null };
+
+const ROLE_WORD = (r: string | null | undefined) => (r ? r.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()) : "Someone");
+const mmss = (s: number) => `${Math.floor(Math.max(0, s) / 60)}:${String(Math.floor(Math.max(0, s) % 60)).padStart(2, "0")}`;
+const shortWhen = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" }) : null);
+
+/** One flagged call as its own item: the caller's role and name, when, what was flagged, how serious, the first moment */
+export function safetySub(
+  f: { call_id: string; severity: string | null; distress: boolean | null; categories: string[] | null; reviewed_at: string | null; moments?: { at_seconds: number; category: string; note: string }[] | null; summary?: string | null },
+  call: { started_at: string; profiles: { full_name: string | null; role: string | null } | null } | null,
+): SubItem {
+  const who = [ROLE_WORD(call?.profiles?.role), call?.profiles?.full_name].filter(Boolean).join(" · ");
+  const what = [...new Set(f.categories ?? [])].map((c) => c.replace(/_/g, " ")).join(", ") || "flagged";
+  const sev = f.distress ? "distress" : f.severity ? `${f.severity} severity` : null;
+  const first = [...(f.moments ?? [])].sort((a, b) => a.at_seconds - b.at_seconds)[0];
+  return {
+    key: `safety:${f.call_id}`,
+    title: `${who}: ${what}`,
+    meta: [shortWhen(call?.started_at ?? f.reviewed_at), sev].filter(Boolean).join(" · "),
+    detail: first ? `At ${mmss(first.at_seconds)}: ${first.note}` : (f.summary ?? null),
+    href: `/safety/${f.call_id}`,
+  };
+}
 
 // ─── The ladder's third rung ────────────────────────────────────────────────
 

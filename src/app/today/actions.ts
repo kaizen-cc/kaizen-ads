@@ -42,6 +42,16 @@ export async function setItem(key: string, status: Status, snap: ItemSnapshot) {
     const { closeReviewTodo } = await import("@/app/(team)/csuite/actions");
     await closeReviewTodo(key.slice("todo:".length), next === "done" ? "done" : "dismissed").catch(() => null);
   }
+  // A task or reminder asked through an assistant ("ask:<id>"): closed, and the teammate who asked hears; Done on the
+  // card of their own saved reminders ("asks:mine:<day>") finishes every one
+  if ((next === "done" || next === "dismissed") && /^ask:/.test(key) && !me.viewAs && adminConfigured()) {
+    const { closeAsk } = await import("@/lib/agent-asks");
+    await closeAsk(createAdminClient(), me, key.slice("ask:".length).split("#")[0], next).catch(() => null);
+  }
+  if (next === "done" && /^asks:mine:/.test(key) && !me.viewAs && adminConfigured()) {
+    const { closeOwnReminders } = await import("@/lib/agent-asks");
+    await closeOwnReminders(createAdminClient(), me.id).catch(() => null);
+  }
   // An Asana task ("asana:<gid>", "mine:asana:<gid>"): Done ticks it off in Asana itself (src/lib/asana-live.ts)
   if (next === "done" && /^(mine:)?asana:/.test(key) && !me.viewAs) {
     const { saveAsanaTask } = await import("@/app/(team)/asana-task-actions");
@@ -194,4 +204,25 @@ export async function closeCallPromise(id: string, how: "done" | "dropped") {
     .in("status", ["open", "briefed", "in_motion"]);
   await markItem(await createClient(), me.id, `callp:${id}`, how === "done" ? "done" : "dismissed", {}, { skip: true });
   await reviewsChanged();
+}
+
+/**
+ * One item inside a group card, closed on its own (owner, Nov 24 2026): a flagged call's safety review (resolved for
+ * every exec, as its page's Dismiss does) or one reminder or task ("ask:<id>").
+ */
+export async function closeSubItem(key: string, how: "done" | "dismissed"): Promise<{ ok: true } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  if (me.viewAs) return { ok: false, error: "You're viewing as someone else: nothing changes." };
+  if (key.startsWith("safety:")) {
+    const { dismissSafetyAlert } = await import("@/app/(team)/safety/[callId]/actions");
+    return dismissSafetyAlert(key.slice("safety:".length), how === "done" ? "Reviewed from the Overview" : undefined);
+  }
+  if (key.startsWith("ask:")) {
+    if (!adminConfigured()) return { ok: false, error: "Not available here." };
+    const { closeAsk } = await import("@/lib/agent-asks");
+    const id = key.slice("ask:".length);
+    await markItem(await createClient(), me.id, key, how, { topic: "needs", client: "", title: "", clientId: null }, {});
+    return (await closeAsk(createAdminClient(), me, id, how)) ? { ok: true } : { ok: false, error: "That one isn't open any more." };
+  }
+  return { ok: false, error: "Can't close that here." };
 }

@@ -402,6 +402,14 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
         const due = DAY.test(String(input.due ?? "")) ? String(input.due) : null;
         // Handing over something on their own plate: tied back to it, and it leaves their dashboard (creative team, Nov 20
         // 2026: a task delegated through the assistant kept resurfacing on the old owner's dashboard)
+        // Said twice within minutes (a retry, a reworded repeat): it's already with them, once (owner, Nov 24 2026)
+        {
+          const { sameAsk, SAME_ASK_WINDOW_MS } = await import("@/lib/agent-asks-core");
+          const now = new Date().toISOString();
+          const { data: recent } = await ctx.admin.from("agent_asks").select("id, owner_id, asked_by, title, created_at").eq("owner_id", r.to.id).eq("asked_by", ctx.me.id).eq("status", "open").gte("created_at", new Date(Date.now() - SAME_ASK_WINDOW_MS).toISOString()).limit(20);
+          const twin = ((recent ?? []) as { id: string; owner_id: string; asked_by: string | null; title: string; created_at: string }[]).find((x) => sameAsk(x, { owner_id: r.to.id, asked_by: ctx.me.id, title, created_at: now }));
+          if (twin) return { sent: true, to: firstNameOf(r.to.name), already: true, open: (await import("@/lib/sent-asks")).sentHref(twin.id), note: "It was already sent a moment ago: say it's with them, once." };
+        }
         const handed = await (await import("@/lib/handover")).handedItem(ctx.db, ctx.me.id, clip(input.item, 200));
         const sentList = (Array.isArray(input.checklist) ? input.checklist : []).map((t) => clip(t, 200)).filter(Boolean).slice(0, 40).map((text) => ({ text, done: false }));
         const { data, error } = await ctx.admin

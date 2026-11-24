@@ -75,6 +75,8 @@ export type TodayItem = {
   emailDraft?: import("@/lib/exec-overview-core").ExecCard["emailDraft"];
   /** The conversation behind it, or the exact words promised (src/lib/exec-overview-core.ts ItemContextLine) */
   context?: import("@/lib/exec-overview-core").ItemContextLine[] | null;
+  /** A group's own items, each reviewed on its own (src/lib/exec-overview-core.ts SubItem) */
+  subs?: import("@/lib/exec-overview-core").SubItem[] | null;
   /** A message waiting on this person: the reply drafted for them */
   reply?: { id: string; source: "slack" | "gmail"; url: string | null; draft: string | null; channel: string | null; kind?: "owed" | "said" | "call" };
   /** Under "Everything else" (an exec's day, outside their focus): the topic it came from */
@@ -95,7 +97,7 @@ export type Today = { items: TodayItem[]; resolved: Resolved[]; counts: Record<T
  * The shape a saved day is built in. Bump DAY_SHAPE_VERSION whenever what an item or a block holds changes, so every
  * day saved before is built again on its next look (a read-only View as included), never shown stale.
  */
-export const DAY_SHAPE_VERSION = 4;
+export const DAY_SHAPE_VERSION = 5;
 export const dayShape = (me: { isExec: boolean }) => `${me.isExec ? "exec" : "blocks"}:${DAY_SHAPE_VERSION}`;
 
 const tierOf = (score: number): Tier => (score >= 80 ? "critical" : score >= 60 ? "high" : "normal");
@@ -828,6 +830,103 @@ async function withDesk(db: SupabaseClient, me: Staff, drafts: Draft[]): Promise
 }
 
 /**
+ * Every task or reminder asked of this person through an assistant (owner, Nov 24 2026: tasks a teammate's assistant
+ * sent them never reached their Needs me). One from a teammate (send_to_teammate, ask_teammate, a delegation) is its
+ * own living task in Needs me: who asked, when, where (a call or a chat), the due date, what they said. Their own
+ * reminders saved from their calls are one card that opens to each. Saved twice within minutes counts once
+ * (src/lib/agent-asks-core.ts). A tracking request already on the tracking specialist's day stays there.
+ */
+async function withAsks(db: SupabaseClient, me: Staff, drafts: Draft[]): Promise<Draft[]> {
+  const { adminConfigured, createAdminClient } = await import("@/lib/supabase/admin");
+  const admin = adminConfigured() ? createAdminClient() : db;
+  const { data, error } = await admin
+    .from("agent_asks")
+    .select("id, kind, title, detail, due_on, created_at, asked_by, owner_id, call_id, role_key, checklist, urgent, source_ref, asker:profiles!agent_asks_asked_by_fkey(full_name), clients(id, name, slug)")
+    .eq("owner_id", me.id)
+    .eq("status", "open")
+    .order("created_at", { ascending: false })
+    .limit(120);
+  if (error || !data?.length) return drafts;
+  const { dedupeAsks, askSource } = await import("@/lib/agent-asks-core");
+  type Row = { id: string; kind: string; title: string; detail: string | null; due_on: string | null; created_at: string; asked_by: string | null; owner_id: string; call_id: string | null; role_key: string | null; checklist: { text: string; done: boolean }[] | null; urgent: boolean | null; source_ref: string | null; asker: { full_name: string } | null; clients: { id: string; name: string; slug: string } | null };
+  const rows = dedupeAsks((data as unknown as Row[]).filter((r) => !String(r.source_ref ?? "").startsWith("trk:")));
+  const have = new Map(drafts.map((d, i) => [d.key, i]));
+  const out = [...drafts];
+  const when = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" });
+  const todo = (r: Row) => (Array.isArray(r.checklist) ? r.checklist.filter((c) => !c.done).map((c) => `- ${c.text}`) : []);
+  // From a teammate: each on its own
+  for (const r of rows.filter((x) => x.asked_by && x.asked_by !== me.id)) {
+    const asker = r.asker?.full_name ?? "A teammate";
+    const due = r.due_on ? `${r.due_on}T21:00:00Z` : null;
+    const overdue = Boolean(due && Date.parse(due) < Date.now());
+    const src = askSource(r);
+    const where = r.call_id ? "on a call" : "in a chat";
+    const said = [String(r.detail ?? "").trim(), ...todo(r)].filter(Boolean).join("\n");
+    const context = [{ from: asker, at: r.created_at, text: said || r.title, ours: false }];
+    const key = `ask:${r.id}`;
+    const card = {
+      key,
+      tab: "needs" as const,
+      kind: "mine" as const,
+      client: r.clients?.name ?? null,
+      clientId: r.clients?.id ?? null,
+      clientSlug: r.clients?.slug ?? null,
+      title: r.title,
+      detail: `Asked by ${asker} ${where}, ${when(r.created_at)}${r.due_on ? ` · due ${day(due!)}` : ""}${r.urgent ? " · urgent" : ""}`,
+      severity: (overdue || r.urgent ? "critical" : "high") as "critical" | "high",
+      due,
+      // The asker's call is theirs: the words said on it come with the item instead
+      action: r.clients?.slug ? { label: "Open the client", href: `/clients/${r.clients.slug}` } : { label: "Open it", href: `/pipeline?block=needs` },
+      context,
+    };
+    const item: Draft = {
+      key,
+      topic: "needs",
+      score: overdue ? 86 : r.urgent ? 84 : due ? 74 : 70,
+      client: r.clients?.name ?? "Team",
+      clientSlug: r.clients?.slug ?? "",
+      clientId: r.clients?.id ?? null,
+      stat: { value: r.due_on ? day(due!) : day(r.created_at), label: r.due_on ? (overdue ? "overdue" : "due") : `asked by ${asker.split(" ")[0]}` },
+      title: r.title,
+      story: card.detail,
+      why: `${asker} asked you ${where} (${src.label.toLowerCase()})`,
+      evidence: [],
+      action: { label: card.action.label, href: card.action.href },
+      due,
+      context,
+      ...(me.isExec ? { exec: card } : {}),
+    };
+    // Transferred here already (its snapshot) or on the tracking day: this one, with everything it carries, stands
+    const at = have.get(key);
+    if (at != null) out[at] = { ...item, topic: out[at].topic };
+    else out.push(item);
+  }
+  // Their own reminders and tasks saved from their calls and chats: one card, each inside it on its own
+  const own = rows.filter((x) => !x.asked_by || x.asked_by === me.id).filter((r) => !have.has(`ask:${r.id}`));
+  if (own.length) {
+    const subs = own.map((r) => {
+      const src = askSource(r);
+      const left = todo(r);
+      return {
+        key: `ask:${r.id}`,
+        title: r.title,
+        meta: [`${src.label}, ${when(r.created_at)}`, r.clients?.name, r.due_on ? `due ${day(`${r.due_on}T21:00:00Z`)}` : null].filter(Boolean).join(" · "),
+        detail: left.length ? left.slice(0, 6).join("\n") : r.detail ? String(r.detail).slice(0, 400) : null,
+        href: src.href,
+      };
+    });
+    const overdue = own.filter((r) => r.due_on && Date.parse(`${r.due_on}T21:00:00Z`) < Date.now()).length;
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+    const key = `asks:mine:${today}`;
+    const title = `${own.length} ${own.length === 1 ? "reminder" : "reminders"} you saved from your calls and chats`;
+    const detail = `${overdue ? `${overdue} overdue · ` : ""}Open each, or mark it done right here`;
+    const card = { key, tab: "needs" as const, kind: "mine" as const, client: null, clientId: null, title, detail, severity: (overdue ? "critical" : "normal") as "critical" | "normal", due: null, action: { label: "Open your calls", href: "/assistant" }, subs };
+    out.push({ key, topic: "needs", score: overdue ? 80 : 58, client: "Team", clientSlug: "", clientId: null, stat: { value: String(own.length), label: own.length === 1 ? "reminder" : "reminders" }, title, story: detail, why: "You asked your assistant to remember these", evidence: [], action: { label: "Open your calls", href: "/assistant" }, subs, ...(me.isExec ? { exec: card } : {}) });
+  }
+  return out;
+}
+
+/**
  * Enough on every item to act right there (a teammate, Nov 24 2026: "the daily tasks should have enough context right
  * there to answer on platform"): a reply owed carries the conversation around it (the client's messages and ours, with
  * who and when, from the same channel or email thread); a promise carries the exact words asked and said.
@@ -938,6 +1037,7 @@ export async function loadToday(db: SupabaseClient, me: Staff): Promise<Today> {
     gather(db, me)
       .then((d) => (me.isExec ? forExec(db, me, d) : ownedDay(db, me, d)))
       .then((d) => withDesk(db, me, d).catch(() => d))
+      .then((d) => withAsks(db, me, d).catch(() => d))
       .then((d) => withContext(db, d).catch(() => d)),
     db.from("daily_items").select("key, status, snapshot, first_seen_at, snoozed_until").eq("profile_id", me.id),
     db.from("hidden_items").select("key").eq("profile_id", me.id),
