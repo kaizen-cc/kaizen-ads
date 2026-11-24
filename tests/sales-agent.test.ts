@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { briefText, clampScore, cleanBrief, cleanPitch, cleanReview, cleanSite, fitBand, forwardStatus, isProspectStatus, nameKey, prospectFolderName, sameBusiness, siteHost, worksSales } from "@/lib/sales-core";
+import { seesSalesPages, briefText, clampScore, cleanBrief, cleanPitch, cleanReview, cleanSite, fitBand, forwardStatus, isProspectStatus, nameKey, prospectFolderName, sameBusiness, siteHost, worksSales } from "@/lib/sales-core";
 import { ROLE_SKILLS, canTalkToAgent, canTrainAgent, roleOfAgent } from "@/lib/agent-access";
 import { lineOfRole } from "@/lib/agent-lines";
 import { SCREEN_PLACES, SPECIALISTS, suggestSpecialist } from "@/lib/assistant/core";
@@ -29,14 +29,19 @@ describe("sales agent: who sees it", () => {
     expect(canTrainAgent(lead, "sales")).toBe(false);
     expect(canTrainAgent(lead, "sales_research")).toBe(false);
   });
-  it("worksSales and the /sales page follow the same rule", () => {
+  it("execs and leads use Sales through the agent; the Sales pages are the execs' only for now", () => {
     expect(worksSales(exec)).toBe(true);
     expect(worksSales(lead)).toBe(true);
     expect(worksSales(member)).toBe(false);
     expect(worksSales(null)).toBe(false);
+    expect(seesSalesPages(exec)).toBe(true);
+    expect(seesSalesPages(lead)).toBe(false);
     expect(mayOpen("/sales", exec).ok).toBe(true);
-    expect(mayOpen("/sales/abc", lead).ok).toBe(true);
+    expect(mayOpen("/sales/abc", lead).ok).toBe(false);
+    expect(mayOpen("/sales?stage=call_booked", lead).ok).toBe(false);
     expect(mayOpen("/sales", member).ok).toBe(false);
+    // An exec viewing as a lead gets the lead's view (the viewed person's flags)
+    expect(mayOpen("/sales", { ...lead, viewAs: { actorId: "x" } }).ok).toBe(false);
   });
   it("the assistant suggests the Sales agent only to execs and leads, and can open its screens", () => {
     expect(SPECIALISTS.some((s) => s.key === "sales")).toBe(true);

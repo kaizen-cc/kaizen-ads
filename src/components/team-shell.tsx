@@ -54,8 +54,8 @@ const GROUPS: { title: string; items: Item[] }[] = [
       { href: "/kpis", label: "KPIs", icon: I.kpis, buyer: true },
       { href: "/reports", label: "Reports", icon: I.reports, reports: true },
       { href: "/ai", label: "Kaizen AI", icon: I.ai },
-      // New business (internal for now): the prospects the Sales agent researches, for the executives and the leads
-      { href: "/sales", label: "Sales", icon: I.sales, tiers: ["exec", "lead"] },
+      // New business (the executives only until it's built out): the prospects the Sales agent researches
+      { href: "/sales", label: "Sales", icon: I.sales, tiers: ["exec"] },
     ],
   },
   {

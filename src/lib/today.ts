@@ -995,18 +995,22 @@ async function withSalesBriefs(db: SupabaseClient, me: Staff, drafts: Draft[]): 
     .order("starts_at")
     .limit(20);
   if (!data?.length) return drafts;
-  const { briefTitle, whenLabel } = await import("@/lib/sales-briefs-core");
+  const { briefTitle, whenLabel, callBriefText, cleanCallBrief } = await import("@/lib/sales-briefs-core");
+  const { briefHref } = await import("@/lib/sales-core");
   const out = [...drafts];
   for (const r of data as { id: string; title: string; starts_at: string; status: string; brief: { business?: string; they_want?: string; next_step?: string; fit?: { score: number | null } } | null; prospect_id: string | null }[]) {
     const business = r.brief?.business || r.title;
     const over = r.status === "done" || Date.parse(r.starts_at) < now;
     const key = over ? `salesdebrief:${r.id}` : `salesbrief:${r.id}`;
-    const href = over ? (r.prospect_id ? `/sales/${r.prospect_id}?tab=drafts` : `/sales/briefs/${r.id}`) : `/sales/briefs/${r.id}`;
+    // Execs open the Sales pages; anyone else running the call reads the brief right in this item's sheet
+    const href = me.isExec ? (over && r.prospect_id ? `/sales/${r.prospect_id}?tab=drafts` : `/sales/briefs/${r.id}`) : briefHref(r.id, false).replace("salesbrief%3A", over ? "salesdebrief%3A" : "salesbrief%3A");
+    const sections = !me.isExec && r.brief ? callBriefText(business, whenLabel(r.starts_at), cleanCallBrief(r.brief, { booking: (r.brief as { booking?: { q: string; a: string }[] }).booking, in_motion: (r.brief as { in_motion?: string | null }).in_motion ?? null })).split(/\n{2,}/) : [];
+    const context = sections.map((text) => ({ from: "Sales agent", at: null, text, ours: true }));
     const title = over ? `How did the call with ${business} go? Review it` : briefTitle(business, r.starts_at);
-    const story = over ? "Paste the notes or the Gemini doc: the Sales agent reviews it, moves the deal on and suggests the proposal" : [r.brief?.they_want ? `They want: ${r.brief.they_want}` : null, r.brief?.next_step ? `Next step: ${r.brief.next_step}` : null].filter(Boolean).join(" · ").slice(0, 300) || "Who they are, what they want, fit, objections and the questions to ask";
+    const story = over ? (me.isExec ? "Paste the notes or the Gemini doc: the Sales agent reviews it, moves the deal on and suggests the proposal" : "Ask your assistant to review the call: paste the notes or give it the Gemini doc") : [r.brief?.they_want ? `They want: ${r.brief.they_want}` : null, r.brief?.next_step ? `Next step: ${r.brief.next_step}` : null].filter(Boolean).join(" · ").slice(0, 300) || "Who they are, what they want, fit, objections and the questions to ask";
     const soon = !over && Date.parse(r.starts_at) - now < 3 * 3_600_000;
-    const action = { label: over ? "Review the call" : "Open the brief", href };
-    const card = { key, tab: "needs" as const, kind: "mine" as const, client: null, clientId: null, clientSlug: null, title, detail: story, severity: (soon ? "critical" : "high") as "critical" | "high", due: r.starts_at, action };
+    const action = { label: over ? (me.isExec ? "Review the call" : "Open it") : "Open the brief", href };
+    const card = { key, tab: "needs" as const, kind: "mine" as const, client: null, clientId: null, clientSlug: null, title, detail: story, severity: (soon ? "critical" : "high") as "critical" | "high", due: r.starts_at, action, ...(context.length ? { context } : {}) };
     out.push({
       key,
       topic: "needs",
@@ -1021,6 +1025,7 @@ async function withSalesBriefs(db: SupabaseClient, me: Staff, drafts: Draft[]): 
       evidence: [],
       action,
       due: r.starts_at,
+      ...(context.length ? { context } : {}),
       ...(me.isExec ? { exec: card } : {}),
     });
   }

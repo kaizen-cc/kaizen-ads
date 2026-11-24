@@ -82,13 +82,13 @@ export async function clientRefs(admin: Admin): Promise<ClientRef[]> {
   });
 }
 
-type Team = { id: string; email: string; name: string; sells: boolean }[];
+type Team = { id: string; email: string; name: string; sells: boolean; exec?: boolean }[];
 
 async function teamOf(admin: Admin): Promise<Team> {
   const { data } = await admin.from("profiles").select("id, full_name, email, is_exec, is_lead, is_active").eq("is_active", true).not("joined_at", "is", null);
   return ((data ?? []) as { id: string; full_name: string; email: string | null; is_exec: boolean | null; is_lead: boolean | null }[])
     .filter((p) => p.email && p.email.toLowerCase().endsWith(`@${OWN_DOMAIN}`))
-    .map((p) => ({ id: p.id, email: p.email!.toLowerCase(), name: p.full_name, sells: Boolean(p.is_exec || p.is_lead) }));
+    .map((p) => ({ id: p.id, email: p.email!.toLowerCase(), name: p.full_name, sells: Boolean(p.is_exec || p.is_lead), exec: Boolean(p.is_exec) }));
 }
 
 export type SeenCall = { ev: BriefEvent; foundOn: string[]; why: string };
@@ -263,7 +263,7 @@ Only what the material supports; never invent a number, review or fact. Kaizen's
   await admin.from("prospect_notes").insert({ prospect_id: prospect.id, kind: "note", title: `Call brief: ${row.title.slice(0, 100)}`, body: { brief_id: row.id, starts_at: row.starts_at, text: callBriefText(business, whenLabel(row.starts_at, now), brief) }, created_by: row.owner_id });
   if (row.owner_id && !row.notified_at) {
     await admin.from("notifications").upsert(
-      { profile_id: row.owner_id, kind: "sales_brief", key: `sales-brief:${row.id}`, title: briefTitle(business, row.starts_at, now), body: brief.they_want ? `They want: ${brief.they_want}`.slice(0, 400) : `Fit ${brief.fit.score ?? "?"}/100. ${brief.next_step}`.slice(0, 400), href: `/sales/briefs/${row.id}`, priority: "normal" },
+      { profile_id: row.owner_id, kind: "sales_brief", key: `sales-brief:${row.id}`, title: briefTitle(business, row.starts_at, now), body: brief.they_want ? `They want: ${brief.they_want}`.slice(0, 400) : `Fit ${brief.fit.score ?? "?"}/100. ${brief.next_step}`.slice(0, 400), href: (await import("@/lib/sales-core")).briefHref(row.id, runner?.exec), priority: "normal" },
       { onConflict: "profile_id,key", ignoreDuplicates: true },
     );
     await admin.from("sales_call_briefs").update({ notified_at: nowIso }).eq("id", row.id);

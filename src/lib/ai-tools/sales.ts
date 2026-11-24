@@ -2,7 +2,7 @@ import "server-only";
 import type { Staff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { OPEN_STATUSES, STATUS_LABEL, briefText, cleanBrief, fitBand, isProspectStatus, worksSales } from "@/lib/sales-core";
+import { OPEN_STATUSES, STATUS_LABEL, briefHref, briefText, cleanBrief, fitBand, isProspectStatus, worksSales } from "@/lib/sales-core";
 import { str, num, type AiTool } from "./types";
 
 // The Sales agent's tools, for the assistant, every agent call and Kaizen AI (registered in src/lib/kaizen-ai/extensions.ts).
@@ -292,7 +292,7 @@ const myBriefs: AiTool = {
       calls: (data ?? []).map((r) => {
         const b = r.brief as (Parameters<typeof cleanCallBrief>[0] & { business?: string }) | null;
         const business = (b as { business?: string } | null)?.business ?? r.title;
-        return { business, title: r.title, when: whenLabel(r.starts_at as string), status: r.status === "ready" ? "brief ready" : r.status === "failed" ? "brief failed" : "brief comes 18h before", brief: b ? callBriefText(business, whenLabel(r.starts_at as string), cleanCallBrief(b, { booking: (b as { booking?: { q: string; a: string }[] }).booking })) : null, page: `/sales/briefs/${r.id}` };
+        return { business, title: r.title, when: whenLabel(r.starts_at as string), status: r.status === "ready" ? "brief ready" : r.status === "failed" ? "brief failed" : "brief comes 18h before", brief: b ? callBriefText(business, whenLabel(r.starts_at as string), cleanCallBrief(b, { booking: (b as { booking?: { q: string; a: string }[] }).booking })) : null, page: briefHref(r.id as string, user.isExec) };
       }),
     };
   },
@@ -340,4 +340,21 @@ const scanBriefs: AiTool = {
   },
 };
 
-export const tools: AiTool[] = [webResearch, research, find, mine, details, save, pitch, review, won, myBriefs, saveToBrief, scanBriefs];
+// The Sales pages are the executives' only for now: for anyone else (leads use every tool through their assistant) the
+// results and cards leave out links into /sales, and a call brief points at its item on their Overview
+const SALES_PAGE = /^\/sales(?:\/|\?|$)/;
+function withoutSalesPages(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(withoutSalesPages);
+  if (!v || typeof v !== "object") return v;
+  return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([k, x]) => !((k === "page" || k === "href") && typeof x === "string" && SALES_PAGE.test(x))).map(([k, x]) => [k, withoutSalesPages(x)]));
+}
+const execPagesOnly = (t: AiTool): AiTool => ({
+  ...t,
+  run: async (user, input, chat) => {
+    if (user.isExec) return t.run(user, input, chat);
+    const card = chat ? (c: Record<string, unknown> & { type: string }) => (c.type === "link" && typeof c.href === "string" && SALES_PAGE.test(c.href) ? undefined : chat.card(withoutSalesPages(c) as typeof c)) : undefined;
+    return withoutSalesPages(await t.run(user, input, chat && card ? { ...chat, card } : chat));
+  },
+});
+
+export const tools: AiTool[] = [webResearch, research, find, mine, details, save, pitch, review, won, myBriefs, saveToBrief, scanBriefs].map(execPagesOnly);

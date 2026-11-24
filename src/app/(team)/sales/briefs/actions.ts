@@ -19,7 +19,7 @@ export async function refreshBriefAction(id: string): Promise<{ ok: true } | { o
   const admin = createAdminClient();
   const { data: row } = await admin.from("sales_call_briefs").select(BRIEF_COLS).eq("id", id).single();
   const { data: people } = await admin.from("profiles").select("id, full_name, email, is_exec, is_lead").eq("is_active", true);
-  const team = ((people ?? []) as { id: string; full_name: string; email: string | null; is_exec: boolean | null; is_lead: boolean | null }[]).filter((p) => p.email).map((p) => ({ id: p.id, email: p.email!.toLowerCase(), name: p.full_name, sells: Boolean(p.is_exec || p.is_lead) }));
+  const team = ((people ?? []) as { id: string; full_name: string; email: string | null; is_exec: boolean | null; is_lead: boolean | null }[]).filter((p) => p.email).map((p) => ({ id: p.id, email: p.email!.toLowerCase(), name: p.full_name, sells: Boolean(p.is_exec || p.is_lead), exec: Boolean(p.is_exec) }));
   try {
     const r0 = row as unknown as import("@/lib/sales-briefs").BriefRow;
     // Rewritten by hand: no second bell (it rang when the brief was first delivered)

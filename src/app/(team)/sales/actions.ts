@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { requireStaff, type Staff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { worksSales } from "@/lib/sales-core";
+import { seesSalesPages } from "@/lib/sales-core";
 
 // Sales › Prospects: research a business, build a list, draft a pitch, review a call, and change a prospect's stage,
 // owner or notes. Execs and leads only (checked here, and by row-level security). The same work runs from the
@@ -14,7 +14,7 @@ type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
 
 async function gate(): Promise<{ me: Staff } | { error: string }> {
   const me = await requireStaff();
-  if (!worksSales(me)) return { error: "Sales is for the executives and leads for now." };
+  if (!seesSalesPages(me)) return { error: "Sales is for the executives for now." };
   if (me.viewAs) return { error: "While viewing as someone, nothing is saved for them." };
   return { me };
 }

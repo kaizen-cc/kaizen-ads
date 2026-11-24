@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { requireStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { worksSales } from "@/lib/sales-core";
+import { notFound } from "next/navigation";
+import { seesSalesPages } from "@/lib/sales-core";
 import { SalesView, type ProspectRow } from "./sales-view";
 
 export const metadata: Metadata = { title: "Sales" };
@@ -14,13 +15,8 @@ export const maxDuration = 300;
 
 export default async function SalesPage() {
   const me = await requireStaff();
-  if (!worksSales(me))
-    return (
-      <div className="mx-auto grid max-w-xl gap-2 py-16 text-center">
-        <h1 className="font-heading text-[24px]">Sales</h1>
-        <p className="text-[14px] text-muted">Sales is for the executives and leads for now.</p>
-      </div>
-    );
+  // The executives only for now (viewing as someone else, it's that person's view)
+  if (!seesSalesPages(me)) notFound();
   const db = await createClient();
   const [{ data: rows }, { data: people }] = await Promise.all([
     db.from("prospects").select("id, name, website, industry, location, status, fit_score, fit_reason, owner_id, researched_at, updated_at, brief").order("updated_at", { ascending: false }).limit(500),

@@ -64,7 +64,7 @@ export async function prepUpcomingCalls(admin: Admin, me: Me, at?: string | null
       if (!client) {
         const { data: sb } = await admin.from("sales_call_briefs").select("id, status, brief").eq("event_id", m.id).in("status", ["pending", "ready"]).limit(1).maybeSingle();
         if (sb) {
-          const report: RoutineReport = { headline: sb.status === "ready" ? "The Sales agent's brief for this call is ready." : "The Sales agent is writing this call's brief.", sections: [{ title: "Sales call brief", lines: [{ text: "Open the brief", href: `/sales/briefs/${sb.id}`, tag: null }] }] };
+          const report: RoutineReport = { headline: sb.status === "ready" ? "The Sales agent's brief for this call is ready." : "The Sales agent is writing this call's brief.", sections: [{ title: "Sales call brief", lines: [{ text: "Open the brief", href: (await import("@/lib/sales-core")).briefHref(sb.id as string, me.is_exec), tag: null }] }] };
           await admin.from("routine_runs").update({ status: "done", headline: report.headline, report, finished_at: new Date().toISOString() }).eq("id", claimed.id);
           continue;
         }

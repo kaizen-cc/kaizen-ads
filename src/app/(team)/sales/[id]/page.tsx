@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { requireStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { cleanBrief, cleanPitch, cleanReview, worksSales } from "@/lib/sales-core";
+import { cleanBrief, cleanPitch, cleanReview, seesSalesPages } from "@/lib/sales-core";
 import { getProspect } from "@/lib/sales-agent";
 import { ProspectView, type ProspectNote } from "./prospect-view";
 
@@ -13,7 +13,7 @@ export const maxDuration = 300;
 
 export default async function ProspectPage({ params }: PageProps<"/sales/[id]">) {
   const me = await requireStaff();
-  if (!worksSales(me)) notFound();
+  if (!seesSalesPages(me)) notFound();
   const { id } = await params;
   const db = await createClient();
   const p = await getProspect(db, id);

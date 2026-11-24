@@ -20,8 +20,14 @@ export const isProspectStatus = (v: unknown): v is ProspectStatus => typeof v ==
 /** The open stages (still being worked), in pipeline order */
 export const OPEN_STATUSES: readonly ProspectStatus[] = ["new", "researched", "contacted", "call_booked", "talking", "proposal"];
 
+/** The Sales pages (Sales › Prospects, prospects, call briefs) are the executives' only until they're built out (owner, Nov 24 2026); leads use Sales through their assistant */
+export const seesSalesPages = (me: { isExec?: boolean | null } | null | undefined) => Boolean(me?.isExec);
+
 /** Sales is internal for now: the executives and the leads (line heads) only */
 export const worksSales = (me: { isExec?: boolean | null; isLead?: boolean | null } | null | undefined) => Boolean(me && (me.isExec || me.isLead));
+
+/** Where a sales call brief opens for this person: the brief page for an exec, else the item's sheet on their Overview */
+export const briefHref = (id: string, exec: boolean | null | undefined) => (exec ? `/sales/briefs/${id}` : `/pipeline?block=needs&item=${encodeURIComponent(`salesbrief:${id}`)}`);
 
 /** A website as one canonical form ("https://example.com"), or null when it isn't a site */
 export function cleanSite(v: unknown): string | null {

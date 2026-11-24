@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { addToBrief, bookingAnswers, briefDue, briefTitle, businessOf, callBriefText, classifyEvent, cleanCallBrief, eventHash, eventKey, externalsOf, runnerOf, siteOf, whenLabel, type BriefEvent, type ClientRef } from "@/lib/sales-briefs-core";
 import { contextPrompt, parseCallContext } from "@/lib/agent-call/call-context";
 import { mayOpen } from "@/lib/ai-access-core";
-import { PROSPECT_STATUSES, forwardStatus } from "@/lib/sales-core";
+import { PROSPECT_STATUSES, briefHref, forwardStatus } from "@/lib/sales-core";
 
 const clients: ClientRef[] = [
   { id: "c1", name: "Crust Pizza", emails: ["owner@crustpizza.com"], domains: ["crustpizza.com"] },
@@ -149,11 +149,17 @@ describe("sales call briefs: the brief and talking to the Sales agent about it",
 });
 
 describe("sales call briefs: access and stages", () => {
-  it("the runner opens their brief whatever their role; the rest of Sales stays execs' and leads'", () => {
+  it("the Sales pages are the execs' only; anyone else running the call gets the brief in their item's sheet", () => {
     const editor = { role: "video_editor", isExec: false, isLead: false };
-    expect(mayOpen("/sales/briefs/abc", editor).ok).toBe(true);
-    expect(mayOpen("/sales", editor).ok).toBe(false);
-    expect(mayOpen("/sales/abc", editor).ok).toBe(false);
+    const lead = { role: "head_of_meta", isExec: false, isLead: true };
+    for (const who of [editor, lead]) {
+      expect(mayOpen("/sales/briefs/abc", who).ok).toBe(false);
+      expect(mayOpen("/sales", who).ok).toBe(false);
+    }
+    expect(mayOpen("/sales/briefs/abc", { role: "coo", isExec: true }).ok).toBe(true);
+    expect(briefHref("b1", true)).toBe("/sales/briefs/b1");
+    expect(briefHref("b1", false)).toBe("/pipeline?block=needs&item=salesbrief%3Ab1");
+    expect(mayOpen(briefHref("b1", false), editor).ok).toBe(true);
   });
   it("a booked call moves the prospect to 'call booked' but never back", () => {
     expect(PROSPECT_STATUSES).toContain("call_booked");
