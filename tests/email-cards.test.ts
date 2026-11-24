@@ -43,7 +43,7 @@ describe("campaign cards", () => {
     expect(cardStats({ channel: "sms", recipients: 10, openRate: null, clickRate: 0.1, orders: 0, orderRate: null, revenue: 0 }, "USD", false).map((x) => x.key)).toEqual(["recipients", "click"]);
   });
   it("links to the campaign's report in Klaviyo", () => {
-    expect(klaviyoCampaignUrl("01ABC")).toBe("https://www.klaviyo.com/campaign/01ABC/reports");
+    expect(klaviyoCampaignUrl("01ABC")).toBe("https://www.klaviyo.com/campaign/01ABC/reports/overview");
   });
 });
 
