@@ -80,7 +80,7 @@ describe("the email's body is the message", () => {
 
 describe("Slack's formatting, turned into the email's", () => {
   it("links, mentions and emoji codes", () => {
-    expect(slackToPlain("See <https://x.test/r/abc|your report> :tada: <@U123> <!channel>")).toBe("See your report (https://x.test/r/abc)");
+    expect(slackToPlain("See <https://x.test/r/abc|your report> :tada: <@U123> <!channel>")).toBe("See [your report](https://x.test/r/abc)");
     expect(slackToPlain("<https://x.test>")).toBe("https://x.test");
   });
   it("bold and italic are drawn, anything else stays text", () => {

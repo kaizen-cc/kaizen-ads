@@ -6,7 +6,7 @@ import { logClientEmail } from "@/lib/client-emails";
 import { postAsApp, postAsUser } from "@/lib/slack-user";
 import { siteUrl } from "@/lib/site";
 import type { ReportMetrics } from "./metrics";
-import { buildReportEmail, channelsLabel, normalizeDelivery, type Channel, type Delivery, type Recipient, lineDelivery, pastRecipients } from "./delivery-core";
+import { forSlack, buildReportEmail, channelsLabel, normalizeDelivery, type Channel, type Delivery, type Recipient, lineDelivery, pastRecipients } from "./delivery-core";
 import { defaultRecipients, firstNameFor, recipientsToUse, reportCtaUrl, withoutRemoved } from "./cc-core";
 import { reportCc } from "./cc";
 import { forClient, isWhiteLabel, WHITE_LABEL_FROM } from "./white-label";
@@ -165,7 +165,8 @@ export async function deliver(admin: SupabaseClient, sent: SendArgs): Promise<Se
     if (!channelId) slack = { error: "This client has no Slack channel set." };
     else {
       const dash = dashboardOf(a.client);
-      const text = `${a.message.trim()}${dash && !a.message.includes(dash) ? `\n\n<${dash}|See every number on your live dashboard>` : ""}`;
+      // Slack's own formatting (an underline the email shows goes back to plain words here)
+      const text = forSlack(`${a.message.trim()}${dash && !a.message.includes(dash) ? `\n\n<${dash}|See every number on your live dashboard>` : ""}`);
       let out = a.slackAs === "app" ? await postAsApp({ channel: channelId, text, pdf: a.pdf, thread, broadcast }) : await postAsUser(a.slackUserId ?? a.by.id, { channel: channelId, text, pdf: a.pdf, thread, broadcast });
       if (!out.ok && "needsConnect" in out && out.needsConnect) needsConnect = true;
       // A joint report that couldn't attach its PDF still goes, from the app (and so does a built one whose buyer can't post)

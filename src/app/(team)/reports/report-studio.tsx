@@ -28,10 +28,11 @@ import { noteText } from "@/lib/reports/refresh-core";
 import { RegenerateButton, UndoRegenerate } from "./regenerate-button";
 import { NextStepsAct } from "./next-steps-act";
 import type { WriteStatus } from "@/lib/write-status-core";
-import { channelsLabel, channelsPhrase, type Delivery, type SlackTarget } from "@/lib/reports/delivery-core";
+import { channelsLabel, channelsPhrase, forSlack, type Delivery, type SlackTarget } from "@/lib/reports/delivery-core";
 import { forClient } from "@/lib/reports/white-label";
 import { DeliveryPicker, type DeliveryOptions } from "./delivery-picker";
 import { SlackWhere } from "./slack-where";
+import { MessageEditor } from "./message-editor";
 import { PeriodPicker } from "./period-picker";
 import { SkipButton, SkipHistory, SkippedBanner } from "./skip-report";
 import type { LogEntry } from "@/lib/reports/skip-log";
@@ -125,7 +126,7 @@ function Mrkdwn({ text }: { text: string }) {
   const inline = (line: string, k: number) => {
     const out: React.ReactNode[] = [];
     // A mention is drawn as Slack does: "@here" (or "@someone" for a person), never the raw <!here> or <@U…> code
-    const re = /\*([^*\n]+)\*|_([^_\n]+)_|<(https?:[^|>]+)\|([^>]+)>|(https?:\/\/[^\s]+)|(<!(?:here|channel|everyone)(?:\|[^>]*)?>|<@[UW][A-Z0-9]+(?:\|[^>]*)?>)/g;
+    const re = /\*([^*\n]+)\*|_([^_\n]+)_|<(https?:[^|>]+)\|([^>]+)>|(https?:\/\/[^\s]+)|(<!(?:here|channel|everyone)(?:\|[^>]*)?>|<@[UW][A-Z0-9]+(?:\|[^>]*)?>)|~([^~\n]+)~/g;
     let at = 0;
     let m: RegExpExecArray | null;
     let n = 0;
@@ -136,6 +137,7 @@ function Mrkdwn({ text }: { text: string }) {
       else if (m[3]) out.push(<span key={`${k}-${n++}`} className="text-[#1d9bd1]">{m[4]}</span>);
       else if (m[5]) out.push(<span key={`${k}-${n++}`} className="text-[#1d9bd1]">{m[5]}</span>);
       else if (m[6]) out.push(<span key={`${k}-${n++}`} className="rounded-[3px] bg-[#1d9bd1]/20 px-0.5 text-[#1d9bd1]">{mentionLabel(m[6])}</span>);
+      else if (m[7]) out.push(<s key={`${k}-${n++}`}>{m[7]}</s>);
       at = m.index + m[0].length;
     }
     out.push(line.slice(at));
@@ -340,6 +342,17 @@ export function ReportStudio({
   const [chatError, setChatError] = useState<string | null>(null);
   const [rail, setRail] = useState<"ai" | "checks">("ai");
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  // The assistant rewrote this report's message (edit_report_message): it shows here at once, already saved
+  useEffect(() => {
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<{ name?: string; detail?: { reportId?: string; message?: string } }>).detail;
+      if (d?.name !== "report-message" || d.detail?.reportId !== report.id || typeof d.detail.message !== "string") return;
+      setMessage(d.detail.message);
+      setNote({ ok: true, text: "Your assistant updated the message." });
+    };
+    window.addEventListener("kaizen-page", on);
+    return () => window.removeEventListener("kaizen-page", on);
+  }, [report.id]);
   const [pending, start] = useTransition();
   const [editMsg, setEditMsg] = useState(false);
   // The quiet extras (preview the PDF, the recap deck, skip): a small menu, kept mounted so its sheets survive it closing
@@ -771,10 +784,10 @@ export function ReportStudio({
   // The message the buyer sends: theirs, then the TikTok part's under its own name (one post), and a recap's link line
   const riderParts = riders.map((x) => ({ platform: x.platform, message: riderMsgs[x.id] ?? "" }));
   // Always opens with @here (never a person's mention), as it will be posted
-  const slackText = openWithHere(forClient(
+  const slackText = forSlack(openWithHere(forClient(
     `${riders.length ? jointMessage(message, riderParts) : message}${monthly ? (client.whiteLabel ? `\n\n*Your ${report.periodLabel} recap is attached.*` : `\n\n*Your ${report.periodLabel} recap:* <https://recap|the link to the recap>`) : ""}`,
     client.whiteLabel,
-  ));
+  )));
   const saveRiderMessages = () => Promise.all(riders.map((x) => (riderMsgs[x.id] !== (x.message ?? "") ? saveReport(x.id, { message: riderMsgs[x.id] ?? "" }) : null)));
 
   // Step 3: it goes out (or is approved to go out with the rest), then Drive when picked
@@ -1968,7 +1981,7 @@ export function ReportStudio({
               </p>
             ) : editMsg ? (
               <div className="grid gap-3">
-                <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={14} autoFocus aria-label="The message" className="w-full rounded-[14px] border border-brand/50 bg-surface px-4 py-3 font-mono text-[13px] leading-relaxed outline-none [field-sizing:content] focus:border-brand-text/60" />
+                <MessageEditor value={message} onChange={setMessage} />
                 {riders.map((x) => (
                   <label key={x.id} className="grid gap-1.5">
                     <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">{platformName(x.platform as "tiktok")}, under yours in the same post</span>
@@ -1981,7 +1994,7 @@ export function ReportStudio({
                     />
                   </label>
                 ))}
-                <p className="text-[11.5px] text-faint">*bold* · _italic_ · • bullets, as Slack shows them</p>
+                <p className="text-[11.5px] text-faint">Bold, italic, strikethrough, links and emoji show in Slack and the email; underline shows in the email (Slack has none, so it posts as plain words). Switch to Slack message or Email above to see each.</p>
               </div>
             ) : (
               <button type="button" disabled={!editable && !(built && isBuilder)} onClick={() => setEditMsg(true)} className="block w-full cursor-text rounded-[12px] text-left ring-brand/40 transition-shadow hover:ring-2 disabled:cursor-default disabled:hover:ring-0" aria-label="Edit the message">

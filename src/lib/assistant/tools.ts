@@ -481,6 +481,33 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
       },
     },
     {
+      name: "edit_report_message",
+      description:
+        "Rewrites the client message of a report that hasn't gone out (the Slack post, which is also the email's body) the way the person asks: add an intro line, new coming-up points, a warmer close, cut a line. It edits the message itself, right in the report they have open (their editor updates in front of them), never text for them to paste. Every line's reports (ads, email, social). The report is the one open on their screen, or report_id. Keeps everything they didn't ask to change, and Slack's formatting (*bold*, _italic_, <link|words>, • bullets). Say in a few words what changed.",
+      input_schema: {
+        type: "object",
+        properties: {
+          ask: { type: "string", description: "The change, in their words" },
+          report_id: { type: "string", description: "The report's id, when it isn't the one open on their screen" },
+        },
+        required: ["ask"],
+        additionalProperties: false,
+      },
+      run: async (input) => {
+        const fromPath = /\/reports\/([0-9a-f-]{36})/i.exec(String(ctx.path ?? ""))?.[1] ?? null;
+        const id = typeof input.report_id === "string" && /^[0-9a-f-]{36}$/i.test(input.report_id) ? input.report_id : fromPath;
+        if (!id) return { edited: false, note: "No report is open. Open the report (or say which client's) first." };
+        const ask = clip(input.ask, 2000);
+        if (!ask) return { edited: false, note: "Say what to change in the message." };
+        const { editReportMessage } = await import("@/lib/reports/message-edit");
+        const out = await editReportMessage(ctx.admin, ctx.db, ctx.me, id, ask);
+        if (!out.ok) return { edited: false, note: out.error };
+        // The report open on their screen shows the new message at once
+        ctx.emit({ t: "page", name: "report-message", detail: { reportId: id, message: out.message, bundleId: out.bundleId } });
+        return { edited: true, changed: out.changed };
+      },
+    },
+    {
       name: "open_screen",
       description:
         "Takes the person to the exact thing in the app while the call carries on. Open the most specific thing they named, never the page around it: 'open Ocean Box's Google KPI card' is what: kpi_card, client, platform google (not the whole KPI board). what: client (a client's page, with tab), kpi_card (one ad account's card on the KPI board; card_tab: overview, numbers, actions, policy, creative, notes, settings), email_sheet or social_sheet (a client's sheet on the Email or Social KPI board; card_tab: overview, numbers, campaigns, flows, actions, notes, settings for email; overview, posts, actions, notes, settings for social), ticket (creative board, by number), email_ticket (Email Board, by number), report (the client's latest, or href for one), audit (the client's latest Meta or Google audit; platform), email_audit, social_audit, sprint (the client's Meta or Google sprint; platform), email_sprint, social_sprint, agent (an AI agent's page in Settings, by role key), direction_change (a client's change of direction with its flagged tasks: by id from direction_changes, or the client's newest), copy_doc (campaign or flow copy in its full document view to comment on lines and approve: id from create_copy_doc, or the client's newest), feedback (a report they filed: id from submit_feedback, or their own feedback list), profile (a teammate's profile by name in person, or their own). Or a place by name (place: a board, a KPI view, a Settings tab, the assistant's settings), or an exact in-app path (href). Say in a few words what you opened.",

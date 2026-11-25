@@ -227,14 +227,27 @@ export function slackToPlain(t: string): string {
     .replace(/<!(?:here|channel|everyone)(?:\|[^>]*)?>/g, "")
     .replace(/<@[A-Z0-9]+(?:\|([^>]+))?>/g, (_m, name: string | undefined) => (name ? `@${name}` : ""))
     .replace(/<#[A-Z0-9]+\|([^>]+)>/g, "#$1")
-    .replace(/<((?:https?|mailto):[^|>]+)\|([^>]+)>/g, (_m, url: string, label: string) => (label.trim() === url.trim() ? url : `${label} (${url})`))
+    // A link with its words stays one ([words](url)): the email draws it as a link on the words
+    .replace(/<((?:https?|mailto):[^|>]+)\|([^>]+)>/g, (_m, url: string, label: string) => (label.trim() === url.trim() ? url : `[${label}](${url})`))
     .replace(/<((?:https?|mailto):[^>]+)>/g, "$1")
     .replace(/(^|\s):[a-z0-9_+-]{2,40}:(?=\s|$)/g, "$1")
     .replace(/[ \t]+$/gm, "");
 }
 
 /** The *bold* and _italic_ markers taken off, for the plain-text email and the inbox preview */
-export const unmark = (t: string) => t.replace(/\*([^*\n]+)\*/g, "$1").replace(/(^|[\s(])_([^_\n]+)_(?=$|[\s).,;:!?])/g, "$1$2");
+export const unmark = (t: string) =>
+  t
+    .replace(/\[([^\]\n]+)\]\(((?:https?|mailto):[^)\s]+)\)/g, "$1 ($2)")
+    .replace(/\+\+([^+\n]+)\+\+/g, "$1")
+    .replace(/~([^~\n]+)~/g, "$1")
+    .replace(/\*([^*\n]+)\*/g, "$1")
+    .replace(/(^|[\s(])_([^_\n]+)_(?=$|[\s).,;:!?])/g, "$1$2");
+
+/**
+ * The message as Slack takes it. The editor's one mark Slack has no form for, ++underline++, goes back to plain words
+ * (the email keeps it underlined); *bold*, _italic_, ~strike~, <url|links> and emoji are Slack's own.
+ */
+export const forSlack = (t: string) => String(t ?? "").replace(/\+\+([^+\n]+)\+\+/g, "$1");
 
 /**
  * The Slack message turned into the email's body: its headings, paragraphs and bullets in the order written, every one

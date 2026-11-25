@@ -789,6 +789,7 @@ export class Call {
           else if (e.t === "job") this.hooks.onJob?.(e.job);
           else if (e.t === "progress") this.hooks.onProgress?.(e.progress);
           else if (e.t === "navigate") this.hooks.onNavigate?.(e.href);
+          else if (e.t === "page" && typeof window !== "undefined") window.dispatchEvent(new CustomEvent("kaizen-page", { detail: { name: e.name, detail: e.detail } }));
           else if (e.t === "card") this.hooks.onCard?.(e.card);
           else if (e.t === "upload") this.hooks.onUpload?.(e.ask);
           else if (e.t === "look") this.hooks.onLook?.();

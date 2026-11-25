@@ -784,6 +784,9 @@ export type CallEvent =
   | { t: "job"; job: JobView | null }
   // Open a screen in the app while the call carries on
   | { t: "navigate"; href: string }
+  // Change something on the screen that's open (the report's message, rewritten by the assistant): the page listens
+  // for "kaizen-page" with { name, detail } and updates in place
+  | { t: "page"; name: string; detail: unknown }
   // A link card on the call ("take a look"): in the app or a new tab
   | { t: "card"; card: CallCard }
   // The assistant asks for files: the upload panel opens on the call

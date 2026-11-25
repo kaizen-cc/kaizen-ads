@@ -48,7 +48,15 @@ export function emailHtml(p: EmailParts) {
     ? `<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:4px 0 20px">${p.bullets.map((b) => `<tr><td valign="top" width="20" style="padding:0 0 8px;color:${RED};font:700 15px/1.5 ${FONT}">•</td><td style="padding:0 0 8px;font:15px/1.5 ${FONT};color:${BODY}">${esc(b)}</td></tr>`).join("")}</table>`
     : "";
   // *bold* and _italic_ as the message wrote them (after escaping, so nothing else can become markup)
-  const marked = (t: string) => esc(t).replace(/(https?:\/\/[^\s<)]+)/g, `<a href="$1" style="color:${RED}">$1</a>`).replace(/\*([^*\n]+)\*/g, `<b style="color:${INK}">$1</b>`).replace(/(^|[\s(])_([^_\n]+)_(?=$|[\s).,;:!?])/g, "$1<i>$2</i>");
+  const marked = (t: string) =>
+    esc(t)
+      // [words](url) is a link on the words; a bare address is a link on itself (never one already inside a link)
+      .replace(/\[([^\]\n]+)\]\(((?:https?|mailto):[^)\s]+)\)/g, (_m, label: string, url: string) => `<a href="${url}" style="color:${RED}">${label}</a>`)
+      .replace(/(^|[^"'>])(https?:\/\/[^\s<)]+)/g, (_m, pre: string, url: string) => `${pre}<a href="${url}" style="color:${RED}">${url}</a>`)
+      .replace(/\+\+([^+\n]+)\+\+/g, "<u>$1</u>")
+      .replace(/~([^~\n]+)~/g, "<s>$1</s>")
+      .replace(/\*([^*\n]+)\*/g, `<b style="color:${INK}">$1</b>`)
+      .replace(/(^|[\s(])_([^_\n]+)_(?=$|[\s).,;:!?])/g, "$1<i>$2</i>");
   const blocks = (p.blocks ?? [])
     .map((b) =>
       b.kind === "heading"
