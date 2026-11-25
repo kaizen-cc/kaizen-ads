@@ -106,3 +106,11 @@ describe("GTM text: bids and the partner cover", () => {
     expect(b.preparedBy).toBe("ZenChange Marketing");
   });
 });
+
+describe("AI answers: JSON with something after it", () => {
+  it("takes the first complete object", async () => {
+    const { jsonOf } = await import("@/lib/ai");
+    expect(jsonOf('{"a":{"b":"x}"},"c":[1]}\n{"a":2}')).toEqual({ a: { b: "x}" }, c: [1] });
+    expect(jsonOf('```json\n{"q":"say \\"hi\\""}\n```\nNote: done')).toEqual({ q: 'say "hi"' });
+  });
+});

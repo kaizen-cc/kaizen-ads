@@ -701,9 +701,35 @@ export function jsonOf(text: string): unknown {
     const t = text.replace(/^\s*```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "");
     const a = t.indexOf("{");
     const b = t.lastIndexOf("}");
-    if (a >= 0 && b > a) return JSON.parse(t.slice(a, b + 1));
+    if (a >= 0 && b > a) {
+      try {
+        return JSON.parse(t.slice(a, b + 1));
+      } catch {
+        // A complete object followed by more text (a second object, a note): the first complete object
+        const end = firstObjectEnd(t, a);
+        if (end > a) return JSON.parse(t.slice(a, end + 1));
+      }
+    }
     throw new AiUnavailable("The AI's answer wasn't in the right shape. Try again.");
   }
+}
+
+/** Where the JSON object starting at `from` closes (strings and escapes respected), or -1 */
+function firstObjectEnd(t: string, from: number): number {
+  let depth = 0;
+  let inStr = false;
+  for (let i = from; i < t.length; i++) {
+    const ch = t[i];
+    if (inStr) {
+      if (ch === "\\") i++;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}" && --depth === 0) return i;
+  }
+  return -1;
 }
 
 function apiMessage(e: InstanceType<typeof Anthropic.APIError>) {
