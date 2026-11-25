@@ -84,7 +84,7 @@ export async function runClientSignals(admin: Admin, opts: { clients?: number } 
   const tally = { read: 0, signals: 0, killed: 0, made: 0, recurring: 0, holdSends: 0 };
   const since = new Date(Date.now() - WINDOW_H * 3_600_000).toISOString();
   const [{ data: msgs }, { data: people }] = await Promise.all([
-    admin.from("context_items").select("id, client_id, source, occurred_at, author, title, body, url").in("source", ["slack_external", "gmail"]).not("client_id", "is", null).gte("occurred_at", since).order("occurred_at").limit(600),
+    admin.from("context_items").select("id, client_id, source, occurred_at, author, title, body, url").in("source", ["slack_external", "gmail"]).not("client_id", "is", null).gte("occurred_at", since).order("occurred_at", { ascending: false }).limit(1500),
     admin.from("profiles").select("id, full_name, display_name, is_active").eq("is_active", true),
   ]);
   const team = (people ?? []).flatMap((p) => [p.full_name, p.display_name].filter((x): x is string => Boolean(x)));
@@ -94,12 +94,15 @@ export async function runClientSignals(admin: Admin, opts: { clients?: number } 
     const { data } = await admin.from("client_signals").select("context_item_id").in("context_item_id", ids.slice(i, i + 200));
     for (const r of data ?? []) seen.add(r.context_item_id as string);
   }
-  const todo = ((msgs ?? []) as Msg[]).filter((m) => !seen.has(m.id) && String(m.body ?? "").trim().length > 15);
+  // Oldest first within each client (read in order), the clients with the newest unread messages first
+  const todo = ((msgs ?? []) as Msg[]).filter((m) => !seen.has(m.id) && String(m.body ?? "").trim().length > 15).reverse();
   const byClient = new Map<string, Msg[]>();
   for (const m of todo) byClient.set(m.client_id, [...(byClient.get(m.client_id) ?? []), m]);
   const today = nyClock(new Date()).date;
-  for (const [clientId, list] of [...byClient].slice(0, opts.clients ?? 10)) {
-    const batch = list.slice(-14);
+  const newest = (l: Msg[]) => l[l.length - 1]?.occurred_at ?? "";
+  for (const [clientId, list] of [...byClient].sort((a, b) => newest(b[1]).localeCompare(newest(a[1]))).slice(0, opts.clients ?? 15)) {
+    // The oldest unread first (a backlog is read over the next runs, in order)
+    const batch = list.slice(0, 14);
     const r = await readClient(admin, clientId, batch, team, today).catch((e) => {
       console.error("[client-signals]", clientId, e instanceof Error ? e.message : e);
       return null;
