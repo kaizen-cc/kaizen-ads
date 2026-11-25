@@ -177,7 +177,7 @@ export async function findProspect(db: SupabaseClient, ref: string): Promise<Pro
  * Researches one business into a prospect brief and a Kaizen sales strategy, and keeps it on the prospect (made if
  * new, found by its site or name otherwise). Takes a minute or two: the web first, then the brief.
  */
-export async function researchProspect(db: SupabaseClient, admin: Admin, me: { id: string }, input: { name?: string | null; website?: string | null; location?: string | null; question?: string | null; prospectId?: string | null }): Promise<{ ok: true; prospect: Prospect; text: string } | { ok: false; error: string }> {
+export async function researchProspect(db: SupabaseClient, admin: Admin, me: { id: string }, input: { name?: string | null; website?: string | null; location?: string | null; question?: string | null; prospectId?: string | null; sequential?: boolean }): Promise<{ ok: true; prospect: Prospect; text: string; thin?: boolean } | { ok: false; error: string }> {
   const existing = input.prospectId ? await getProspect(db, input.prospectId) : null;
   const name = (input.name ?? existing?.name ?? "").trim();
   const website = cleanSite(input.website) ?? existing?.website ?? null;
@@ -186,15 +186,19 @@ export async function researchProspect(db: SupabaseClient, admin: Admin, me: { i
   const who = [name, website, location].filter(Boolean).join(" · ");
 
   // Two passes at once: the business itself, and the market around it (competitors, demand, benchmarks, the buyer)
-  const marketNotes = researchWeb({
+  // Two passes: the business itself, and the market around it. In the background job they run one after the other (with
+  // a bigger budget), so they never compete for web searches; asked live, side by side to stay quick
+  const runMarket = () => researchWeb({
     agent: "sales_research",
     label: "prospect market research",
     model: "sonnet",
-    maxSearches: 10,
-    maxFetches: 12,
+    maxSearches: input.sequential ? 16 : 10,
+    maxFetches: input.sequential ? 16 : 12,
+    maxTurns: input.sequential ? 10 : 6,
     system: `You research a market for Kaizen, a paid-ads and creative agency, before a pitch. Facts with sources. ${RESEARCH_RULES}`,
     prompt: MARKET_PROMPT(who, existing?.industry ?? null),
   }).catch((e) => `(The market research didn't finish: ${e instanceof Error ? e.message : String(e)})`);
+  const marketNotes = input.sequential ? null : runMarket();
   const notes = await researchWeb({
     agent: "sales_research",
     label: "prospect research",
@@ -215,7 +219,7 @@ Find and note, each with its source URL:
 Plain notes, no recommendations.`,
   });
 
-  const [rates, proof, market] = await Promise.all([rateCardText(admin), clientProofText(admin, `${existing?.industry ?? ""} ${notes.slice(0, 1500)}`), marketNotes]);
+  const [rates, proof, market] = await Promise.all([rateCardText(admin), clientProofText(admin, `${existing?.industry ?? ""} ${notes.slice(0, 1500)}`), marketNotes ?? runMarket()]);
   const { tierPlan, verticalOf, VERTICAL_FOCUS } = await import("@/lib/sales-gtm-core");
   const vertical = verticalOf(existing?.industry ?? null, notes.slice(0, 2000));
   const raw = await askJson<ProspectBrief & { name: string; website: string; industry: string }>({
@@ -269,8 +273,11 @@ Only what the notes support; never invent a number, review or fact. Estimates sa
   await db.from("prospect_notes").insert({ prospect_id: saved.id, kind: "research", title: input.question ? `Research: ${input.question.slice(0, 120)}` : "Research", body: { brief, notes: notes.slice(0, 40_000), market_notes: market.slice(0, 40_000) }, created_by: me.id });
   // The prospect and its competitors join the swipe file, so their real email flows are captured (src/lib/swipe)
   await followInSwipe(admin, saved, brief).catch(() => undefined);
-  return { ok: true, prospect: saved, text: briefText(saved.name, brief) };
+  return { ok: true, prospect: saved, text: briefText(saved.name, brief), thin: thinResearch(market) };
 }
+
+/** The market pass came back without its research (search limits, errors): don't build on it */
+export const thinResearch = (notes: string) => notes.length < 1500 || /usage limit|rate limit|search tool (?:hit|reached)|didn't finish|could not (?:search|check)|unable to search/i.test(notes.slice(0, 600));
 
 async function findExact(db: SupabaseClient, name: string): Promise<Prospect | null> {
   const { data } = await db.from("prospects").select(PROSPECT_COLS).ilike("name", name.replace(/[%_]/g, "")).limit(1).maybeSingle();

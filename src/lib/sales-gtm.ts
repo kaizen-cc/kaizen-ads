@@ -83,7 +83,8 @@ const today = () => new Date().toLocaleDateString("en-US", { timeZone: "America/
 
 /** Runs one queued GTM (claimed first, so two runners never run the same one) */
 export async function runGtm(admin: Admin, id: string): Promise<{ ran: boolean; ok?: boolean }> {
-  const { data: job } = await admin.from("prospect_gtms").update({ status: "running", started_at: new Date().toISOString(), stage: "researching" }).eq("id", id).eq("status", "queued").select("id, prospect_id, profile_id, partner_key, ask, attempts").maybeSingle();
+  // Claimed with its stage kept ("researched" means this pass writes), so the research never runs twice for one job
+  const { data: job } = await admin.from("prospect_gtms").update({ status: "running", started_at: new Date().toISOString() }).eq("id", id).eq("status", "queued").select("id, prospect_id, profile_id, partner_key, ask, attempts, stage").maybeSingle();
   if (!job) return { ran: false };
   await admin.from("prospect_gtms").update({ attempts: (job.attempts as number) + 1 }).eq("id", id);
   const set = (patch: Record<string, unknown>) => admin.from("prospect_gtms").update(patch).eq("id", id);
@@ -94,10 +95,20 @@ export async function runGtm(admin: Admin, id: string): Promise<{ ran: boolean; 
     if (!p) throw new Error("The prospect isn't there anymore.");
     // 1. Research: refreshed when it's missing the market analysis or older than two weeks
     const brief0 = p.brief ? cleanBrief(p.brief) : null;
-    const stale = !brief0 || !brief0.market?.competitors?.length || !p.researched_at || Date.now() - Date.parse(p.researched_at) > 14 * 86_400_000;
+    // Research once per job (a job already researched goes straight to writing, so it can never loop): when there's none,
+    // it has no market analysis, or it's over two weeks old
+    const researched = job.stage === "researched";
+    const stale = !researched && (!brief0 || !(brief0.market?.geo || brief0.market?.competitors?.length) || !p.researched_at || Date.now() - Date.parse(p.researched_at) > 14 * 86_400_000);
     if (stale) {
-      const r = await researchProspect(admin, admin, { id: owner }, { prospectId: p.id, name: p.name, website: p.website, location: p.location, question: job.ask as string | null });
+      await set({ stage: "researching" });
+      const r = await researchProspect(admin, admin, { id: owner }, { prospectId: p.id, name: p.name, website: p.website, location: p.location, question: job.ask as string | null, sequential: true });
       if (!r.ok) throw new Error(r.error);
+      // The web search came back empty (limits, errors): try again in a later pass rather than write a thin strategy
+      if (r.thin) {
+        if ((job.attempts as number) >= 3) throw new Error("The market research kept coming back empty (web search limits). Try again later.");
+        await set({ status: "queued", stage: null, error: "The market research came back thin: retrying" });
+        return { ran: true, ok: false };
+      }
       // Research done: the writing runs in the next pass (each pass stays well inside a function's time limit)
       await set({ status: "queued", stage: "researched" });
       return { ran: true, ok: true };
