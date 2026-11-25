@@ -150,6 +150,9 @@ export function AgentCallProvider({ assistantColor = null, assistantName: givenN
   const [stall, setStall] = useState<StallState>(null);
   const [liveId, setLiveId] = useState<string | null>(null);
   const [canSend, setCanSend] = useState(false);
+  // A short note on the Send bar for a few seconds ("Didn't catch that")
+  const [hint, setHint] = useState<string | null>(null);
+  const hintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // The chat: its lines (and the last few of the conversation before), an answer being written, opening or moving over
   const [chatLines, setChatLines] = useState<ChatLine[]>([]);
   const [earlier, setEarlier] = useState<ChatLine[]>([]);
@@ -369,7 +372,10 @@ export function AgentCallProvider({ assistantColor = null, assistantName: givenN
       if (e.code === "Space" || e.key === " ") {
         if (typing(e.target)) return;
         e.preventDefault();
-        if (!e.repeat) toggleMute();
+        if (e.repeat) return;
+        // Listening: Space is "Done talking" (sends now); otherwise it mutes and unmutes as before
+        if (phase === "listening" && !muted) call.current?.sendNow();
+        else toggleMute();
       } else if (e.key === "Enter") {
         if (typing(e.target) || e.repeat) return;
         e.preventDefault();
@@ -380,7 +386,7 @@ export function AgentCallProvider({ assistantColor = null, assistantName: givenN
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [stage, desktop, toggleMute]);
+  }, [stage, desktop, toggleMute, phase, muted]);
 
   /** One recorded part of the call, straight to private storage */
   const uploadAudio = useCallback(async (id: string, part: { blob: Blob; index: number; startSeconds: number; mime: string }) => {
@@ -458,6 +464,11 @@ export function AgentCallProvider({ assistantColor = null, assistantName: givenN
         onEars: setEars,
         onStall: setStall,
         onCanSend: setCanSend,
+        onHint: (text) => {
+          setHint(text);
+          if (hintTimer.current) clearTimeout(hintTimer.current);
+          hintTimer.current = setTimeout(() => setHint(null), 4000);
+        },
         onTeam: (l) => {
           setTeam(l);
           if (l.length) teamed.current = true;
@@ -984,6 +995,7 @@ export function AgentCallProvider({ assistantColor = null, assistantName: givenN
         onMute: toggleMute,
         onHangUp: () => void hangUp(),
         canSend,
+        hint,
         onSend: () => call.current?.sendNow(),
         onForce: () => call.current?.forceAnswer(),
         onType: (text) => call.current?.sendText(text),

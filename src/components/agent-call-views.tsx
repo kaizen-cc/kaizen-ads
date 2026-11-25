@@ -65,6 +65,8 @@ export type CallView = {
   /** Send what's been heard now (and whether there's anything to send), or a typed turn */
   canSend?: boolean;
   onSend?: () => void;
+  /** A short note for a moment ("Didn't catch that. Try again, or type it.") */
+  hint?: string | null;
   /** "Answer now": it seems stuck listening or thinking; the agent answers from what it has */
   onForce?: () => void;
   onType?: (text: string) => void;
@@ -243,22 +245,25 @@ function SendBar({ v, compact }: { v: CallView; compact: boolean }) {
         </button>
       </form>
     );
-  const hint = v.muted ? "Muted. Unmute to talk, or type it." : v.phase === "listening" ? "Listening. It sends when you pause, or tap Send." : "";
-  const caption = v.partial || hint;
+  const hint = v.muted ? "Muted. Unmute to talk, or type it." : v.phase === "listening" ? "Listening. It sends when you pause, or tap Done talking." : "";
+  // A note for a moment ("Didn't catch that"), then the live words or the usual hint
+  const caption = v.hint || v.partial || hint;
+  // "Done talking" ends the turn now, always there while it's listening (words heard or not); thumb-sized on phones
+  const listening = v.phase === "listening" && !v.muted;
   const sendButton = (
     <button
       type="button"
       onClick={v.onSend}
-      disabled={!v.canSend}
-      title={compact ? "Send what I heard now (Enter)" : "Send what I heard now"}
-      className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full bg-brand px-4 text-[13.5px] font-medium text-white transition hover:bg-brand-hover active:scale-[0.97] disabled:opacity-35 md:min-h-9"
+      disabled={!listening}
+      title={compact ? "Done talking: send what I said now (Enter or Space)" : "Done talking: send what I said now"}
+      className="inline-flex min-h-11 min-w-11 shrink-0 items-center gap-1.5 rounded-full bg-brand px-4 text-[13.5px] font-medium text-white transition hover:bg-brand-hover active:scale-[0.97] disabled:opacity-35 md:min-h-9"
     >
-      Send
+      Done talking
       <SendIcon size={14} />
     </button>
   );
-  // Stuck: listening with nothing to send, or thinking for a while; the agent answers from what it has
-  const stuck = Boolean(v.onForce) && !v.muted && ((v.phase === "listening" && !v.canSend) || (v.phase === "thinking" && (v.stall === "slow" || v.stall === "long")));
+  // Stuck thinking for a while: the agent answers from what it has (while listening, Done talking does it)
+  const stuck = Boolean(v.onForce) && !v.muted && v.phase === "thinking" && (v.stall === "slow" || v.stall === "long");
   const forceButton = stuck ? (
     <button
       type="button"

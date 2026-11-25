@@ -70,6 +70,8 @@ export type TurnEffect =
   | { do: "detector_reset" }
   | { do: "detector_relearn" }
   | { do: "stall"; state: StallState }
+  /** "Done talking" was tapped and nothing at all was heard: say so instead of doing nothing */
+  | { do: "nothing_heard" }
   | { do: "watch"; on: boolean; retry?: boolean };
 
 /** A turn this long (characters) gets "Got it, thinking…" straight away */
@@ -142,9 +144,24 @@ export function isEcho(heard: string, agentSaid: readonly string[]): boolean {
  * the normal pause when it doesn't think anyone is talking, longer still when it thinks sound is still coming (a fan,
  * not a person, since no new words arrive).
  */
-export function wordsStalled(s: { heard: string; sinceWordsMs: number; speaking: boolean }, pauseMs = 1600): boolean {
+export function wordsStalled(s: { heard: string; sinceWordsMs: number; speaking: boolean }, pauseMs = 2000): boolean {
   if (!s.heard.trim()) return false;
   return s.sinceWordsMs >= (s.speaking ? pauseMs + 2000 : pauseMs + 500);
+}
+
+/** Words heard for this long without the turn ending (noise keeping the level up, words still trickling in): it ends at the next short pause */
+export const TURN_SOFT_CAP_MS = 30_000;
+/** And never longer than this, whatever the level says */
+export const TURN_HARD_CAP_MS = 60_000;
+
+/**
+ * The hard cap: a turn with words that never ended on its own (a TV or a room keeps the level up and the partial words
+ * changing, so neither the level nor the words safety net fires). Ends it at a one-second lull after 30 seconds, and
+ * at 60 seconds whatever happens. Logged as a stuck turn.
+ */
+export function turnCapped(s: { heard: string; sinceFirstWordsMs: number; sinceWordsMs: number }): boolean {
+  if (!s.heard.trim()) return false;
+  return s.sinceFirstWordsMs >= TURN_HARD_CAP_MS || (s.sinceFirstWordsMs >= TURN_SOFT_CAP_MS && s.sinceWordsMs >= 1000);
 }
 
 type Out = { state: TurnState; effects: TurnEffect[] };
@@ -212,7 +229,9 @@ export function stepTurns(s: TurnState, e: TurnInput): Out {
       return { state: startCommit(s, fx), effects: fx };
 
     case "send":
-      if (!canSend(s)) return { state: s, effects: fx };
+      // "Done talking": while listening it always ends the turn, words heard or not (the transcriber may still hold
+      // the last ones); with nothing at all it says so (nothing_heard, from "heard")
+      if (s.phase !== "listening" || s.muted) return { state: s, effects: fx };
       fx.push({ do: "detector_reset" });
       return { state: startCommit({ ...s, manual: true }, fx), effects: fx };
 
@@ -253,7 +272,11 @@ export function stepTurns(s: TurnState, e: TurnInput): Out {
     case "heard": {
       // Only the latest commit's words count
       if (e.commit !== s.commit) return { state: s, effects: fx };
-      const text = isEcho(e.text, s.agentSaid) ? "" : e.text;
+      // The transcriber's final words; when they come back empty (late, lost, or the wait ran out) the words already
+      // shown on screen are the turn, never silently dropped (the "stuck listening" bug, Nov 25 2026)
+      const final = isEcho(e.text, s.agentSaid) ? "" : e.text;
+      const shown = !final.trim() && s.heard.trim() && !isEcho(s.heard, s.agentSaid) ? s.heard : "";
+      const text = final.trim() ? final : shown;
       let next: TurnState = { ...s, commit: null };
       if (s.again) {
         next = { ...next, again: false, carry: join(s.carry, text), heard: "" };
@@ -265,7 +288,10 @@ export function stepTurns(s: TurnState, e: TurnInput): Out {
       const send = turnToSend({ resend: s.resend, carry: s.carry, heard: text });
       next = { ...next, carry: "", resend: "", heard: "" };
       if (s.heard) fx.push({ do: "partial", text: "" });
-      if (!send) return { state: toListening(next, fx), effects: fx };
+      if (!send) {
+        if (s.manual) fx.push({ do: "nothing_heard" });
+        return { state: toListening({ ...next, manual: false }, fx), effects: fx };
+      }
       if (send.shown) fx.push({ do: "line", text: send.shown });
       return { state: ask(next, send.said, null, fx), effects: fx };
     }

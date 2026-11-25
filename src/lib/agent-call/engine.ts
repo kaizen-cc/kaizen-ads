@@ -1,5 +1,5 @@
 import { downsample, createTurnDetector, createTurnWatchdog, rms, splitSpeakable, toPcm16, type CallCard, type CallEvent, type CallProgress, type LearnedItem, type StallState, type UploadAsk } from "./core";
-import { canSend, createTranscript, hasFloor, initialTurns, isCurrent, shouldCheckpoint, shownPhase, stepTurns, wordsStalled, type TurnEffect, type TurnInput, type TurnState, forcedTurn } from "./turns";
+import { canSend, createTranscript, hasFloor, initialTurns, isCurrent, shouldCheckpoint, shownPhase, stepTurns, wordsStalled, type TurnEffect, type TurnInput, type TurnState, forcedTurn, turnCapped } from "./turns";
 import type { CallContext } from "./call-context";
 import { initialAway, stepAway, type AwayEffect, type AwayEvent, type AwayState } from "./away";
 import { AUDIO_PART_SECONDS } from "@/lib/assistant/core";
@@ -13,6 +13,9 @@ import { renewSttToken } from "@/app/(team)/settings/call-actions";
 // there is); a pause ends your turn (or Send, or a typed turn); the agent's answer streams from Claude and is spoken
 // sentence by sentence as it arrives; talking over it stops it. Whose turn it is lives in a plain state machine
 // (turns.ts): this file only carries out what it says, so mute, Send and stale answers behave the same every time.
+
+/** A turn's last words are waited on at most this long (the transcriber's own wait is shorter); then the words shown go */
+const END_TURN_TIMEOUT_MS = 6000;
 
 export type Phase = "connecting" | "listening" | "thinking" | "speaking";
 /** A line of the call; `speaker` names the agent that said it when more than one is on the line */
@@ -345,6 +348,8 @@ export type Hooks = {
   onStall?: (s: StallState) => void;
   /** Whether Send has something to send */
   onCanSend?: (can: boolean) => void;
+  /** A short note for the person ("Didn't catch that"), shown for a few seconds */
+  onHint?: (text: string) => void;
   /** Who else is on the line (specialists joining or leaving) */
   onTeam?: (line: Speaker[]) => void;
   /** The job the call is working on, and its steps (null: none) */
@@ -432,6 +437,10 @@ export class Call {
   private wake: { release: () => Promise<void> } | null = null;
   /** When the words of this turn last changed (the words safety net) */
   private wordsAt = 0;
+  /** When this turn's first words came (for the hard cap) */
+  private firstWordsAt = 0;
+  /** What ended the turn being sent (logged with it: how often the safety nets catch a stuck turn) */
+  private endedBy: "pause" | "stall" | "cap" | "button" = "pause";
   /** The sentence before this one in the same answer, so the voice carries on smoothly from it */
   private lastSentence = "";
   /** Where the last turn's time went: the server's line, the first sentence's voice, and what the call itself saw */
@@ -560,7 +569,10 @@ export class Call {
       case "commit": {
         const ears = this.ears;
         if (!ears) return this.dispatch({ t: "heard", commit: fx.commit, text: "" });
-        void ears.endTurn().then((text) => this.dispatch({ t: "heard", commit: fx.commit, text }));
+        // Never waits forever: a transcriber that fails or never answers ends the turn with the words already shown
+        void Promise.race([ears.endTurn(), new Promise<string>((r) => setTimeout(() => r(""), END_TURN_TIMEOUT_MS))])
+          .catch(() => "")
+          .then((text) => this.dispatch({ t: "heard", commit: fx.commit, text }));
         return;
       }
       case "ask":
@@ -585,6 +597,8 @@ export class Call {
         return this.detector.relearn();
       case "stall":
         return this.hooks.onStall?.(fx.state);
+      case "nothing_heard":
+        return this.hooks.onHint?.("Didn't catch that. Try again, or type it.");
       case "watch":
         return fx.on ? this.watch.begin(fx.retry) : this.watch.stop();
     }
@@ -690,6 +704,7 @@ export class Call {
 
   private partial(t: string) {
     if (t !== this.st.heard) this.wordsAt = performance.now();
+    if (t.trim() && !this.st.heard.trim()) this.firstWordsAt = performance.now();
     this.dispatch({ t: "partial", text: t });
   }
 
@@ -713,6 +728,13 @@ export class Call {
       // The words safety net: the transcriber heard words, the level never said they stopped
       else if (this.st.phase === "listening" && wordsStalled({ heard: this.st.heard, sinceWordsMs: performance.now() - this.wordsAt, speaking: this.detector.speaking })) {
         this.detector.reset();
+        this.endedBy = "stall";
+        this.dispatch({ t: "turn_end" });
+      }
+      // The hard cap: words captured and the turn never ending on its own (noise around them)
+      else if (this.st.phase === "listening" && turnCapped({ heard: this.st.heard, sinceFirstWordsMs: performance.now() - this.firstWordsAt, sinceWordsMs: performance.now() - this.wordsAt })) {
+        this.detector.reset();
+        this.endedBy = "cap";
         this.dispatch({ t: "turn_end" });
       }
     }
@@ -749,7 +771,7 @@ export class Call {
     let buffer = "";
     const live = () => !turn.signal.aborted && isCurrent(this.st, turnNo);
     try {
-      const res = await fetch("/api/agent-call/turn", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ callId: this.callId, mode: "voice", text: said, path: `${window.location.pathname}${window.location.search}`.slice(0, 500), ...(this.context ? { context: this.context } : {}), ...(frame ? { frame } : {}) }), signal: turn.signal });
+      const res = await fetch("/api/agent-call/turn", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ callId: this.callId, mode: "voice", text: said, ended: this.takeEndedBy(), path: `${window.location.pathname}${window.location.search}`.slice(0, 500), ...(this.context ? { context: this.context } : {}), ...(frame ? { frame } : {}) }), signal: turn.signal });
       if (res.status === 410) return this.hooks.onError("The call has ended.");
       if (!res.ok || !res.body) throw new Error(String(res.status));
       const reader = res.body.getReader();
@@ -918,8 +940,16 @@ export class Call {
     go();
   }
 
-  /** Send what's been heard so far, now (the Send button, or Enter on a computer) */
+  /** What ended the turn just sent, then back to the usual (a pause) */
+  private takeEndedBy() {
+    const e = this.endedBy;
+    this.endedBy = "pause";
+    return e;
+  }
+
+  /** "Done talking": end the turn now and send what's been heard (the button, or Enter or Space on a computer) */
   sendNow() {
+    this.endedBy = "button";
     this.dispatch({ t: "send" });
   }
 

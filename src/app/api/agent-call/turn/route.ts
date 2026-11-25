@@ -71,7 +71,7 @@ export async function POST(request: Request) {
   const me = await timer.time("auth", requireStaff());
   if (!adminConfigured()) return Response.json({ error: "Not set up" }, { status: 503 });
   // With the turn: where they called from (a client, a report, a Kaizen AI thread) and, on a look, the screenshot
-  const body = (await request.json().catch(() => null)) as { callId?: unknown; text?: unknown; context?: unknown; frame?: unknown; path?: unknown; mode?: unknown } | null;
+  const body = (await request.json().catch(() => null)) as { callId?: unknown; text?: unknown; context?: unknown; frame?: unknown; path?: unknown; mode?: unknown; ended?: unknown } | null;
   const admin = createAdminClient();
   // The call, the person's own session (the tools read what they may see; taken here, while the request is still open)
   // and their last line, all at once
@@ -87,6 +87,16 @@ export async function POST(request: Request) {
     return new Response(`${JSON.stringify({ t: "done" })}\n`, { headers: { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store" } });
   }
 
+  // A spoken turn that a safety net had to end (the words stalled, or the hard cap) is a stuck turn: logged and counted
+  // on the call, so how often it happens can be seen (Settings › Calls & usage reads stuck_turns)
+  const ended = typeof body?.ended === "string" ? body.ended : null;
+  if (ended === "stall" || ended === "cap") {
+    console.warn(`[agent call] stuck turn ended by ${ended} call=${call.id} chars=${text.length}`);
+    void (async () => {
+      const { data } = await admin.from("ai_role_calls").select("stuck_turns").eq("id", call.id).maybeSingle();
+      await admin.from("ai_role_calls").update({ stuck_turns: Number(data?.stuck_turns ?? 0) + 1 }).eq("id", call.id);
+    })().catch(() => undefined);
+  }
   const context = parseCallContext(body?.context);
   const frame = typeof body?.frame === "string" ? body.frame.slice(0, 300) : null;
   // The screen they're on right now (a path inside the app), for feedback filed from the call

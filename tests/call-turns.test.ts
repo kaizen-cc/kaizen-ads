@@ -216,9 +216,9 @@ describe("talking while the answer is coming", () => {
 });
 
 describe("Send and Type instead", () => {
-  it("Send needs something heard, then commits now", () => {
+  it("Done talking (Send) commits now while listening, words on screen or not (Nov 25: the transcriber may still hold them)", () => {
     expect(canSend(listening())).toBe(false);
-    expect(run(listening(), { t: "send" }).fx).toEqual([]);
+    expect(commits(run(listening(), { t: "send" }).fx)).toEqual([1]);
     const { s, fx } = run(listening(), { t: "partial", text: "send this" }, { t: "send" });
     expect(commits(fx)).toEqual([1]);
     expect(s.phase).toBe("committing");
@@ -337,9 +337,11 @@ describe("what a turn sends", () => {
   it("the words safety net ends a turn the level detector missed", () => {
     expect(wordsStalled({ heard: "", sinceWordsMs: 99_000, speaking: false })).toBe(false);
     expect(wordsStalled({ heard: "hello", sinceWordsMs: 1000, speaking: false })).toBe(false);
-    expect(wordsStalled({ heard: "hello", sinceWordsMs: 2200, speaking: false })).toBe(true);
-    expect(wordsStalled({ heard: "hello", sinceWordsMs: 2200, speaking: true })).toBe(false);
-    expect(wordsStalled({ heard: "hello", sinceWordsMs: 3700, speaking: true })).toBe(true);
+    // About 2.5 seconds without new words once there are words (Nov 25), longer while the level says they're talking
+    expect(wordsStalled({ heard: "hello", sinceWordsMs: 2200, speaking: false })).toBe(false);
+    expect(wordsStalled({ heard: "hello", sinceWordsMs: 2500, speaking: false })).toBe(true);
+    expect(wordsStalled({ heard: "hello", sinceWordsMs: 3700, speaking: true })).toBe(false);
+    expect(wordsStalled({ heard: "hello", sinceWordsMs: 4000, speaking: true })).toBe(true);
   });
 });
 
