@@ -41,7 +41,14 @@ export function demojibake(t: string): string {
     .replace(/â€¢/g, "•")
     .replace(/Â([\u00a0-\u00bf])/g, "$1");
 }
-const s = (v: unknown, n = 1200) => demojibake(String(v ?? "")).replace(/\s+/g, " ").trim().slice(0, n);
+/** Text kept to a length, never cut mid-sentence: over the limit, it ends at the last full sentence (or word, with "…") */
+export function fit(t: string, n: number): string {
+  if (t.length <= n) return t;
+  const cut = t.slice(0, n);
+  const end = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("! "), cut.lastIndexOf("? "), cut.endsWith(".") ? n - 1 : -1);
+  return end >= n * 0.5 ? cut.slice(0, end + 1) : `${cut.replace(/\s+\S*$/, "").replace(/[,;:\s]+$/, "")}…`;
+}
+const s = (v: unknown, n = 1200) => fit(demojibake(String(v ?? "")).replace(/\s+/g, " ").trim(), n);
 const list = (v: unknown, n = 10, len = 600) => (Array.isArray(v) ? v.map((x) => s(x, len)).filter(Boolean).slice(0, n) : []);
 const table = (v: unknown, maxRows = 10): Table => {
   const t = (v ?? {}) as Record<string, unknown>;
@@ -79,15 +86,15 @@ export function cleanGtm(raw: unknown): GtmContent {
   const creative = (ch.creative ?? {}) as Record<string, unknown>;
   return {
     cover: { short: s(c.short, 30), eyebrow: s(c.eyebrow, 80) || "Go-to-market strategy · Paid media overview", headline: s(c.headline, 120), highlight: s(c.highlight, 80), subtitle: s(c.subtitle, 160), location: s(c.location, 120), site: s(c.site, 120), date: s(c.date, 40) },
-    exec: { lede: s(e.lede, 700), stats: stats(e.stats), opportunity: s(e.opportunity, 900), recommend: leads(e.recommend, 5), why_now: s(e.why_now, 700) },
-    who: { title: s(w.title, 90), lede: s(w.lede, 400), table: table(w.table, 8), sources: s(w.sources, 400) },
-    footprint: { title: s(f.title, 90), lede: s(f.lede, 400), table: table(f.table, 10), bottom_line: s(f.bottom_line, 600) },
-    market: { title: s(m.title, 110), lede: s(m.lede, 400), stats: stats(m.stats), avatar: s(m.avatar, 900), tam: s(m.tam, 600), implications: leads(m.implications, 4), competitors: table(m.competitors, 6), trends: table(m.trends, 8), sources: s(m.sources, 600) },
-    positioning: { title: s(p.title, 90), lede: s(p.lede, 400), services: table(p.services, 6), core: s(p.core, 600), offer: { name: s(offer.name, 80), text: s(offer.text, 500), why: s(offer.why, 300) }, pillars: leads(p.pillars, 5) },
-    channels: { title: s(ch.title, 90), lede: s(ch.lede, 400), google: table(ch.google, 6), google_note: s(ch.google_note, 400), meta: table(ch.meta, 5), creative: { title: s(creative.title, 80) || "Creative package", text: s(creative.text, 700) } },
-    investment: { title: s(i.title, 90), lede: s(i.lede, 400), tiers: table(i.tiers, 9), assumptions: s(i.assumptions, 700), benchmarks: table(i.benchmarks, 6), benchmarks_note: s(i.benchmarks_note, 500), math: s(i.math, 600) },
+    exec: { lede: s(e.lede, 1400), stats: stats(e.stats), opportunity: s(e.opportunity, 1800), recommend: leads(e.recommend, 5), why_now: s(e.why_now, 700) },
+    who: { title: s(w.title, 90), lede: s(w.lede, 800), table: table(w.table, 8), sources: s(w.sources, 800) },
+    footprint: { title: s(f.title, 90), lede: s(f.lede, 800), table: table(f.table, 10), bottom_line: s(f.bottom_line, 600) },
+    market: { title: s(m.title, 110), lede: s(m.lede, 800), stats: stats(m.stats), avatar: s(m.avatar, 1800), tam: s(m.tam, 1200), implications: leads(m.implications, 4), competitors: table(m.competitors, 6), trends: table(m.trends, 8), sources: s(m.sources, 1200) },
+    positioning: { title: s(p.title, 90), lede: s(p.lede, 800), services: table(p.services, 6), core: s(p.core, 1200), offer: { name: s(offer.name, 80), text: s(offer.text, 1000), why: s(offer.why, 600) }, pillars: leads(p.pillars, 5) },
+    channels: { title: s(ch.title, 90), lede: s(ch.lede, 800), google: table(ch.google, 6), google_note: s(ch.google_note, 400), meta: table(ch.meta, 5), creative: { title: s(creative.title, 80) || "Creative package", text: s(creative.text, 1400) } },
+    investment: { title: s(i.title, 90), lede: s(i.lede, 800), tiers: table(i.tiers, 9), assumptions: s(i.assumptions, 1400), benchmarks: table(i.benchmarks, 6), benchmarks_note: s(i.benchmarks_note, 500), math: s(i.math, 1200) },
     plan: { title: s(pl.title, 90), ninety: table(pl.ninety, 4), calendar: table(pl.calendar, 8) },
-    measure: { title: s(me.title, 90), table: table(me.table, 4), note: s(me.note, 300), needs: list(me.needs, 8, 200), next: leads(me.next, 5), one_line: s(me.one_line, 400) },
+    measure: { title: s(me.title, 90), table: table(me.table, 4), note: s(me.note, 600), needs: list(me.needs, 8, 200), next: leads(me.next, 5), one_line: s(me.one_line, 400) },
     sources: list((raw as { sources?: unknown } | null)?.sources, 30, 300),
   };
 }
@@ -99,7 +106,7 @@ const claims = (v: unknown, n = 12): Claim[] =>
     .map((x) => {
       const o = (x ?? {}) as Record<string, unknown>;
       const tag = String(o.tag ?? "").toLowerCase();
-      return { text: s(o.text, 700), tag: tag.startsWith("cert") ? TAGS.certain : tag.startsWith("lik") ? TAGS.likely : TAGS.guessing };
+      return { text: s(o.text, 1200), tag: tag.startsWith("cert") ? TAGS.certain : tag.startsWith("lik") ? TAGS.likely : TAGS.guessing };
     })
     .filter((x) => x.text);
 

@@ -84,3 +84,12 @@ describe("GTM text: encoding", () => {
     expect(demojibake("Days 1–14 · Foundation")).toBe("Days 1–14 · Foundation");
   });
 });
+
+describe("GTM text: lengths", () => {
+  it("never cuts a field mid-sentence", async () => {
+    const { fit } = await import("@/lib/sales-gtm-core");
+    expect(fit("Short.", 100)).toBe("Short.");
+    expect(fit("First sentence is here. Second sentence runs on and on past the limit", 40)).toBe("First sentence is here.");
+    expect(fit("one long run of words without any stop at all here", 30)).toBe("one long run of words without…");
+  });
+});
