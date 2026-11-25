@@ -305,7 +305,7 @@ const REVISE_SCHEMA = obj({ reply: S, message: S, sections: SECTIONS, lesson: S 
 const PERIOD_RULE = `The report's dates are set by the app, never by you: don't write numbers for other dates into the report as if they were its period. Numbers you look up for other dates are only for comparisons, and always say their dates.`;
 
 /** The owner asks for a change; the report is rewritten, the QA runs again, and a lasting preference is remembered */
-export async function reviseChannelReport(admin: SupabaseClient, reportId: string, ask: string, by: string, opts: { /** Screenshots pasted with the ask */ images?: import("@/lib/chat-images").ChatImage[]; echo?: boolean; byId?: string | null; /** An export the owner attached in the chat: read with the ask, kept as data pulled */ file?: { name: string; text: string } } = {}) {
+export async function reviseChannelReport(admin: SupabaseClient, reportId: string, ask: string, by: string, opts: { /** Screenshots pasted with the ask */ images?: import("@/lib/chat-images").ChatImage[]; echo?: boolean; byId?: string | null; /** Only bringing the figures the text quotes up to date after the numbers moved (no one asked): a mechanical edit, on Sonnet at low effort */ numbersOnly?: boolean;  /** An export the owner attached in the chat: read with the ask, kept as data pulled */ file?: { name: string; text: string } } = {}) {
   const c = await context(admin, reportId);
   const m = c.r.metrics;
   if (!m) throw new Error("It hasn't been written yet.");
@@ -321,6 +321,7 @@ export async function reviseChannelReport(admin: SupabaseClient, reportId: strin
     agent: "reporter",
     label: "revise channel report",
     clientId: c.r.client_id,
+    ...(opts.numbersOnly ? { override: { model: "sonnet" as const, effort: "low" as const } } : {}),
     system: `${forSource(writerSystem(c.r.kind, c.r.platform, c.whiteLabel), c.r.metrics)}\n\n${REVISE_SYSTEM}\n${OUTPUTS_RULE}\n${PERIOD_RULE}\n\n${channelToolsLine(c.r.platform)}`,
     schema: c.r.platform === "social" ? SOCIAL_REVISE_SCHEMA : engagementTemplate(c.r.metrics) ? ENGAGEMENT_REVISE_SCHEMA : REVISE_SCHEMA,
     tools,

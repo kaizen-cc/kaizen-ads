@@ -70,7 +70,7 @@ export async function updateChannelText(admin: SupabaseClient, id: string, by: {
   const note = row?.metrics?.refreshNote;
   if (!row || !note || !refreshable(row)) return note ?? null;
   try {
-    await reviseChannelReport(admin, id, numbersAsk(note), by.name, { echo: false, byId: by.id });
+    await reviseChannelReport(admin, id, numbersAsk(note), by.name, { echo: false, byId: by.id, numbersOnly: true });
   } catch {
     return setTextState(admin, id, "needs_look");
   }

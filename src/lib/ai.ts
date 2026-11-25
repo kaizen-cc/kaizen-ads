@@ -323,10 +323,17 @@ export async function askJson<T>({
   systemOverride,
   noSample = false,
   clientId = null,
+  context,
 }: {
   agent: AgentKey;
   /** The client the call is about: their own team learnings come with it */
   clientId?: string | null;
+  /**
+   * A long read shared by several calls (an account's whole audit context): sent first in the message and cached, so
+   * the next call that starts with the same context within five minutes reads it at a twentieth of the price. The
+   * task's own words go in prompt, after it.
+   */
+  context?: string;
   label: string; // for the timing log
   system: string;
   prompt: string;
@@ -353,8 +360,13 @@ export async function askJson<T>({
   const base = await getAgent(agent);
   const cfg = { ...base, model: override?.model ?? base.model, effort: override?.effort ?? base.effort };
   if (cfg.model === "opus" && cfg.effort === "high") cfg.effort = "medium";
-  if (!bare) prompt = await withKnowledge(agent, label, prompt, clientId);
+  // Knowledge and learnings are matched on the whole read (context and task) and added after the task
+  if (!bare) {
+    const whole = context ? `${context}\n\n${prompt}` : prompt;
+    prompt = `${prompt}${(await withKnowledge(agent, label, whole, clientId)).slice(whole.length)}`;
+  }
   prompt = wellFormed(prompt);
+  const shared = context ? [{ type: "text" as const, text: wellFormed(context), cache_control: { type: "ephemeral" as const } }] : [];
   system = wellFormed(system);
   const started = Date.now();
   const request = {
@@ -365,10 +377,11 @@ export async function askJson<T>({
     messages: [
       {
         role: "user" as const,
-        content: images.length || pdfs.length
+        content: images.length || pdfs.length || shared.length
           ? [
               ...pdfs.map((d) => ({ type: "document" as const, source: { type: "base64" as const, media_type: "application/pdf" as const, data: d.data }, ...(d.title ? { title: d.title } : {}) })),
               ...images.map((im) => ({ type: "image" as const, source: { type: "base64" as const, media_type: im.mediaType, data: im.data } })),
+              ...shared,
               { type: "text" as const, text: prompt },
             ]
           : prompt,
@@ -421,7 +434,7 @@ export async function askJson<T>({
     // Kept as a sample (the last 30 per place in the app), so a change to this agent can be replayed and judged first
     if (!bare && !systemOverride && !noSample && adminConfigured())
       void import("@/lib/agent-evals")
-        .then(({ captureSample }) => captureSample({ agent, label, system, prompt, schema, output: text.text!, model: cfg.model, effort: cfg.effort, hadMedia: images.length + pdfs.length > 0 }))
+        .then(({ captureSample }) => captureSample({ agent, label, system, prompt: context ? `${context}\n\n${prompt}` : prompt, schema, output: text.text!, model: cfg.model, effort: cfg.effort, hadMedia: images.length + pdfs.length > 0 }))
         .catch(() => undefined);
     return parsed;
   } catch (e) {
@@ -454,6 +467,7 @@ export async function askJsonWithTools<T>({
   maxRounds = 6,
   onTool,
   clientId = null,
+  override,
   images = [],
   pdfs = [],
 }: {
@@ -472,11 +486,15 @@ export async function askJsonWithTools<T>({
   maxRounds?: number;
   /** Told about each lookup as it happens (name and input), for "Pulled from Meta…" notes */
   onTool?: (name: string, input: Record<string, unknown>, ok: boolean) => void;
+  /** This one call's model and effort instead of the agent's (a mechanical edit, e.g. a report's figures brought up to date) */
+  override?: { model?: ModelKey; effort?: Effort };
 }): Promise<T> {
-  if (!tools.length) return askJson<T>({ agent, label, system, prompt, schema, maxTokens, clientId, images, pdfs });
+  if (!tools.length) return askJson<T>({ agent, label, system, prompt, schema, maxTokens, clientId, images, pdfs, override });
   if (!aiEnabled()) throw new AiUnavailable("AI isn't connected yet.");
   await assertOnline(agent);
-  const cfg = await getAgent(agent);
+  const base = await getAgent(agent);
+  const cfg = { ...base, model: override?.model ?? base.model, effort: override?.effort ?? base.effort };
+  if (cfg.model === "opus" && cfg.effort === "high") cfg.effort = "medium";
   prompt = await withKnowledge(agent, label, prompt, clientId);
   const started = Date.now();
   const run = { agent_key: agent, label, model: cfg.model, effort: cfg.effort };

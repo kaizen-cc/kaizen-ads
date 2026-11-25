@@ -295,6 +295,8 @@ async function countUnits(admin: SupabaseClient, max = 60) {
     const out = await askJson<{ tasks: { id: string; newImages: number; newVideos: number; concepts: number; note: string }[] }>({
       agent: "strategist",
       label: "asana allotment count",
+      // Counting what a task made by the allotment rules: Sonnet at low effort (it ran on the strategist's Opus)
+      override: { model: "sonnet", effort: "low" },
       system: UNITS_SYSTEM,
       schema: UNITS_SCHEMA,
       maxTokens: 4000,

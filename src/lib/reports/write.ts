@@ -398,7 +398,7 @@ function datesBlock(r: { period_start: string; period_end: string; kind: string 
 const PERIOD_RULE = `The report's dates are set by the app, never by you: don't write numbers for other dates into the report as if they were its period. If the buyer wants the whole report for other dates, tell them to pick them in the period menu at the top (or ask "change the dates to Nov 2 to 8"), which redraws every page with fresh numbers. Numbers you look up for other dates are only for comparisons, and always say their dates.`;
 
 /** The buyer asks for a change; the report is rewritten, the QA runs again, and a lasting preference is remembered. */
-export async function reviseReport(admin: SupabaseClient, reportId: string, ask: string, by: string, opts: { /** Screenshots pasted with the ask */ images?: import("@/lib/chat-images").ChatImage[]; echo?: boolean; /** Who is asking (their profile id), recorded on numbers they give in the chat */ byId?: string | null } = {}) {
+export async function reviseReport(admin: SupabaseClient, reportId: string, ask: string, by: string, opts: { /** Screenshots pasted with the ask */ images?: import("@/lib/chat-images").ChatImage[]; echo?: boolean; /** Who is asking (their profile id), recorded on numbers they give in the chat */ byId?: string | null; /** Only bringing the figures the text quotes up to date after the numbers moved (no one asked): a mechanical edit, on Sonnet at low effort */ numbersOnly?: boolean; } = {}) {
   const c = await context(admin, reportId);
   const metrics = c.r.metrics as ReportMetrics;
   const work = ((c.r as unknown as { work?: { text?: string } }).work?.text) ?? "";
@@ -409,6 +409,7 @@ export async function reviseReport(admin: SupabaseClient, reportId: string, ask:
   const out = await askJsonWithTools<{ reply: string; message: string; sections: Sections; lesson: string }>({
     agent: agentFor(c.r.platform),
     label: "revise report",
+    ...(opts.numbersOnly ? { override: { model: "sonnet" as const, effort: "low" as const } } : {}),
     clientId: c.r.client_id,
     system: `${writerSystem(c.r.kind as Kind, c.r.platform, c.whiteLabel)}\n\n${REVISE_SYSTEM}\n${OUTPUTS_RULE}\n${PERIOD_RULE}\n\n${toolsLine(tools)}`,
     schema: REVISE_SCHEMA,

@@ -79,7 +79,7 @@ export async function updateText(admin: SupabaseClient, id: string, by: { id: st
   const note = row?.metrics?.refreshNote;
   if (!row || !note || !refreshable(row)) return note ?? null;
   try {
-    await reviseReport(admin, id, numbersAsk(note), by.name, { echo: false, byId: by.id });
+    await reviseReport(admin, id, numbersAsk(note), by.name, { echo: false, byId: by.id, numbersOnly: true });
   } catch {
     return setTextState(admin, id, "needs_look");
   }

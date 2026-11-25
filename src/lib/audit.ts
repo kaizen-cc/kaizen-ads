@@ -719,11 +719,9 @@ Today is ${new Date().toISOString().slice(0, 10)}.`;
     const auditAgent: AgentKey = x.agent ?? (x.platform === "google" ? "google_auditor" : "auditor");
     await m.start("found");
     let last = 0;
-    const found = await askJson<Pick<AuditResult, "verdict" | "diagnosis" | "causes" | "tracking"> & { learnings: { kind: "avoid" | "prefer" | "note"; body: string; resurfaced: boolean }[]; creativeRead?: CreativeAnalysis["read"] }>({
-      agent: auditAgent,
-      label: `audit ${client.name} · findings`,
-      clientId: a.client_id,
-      system:
+    // Both steps (findings, then the plan) start with the same account context, sent first and cached, so the plan
+    // reads it from the cache; each step's own instructions follow it
+    const foundSystem =
         x.platform === "tiktok"
           ? `${swapTikTok(FOUND_SYSTEM)}
 
@@ -734,7 +732,13 @@ ${SETUP_RULE}`
 ${SETUP_RULE}`
             : `${FOUND_SYSTEM}\n${CREATIVE_READ_RULES}
 
-${SETUP_RULE}`,
+${SETUP_RULE}`;
+    const found = await askJson<Pick<AuditResult, "verdict" | "diagnosis" | "causes" | "tracking"> & { learnings: { kind: "avoid" | "prefer" | "note"; body: string; resurfaced: boolean }[]; creativeRead?: CreativeAnalysis["read"] }>({
+      agent: auditAgent,
+      label: `audit ${client.name} · findings`,
+      clientId: a.client_id,
+      system: "",
+      context,
       schema: x.platform === "tiktok" || (x.platform === "google" && !x.googleCreative) ? FOUND_SCHEMA : FOUND_SCHEMA_META,
       maxTokens: 32000,
       onText: (so) => {
@@ -742,7 +746,7 @@ ${SETUP_RULE}`,
         last = Date.now();
         void m.inside(so.length / 6000);
       },
-      prompt: `${context}\n\nAudit ${client.name}'s account: here's what you found.`,
+      prompt: `<instructions>\n${foundSystem}\n</instructions>\n\nAudit ${client.name}'s account: here's what you found.`,
     });
     await m.finish("found", found.verdict.headline);
     // The learning loop: what this audit taught us goes into client memory, which every agent reads from now on
@@ -770,13 +774,15 @@ ${SETUP_RULE}`,
     await m.start("plan");
     last = 0;
     type Plan = Omit<AuditResult, "verdict" | "diagnosis" | "causes" | "tracking" | "actions"> & { actions: (Omit<AuditResult["actions"][number], "objects"> & { objects?: ObjectRef[] })[] };
+    const planSystem = `${x.platform === "tiktok" ? `${swapTikTok(PLAN_SYSTEM)}\n\n${TIKTOK_PLAN_NOTE}` : x.platform === "google" ? `${swapBase(PLAN_SYSTEM)}\nOn Google the creative is the copy: each creative item is new copy to write next, from the creative analysis (more of what the top headlines say, a replacement for what Google rates Low, a converting search theme no headline answers yet) and what's proven on Meta for this client. concept: the message; angle; hook: the lead headline as written (30 characters or less); format: RSA headlines and descriptions, a Performance Max asset group, or sitelinks and callouts; why with the evidence.` : PLAN_SYSTEM}
+
+${SETUP_RULE}`;
     const raw = await askJson<Plan>({
       agent: auditAgent,
       label: `audit ${client.name} · plan`,
       clientId: a.client_id,
-      system: `${x.platform === "tiktok" ? `${swapTikTok(PLAN_SYSTEM)}\n\n${TIKTOK_PLAN_NOTE}` : x.platform === "google" ? `${swapBase(PLAN_SYSTEM)}\nOn Google the creative is the copy: each creative item is new copy to write next, from the creative analysis (more of what the top headlines say, a replacement for what Google rates Low, a converting search theme no headline answers yet) and what's proven on Meta for this client. concept: the message; angle; hook: the lead headline as written (30 characters or less); format: RSA headlines and descriptions, a Performance Max asset group, or sitelinks and callouts; why with the evidence.` : PLAN_SYSTEM}
-
-${SETUP_RULE}`,
+      system: "",
+      context,
       schema: PLAN_SCHEMA,
       maxTokens: 32000,
       onText: (so) => {
@@ -784,7 +790,9 @@ ${SETUP_RULE}`,
         last = Date.now();
         void m.inside(so.length / 9000);
       },
-      prompt: `${context}
+      prompt: `<instructions>
+${planSystem}
+</instructions>
 
 <what_you_found>
 ${JSON.stringify(found)}
