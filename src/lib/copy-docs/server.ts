@@ -72,6 +72,14 @@ export async function latestCopyDoc(db: SupabaseClient, p: { line: string; clien
   return data ? rowToDoc(data as unknown as Record<string, unknown>) : null;
 }
 
+/** Every copy doc of a line not yet requested, newest first (the client's, else the person's own): "push all three" */
+export async function openCopyDocs(db: SupabaseClient, p: { line: string; clientId?: string | null; createdBy: string; limit?: number }): Promise<CopyDoc[]> {
+  let q = db.from("copy_docs").select(COLS).in("kind", docKindsFor(p.line)).neq("status", "requested");
+  q = p.clientId ? q.eq("client_id", p.clientId) : q.eq("created_by", p.createdBy);
+  const { data } = await q.order("updated_at", { ascending: false }).limit(p.limit ?? 10);
+  return ((data ?? []) as unknown as Record<string, unknown>[]).map(rowToDoc);
+}
+
 /** The card a call or chat shows for it */
 export function copyCard(d: CopyDoc): CallCopyDoc {
   return {

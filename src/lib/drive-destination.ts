@@ -47,6 +47,38 @@ async function folderById(token: string, id: string): Promise<Item | null> {
   return d ? { id: d.id, name: d.name, driveId: d.id, mimeType: FOLDER, webViewLink: folderLink(d.id) } : null;
 }
 
+/** A folder seen as the person: its name, link, whole path and the ids above it (nearest first), or null */
+export async function folderWhere(email: string, id: string): Promise<{ id: string; name: string; link: string; path: string[]; ancestors: string[] } | null> {
+  const token = await driveTokenAs(email);
+  const f = await folderById(token, id);
+  if (!f) return null;
+  const ancestors: string[] = [];
+  let cur: Item | null = f;
+  for (let i = 0; i < 12 && cur?.parents?.length; i++) {
+    ancestors.push(cur.parents[0]);
+    cur = await folderById(token, cur.parents[0]);
+  }
+  return { id: f.id, name: f.name, link: f.webViewLink ?? folderLink(f.id), path: await fullPath(token, f), ancestors };
+}
+
+/** Moves a file or folder (as the person) from its parents into another folder */
+export async function moveInto(email: string, fileId: string, folderId: string): Promise<void> {
+  const token = await driveTokenAs(email);
+  const f = await get<{ parents?: string[] }>(token, `files/${fileId}`, { supportsAllDrives: "true", fields: "parents" });
+  const params = new URLSearchParams({ supportsAllDrives: "true", addParents: folderId, fields: "id" });
+  const old = (f.parents ?? []).filter((p) => p !== folderId);
+  if (old.length) params.set("removeParents", old.join(","));
+  const res = await fetch(`${DRIVE}/files/${fileId}?${params}`, { method: "PATCH", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: "{}", cache: "no-store" });
+  if (!res.ok) throw new Error(`Drive wouldn't move it (${res.status}).`);
+}
+
+/** The files and folders directly inside a folder */
+export async function childrenOf(email: string, folderId: string): Promise<{ id: string; name: string; mimeType: string }[]> {
+  const token = await driveTokenAs(email);
+  const r = await get<{ files?: { id: string; name: string; mimeType: string }[] }>(token, "files", { ...ALL, q: `'${folderId.replace(/'/g, "")}' in parents and trashed = false`, fields: "files(id, name, mimeType)", pageSize: "200" });
+  return r.files ?? [];
+}
+
 /** The folder's whole path, from its drive's root ("Shared drives › Kaizen HQ › …" or "My Drive › …") */
 async function fullPath(token: string, f: Item): Promise<string[]> {
   if (f.driveId && f.id === f.driveId) return ["Shared drives", f.name];

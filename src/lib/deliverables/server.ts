@@ -254,7 +254,7 @@ async function createRequestsAs(admin: Admin, db: SupabaseClient, me: Me, run: R
   if (!column.ok) return { ok: false, error: column.error };
   const section = column.section;
   const links = cfg.line === "social" ? await socialLinks(admin, d.clientId, facts) : [];
-  const isDay = (x: unknown): x is string => typeof x === "string" && /^d{4}-d{2}-d{2}$/.test(x);
+  const isDay = (x: unknown): x is string => typeof x === "string" && /^\d{4}-\d{2}-\d{2}$/.test(x);
   const items = c.emails.map((e, i) => ({
     extra: cfg.asana.description ? { concept: state.topics[i] ? `${state.topics[i].angle || state.topics[i].title}` : c.brief.goal || e.name, postDate: [state.topics[i]?.send, c.emails.length === 1 ? c.brief.sendDate : null].find(isDay) ?? null, slides: slidesOfPost(e), links } : undefined,
     shortName: c.emails.length > 1 ? (state.topics[i]?.title || e.name) : c.shortName, docUrl: approvedDoc.docUrl, purpose: purposeText({ ...c, title: state.topics[i]?.title || c.title, brief: { ...c.brief, goal: state.topics[i] ? `${state.topics[i].title}: ${state.topics[i].angle}` : c.brief.goal } }) }));

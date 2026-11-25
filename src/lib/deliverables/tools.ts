@@ -225,6 +225,38 @@ export function deliverableTools(ctx: DeliverableCtx): LoopTool[] {
       },
     },
     {
+      name: "check_email_folders",
+      description: "Checks where a client's approved email copy sits in Google Drive: it belongs in Clients › \"<ID> - <Client>\" › \"<Client> - Headquarters\" › Email Marketing. Lists every folder their copy Docs are in with its full path and any outside the Headquarters (an older run made an Email Marketing folder elsewhere). To fix, list it first, then on their yes run again with fix: true and confirmed: true: the misplaced Docs move into the right Email Marketing folder (or the folder moves under the Headquarters when it has none). Nothing else is moved or deleted.",
+      input_schema: { type: "object", properties: { client: { type: "string" }, hq_folder: HQ_FOLDER, fix: { type: "boolean" }, confirmed: CONFIRMED }, required: ["client"], additionalProperties: false },
+      status: () => "Checking their Drive folders…",
+      run: async (input) => {
+        let clientId: string;
+        try {
+          clientId = (await clientNamed(ctx.db, String(input.client ?? ""))).id;
+        } catch (e) {
+          return { done: false, note: `${e instanceof Error ? e.message : "No such client."} Ask which client.` };
+        }
+        const hq = typeof input.hq_folder === "string" ? input.hq_folder : null;
+        const { checkEmailTree, fixEmailTree } = await import("@/lib/copy-docs/tree-check");
+        if (input.fix === true) {
+          if (input.confirmed !== true || !saidYes(ctx.said())) return { done: false, note: NO_YES };
+          const r = await fixEmailTree(ctx.admin, asMe(ctx.me), clientId, hq);
+          return r.ok ? { done: true, moved: r.moved, note: "Say what moved in a line; an emptied folder is left for them to delete." } : { done: false, error: r.error };
+        }
+        const r = await checkEmailTree(ctx.admin, asMe(ctx.me), clientId, hq);
+        if (!r.ok) return { done: false, error: r.error, ...(r.askForLink ? { note: ASK_HQ } : {}) };
+        return {
+          headquarters: { path: r.plan.hq.path.join(" › "), link: r.plan.hq.link },
+          email_marketing: r.plan.email ? { path: r.plan.email.path.join(" › "), link: r.plan.email.link } : null,
+          docs_in_the_right_place: r.plan.right,
+          misplaced: r.plan.misplaced.map((m) => ({ path: m.folder.path.join(" › "), link: m.folder.link, docs: m.docs, fix: m.action === "move_docs" ? "move its Docs into the Headquarters' Email Marketing" : "move the folder under the Headquarters" })),
+          ...(r.plan.unreadable.length ? { unreadable_folders: r.plan.unreadable.length } : {}),
+          say: r.lines.join(" "),
+          note: r.plan.misplaced.length ? "Read the list back and ask; on their yes run again with fix: true and confirmed: true." : "Everything is in the right place.",
+        };
+      },
+    },
+    {
       name: "add_copy_to_google_doc",
       description: "Types a copy document's emails straight into a Google Doc the team already keeps (the client's \"November campaigns\" copy doc), at the end, in the same layout as the emails already there (heading in the naming convention, Subject Line, Preview Text, Headline, Sub-headline, Hero CTA, blocks, Design Notes), numbered on from the last \"Email #n\" in it. Use it whenever they want the copy in their own doc instead of pasting it: never say you can't write into a Google Doc. doc is its link (find it with search_my_drive when they don't give one). Say which doc and that it adds N emails at the end, ask; confirmed: true only on their yes. If it can't, say the reason it gives in a sentence.",
       input_schema: {
@@ -270,6 +302,10 @@ export function deliverableTools(ctx: DeliverableCtx): LoopTool[] {
             let d = typeof input.copy_doc_id === "string" ? await loadCopyDoc(ctx.db, clip(input.copy_doc_id, 40)) : null;
             if (!d) {
               let clientId: string | null = null;
+              const pick = async () => {
+                const { openCopyDocs } = await import("@/lib/copy-docs/server");
+                return openCopyDocs(ctx.db, { line: cfg.line, clientId, createdBy: ctx.me.id });
+              };
               if (typeof input.client === "string" && input.client.trim()) {
                 try {
                   clientId = (await clientNamed(ctx.db, input.client)).id;
@@ -277,7 +313,15 @@ export function deliverableTools(ctx: DeliverableCtx): LoopTool[] {
                   return { created: false, note: `${e instanceof Error ? e.message : "No such client."} Ask which client.` };
                 }
               }
-              d = await latestCopyDoc(ctx.db, { line: cfg.line, clientId, createdBy: ctx.me.id });
+              // Several not requested yet ("push the three OceanBox docs"): never a guess, each one by its id
+              const open = await pick();
+              if (open.length > 1)
+                return {
+                  created: false,
+                  copy_docs_not_requested: open.map((x) => ({ copy_doc_id: x.id, title: x.content.title, client: x.client, status: x.status, emails: x.content.emails.length, updated: x.updatedAt })),
+                  note: "Several copy docs aren't requested yet. If they asked for all of them (or named these), run this once per copy_doc_id (their yes covers all of them); otherwise ask which in a line.",
+                };
+              d = open[0] ?? (await latestCopyDoc(ctx.db, { line: cfg.line, clientId, createdBy: ctx.me.id }));
             }
             if (!d || !d.clientId || !ctx.callId) return { created: false, note: "No copy found for that client that isn't already requested. Which copy? Make it first (create_copy_doc)." };
             run = await startRun(ctx.admin, asMe(ctx.me), ctx.callId, cfg, { id: d.clientId, name: d.client ?? "" }, "");

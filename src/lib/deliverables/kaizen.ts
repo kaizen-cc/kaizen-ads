@@ -7,7 +7,7 @@ import { chatCardOf } from "./kaizen-core";
 // approve_copy_doc, and per line the request and its fixes), run on the thread. The thread is the flow's "call".
 // Cards they show land on the message.
 
-export const DELIVERABLE_TOOL_NAMES = ["deliverable", "create_copy_doc", "approve_copy_doc", "add_copy_to_google_doc", "create_email_request", "update_email_request", "create_creative_request", "update_creative_request", "create_social_request", "update_social_request"];
+export const DELIVERABLE_TOOL_NAMES = ["deliverable", "create_copy_doc", "approve_copy_doc", "add_copy_to_google_doc", "check_email_folders", "create_email_request", "update_email_request", "create_creative_request", "update_creative_request", "create_social_request", "update_social_request"];
 
 export async function deliverableChatTools(ctx: ToolCtx): Promise<ChatTool[]> {
   if (!ctx.threadId) return [];
