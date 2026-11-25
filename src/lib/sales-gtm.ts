@@ -125,10 +125,14 @@ export async function prospectKeywordData(admin: Admin, p: { website: string | n
     const { data: acct } = await admin.from("kpi_targets").select("ad_account_id").eq("platform", "google").eq("active", true).not("ad_account_id", "is", null).limit(1).maybeSingle();
     const planner = acct?.ad_account_id ? String(acct.ad_account_id).replace(/\D/g, "") : null;
     if (!planner) return null;
-    const geoHit = p.location ? (await ga.suggestGeo([p.location]).catch(() => []))[0] ?? null : null;
-    const seeds = [p.industry, ...brief.sells.split(/[,;·]| and /)].map((x) => String(x ?? "").trim().toLowerCase()).filter((x) => x.length >= 3 && x.length <= 60).slice(0, 10);
+    // Its places as "City, ST" (addresses and zips trip Google's matcher), up to five
+    const places = [...new Set([p.location ?? "", ...brief.locations].flatMap((t) => [...t.matchAll(/([A-Z][A-Za-z .'-]{2,40}),\s*([A-Z]{2})\b/g)].map((m) => `${m[1].replace(/^.*\d\s*/, "").trim()}, ${m[2]}`)))].slice(0, 5);
+    const geos = places.length ? (await ga.suggestGeo(places).catch(() => [])).slice(0, 5) : [];
+    const geoHit = geos.length ? { geo: geos[0].geo, name: geos.map((x) => x.name.split(",")[0]).join(", ") } : null;
+    // Seeds: the kind of business and its service lines (phrases of two words or more, so "reviews" alone never seeds)
+    const seeds = [p.industry?.replace(/\(.*?\)/g, ""), ...brief.sells.split(/[,;:()·.]| and /)].map((x) => String(x ?? "").trim().toLowerCase()).filter((x) => x.split(/\s+/).length >= 2 && x.length <= 60 && !/\$|\d/.test(x) && !/(no|not|shown|mentioned|site|faq|page|prices?|pricing|may|differ|also)/.test(x)).slice(0, 10);
     const url = p.website ? (/^https?:\/\//i.test(p.website) ? p.website : `https://${p.website}`) : null;
-    const opts = { url, geo: geoHit ? [geoHit.geo] : undefined };
+    const opts = { url, geo: geos.length ? geos.map((x) => x.geo) : undefined };
     const raw = await ga.keywordIdeas(planner, seeds, opts).catch(() => (seeds.length ? ga.keywordIdeas(planner, seeds, { geo: opts.geo }) : []));
     const ideas = raw.filter((r) => r.searches > 0).sort((a, b) => b.searches - a.searches).slice(0, 30);
     if (!ideas.length) return null;
@@ -229,7 +233,7 @@ Rules: every number comes from the research or is clearly an estimate; never inv
       agent: "sales_gtm",
       label: "gtm notes",
       schema: NOTES_SCHEMA,
-      maxTokens: 7000,
+      maxTokens: 16_000,
       system: `You write the internal talking notes that go with a go-to-market strategy for ${p.name}. Never sent to the prospect; they're for ${partner ? `the ${partner.name} team pitching it (a white-label partner: no Kaizen mentions, written for them)` : "the Kaizen person running the sales call"}. Every item is one or two sentences with a tag: certain (seen in a source), likely (a strong inference), guessing (an informed estimate).
 - headline: what the research says to lead with, in two sentences.
 - flags: things to know before pitching (a stat that could be wrong and how to check it, e.g. Meta Ad Library searched only under one page name; anything sensitive about the prospect's current vendors or site${partner ? `; if ${partner.name} appears to have built or run their site or marketing, say so plainly and how the document words those fixes` : ""}).
