@@ -19,7 +19,7 @@ const CLAUDE_EXPORT_URL = "https://claude.ai/settings/data-privacy-controls";
 const CLAUDE_ORG_EXPORT_URL = "https://claude.ai/admin-settings/data-privacy-controls";
 const SHOW = 150;
 
-const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", year: "numeric" });
 
 /** The import running in the background (kept by the chat screen, so closing the sheet doesn't stop it) */
 export function useClaudeImport(onProgress: () => void) {
@@ -103,7 +103,7 @@ type Problem = { text: string; emails?: string[] };
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 const bytes = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.max(n >= 1e6 ? Math.round(n / 1e6) : 0, n > 0 ? 1 : 0)} MB`);
 const listOf = (names: string[]) => (names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`);
-const when = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+const when = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const linkClass = "font-medium text-brand-text underline decoration-brand/30 underline-offset-2 hover:decoration-brand";
 
 export function ClaudeImportSheet({ clients, email, job, onStart, onClose, onOpenThread, onChanged }: { clients: ClientOpt[]; /** Their Kaizen email: an organization's export is narrowed to the member with this email */ email: string; job: ImportJob | null; onStart: (fileName: string, items: ImportItem[], conversations: number, sourceAccount: string | null, summary: string | null) => void; onClose: () => void; onOpenThread: (id: string) => void; onChanged: () => void }) {

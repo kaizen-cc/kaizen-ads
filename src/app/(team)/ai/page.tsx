@@ -10,6 +10,9 @@ import { threadProjects } from "./project-actions";
 
 export const metadata: Metadata = { title: "Kaizen AI" };
 
+// The clock the "Welcome back" card is worked out from, handed to the browser so both renders agree (React #418)
+const clock = () => Date.now();
+
 export default async function KaizenAiPage() {
   const me = await requireStaff();
   const [threads, templates, clients, mustImport, inProjects] = await Promise.all([listThreads(), listTemplates(), pickableClients(), needsClaudeImport().catch(() => false), threadProjects().catch(() => ({}))]);
@@ -27,6 +30,7 @@ export default async function KaizenAiPage() {
         quickIds={quickActionIds(me)}
         homeAgent={{ key: home, label: AGENT_LABEL[home] }}
         mustImport={mustImport}
+        now={clock()}
       />
     </Suspense>
   );

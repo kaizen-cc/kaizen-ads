@@ -81,7 +81,7 @@ const P = {
   show: "M13 17l5-5-5-5M6 17l5-5-5-5",
 };
 
-export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThreadProjects = {}, clients, groups, quickIds, homeAgent, mustImport = false }: { me: Me; on: boolean; initialThreads: Thread[]; initialTemplates: Template[]; /** The project each thread is in */ initialThreadProjects?: Record<string, ProjectRef>; clients: ClientOpt[]; groups: QuickAction["group"][]; /** The quick actions this person may use (by role) */ quickIds: string[]; homeAgent: { key: ChatAgent; label: string }; mustImport?: boolean }) {
+export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThreadProjects = {}, clients, groups, quickIds, homeAgent, mustImport = false, now: serverNow }: { me: Me; on: boolean; initialThreads: Thread[]; initialTemplates: Template[]; /** The project each thread is in */ initialThreadProjects?: Record<string, ProjectRef>; clients: ClientOpt[]; groups: QuickAction["group"][]; /** The quick actions this person may use (by role) */ quickIds: string[]; homeAgent: { key: ChatAgent; label: string }; mustImport?: boolean; /** The server's clock when the page rendered: the "Welcome back" card is worked out from it, so the server and browser render the same card (React #418) */ now: number }) {
   const t = useParam("t");
   const listOpen = useParam("list") === "1";
   const importOpen = useParam("import") === "1";
@@ -156,7 +156,7 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThre
   const [gate, setGate] = useState(mustImport);
   // Coming back: pick up the last conversation (from the last week), or start a new one
   const [fresh, setFresh] = useState(false);
-  const [now] = useState(() => Date.now());
+  const [now] = useState(serverNow);
   const lastMine = threads
     .filter((x) => x.profile_id === me.id && !x.source && now - Date.parse(x.last_message_at) < 7 * 86_400_000)
     .sort((x, y) => Date.parse(y.last_message_at) - Date.parse(x.last_message_at))[0];
@@ -621,7 +621,7 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThre
 // ─── Imported from Claude: where it came from, earlier messages, private notes ─
 
 function ImportedBanner({ thread, earlier, notes, mine, onDelete }: { thread: Thread; earlier: number; notes: { name: string; chars: number }[]; mine: boolean; onDelete: () => void }) {
-  const started = thread.created_at ? new Date(thread.created_at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }) : null;
+  const started = thread.created_at ? new Date(thread.created_at).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "long", day: "numeric", year: "numeric" }) : null;
   return (
     <div className="grid gap-2 rounded-[18px] border border-line bg-ink/[0.02] px-4 py-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -635,7 +635,7 @@ function ImportedBanner({ thread, earlier, notes, mine, onDelete }: { thread: Th
           </button>
         ) : null}
       </div>
-      {earlier ? <p className="text-[12.5px] text-faint">{earlier.toLocaleString()} earlier messages aren&rsquo;t shown here. Kaizen AI still reads them, the oldest as a summary.</p> : null}
+      {earlier ? <p className="text-[12.5px] text-faint">{earlier.toLocaleString("en-US")} earlier messages aren&rsquo;t shown here. Kaizen AI still reads them, the oldest as a summary.</p> : null}
       {notes.length ? (
         <details className="group text-[13px]">
           <summary className="flex min-h-9 cursor-pointer list-none items-center gap-1.5 text-muted hover:text-fg">
@@ -1637,7 +1637,7 @@ function ImportFirst({ first, onImport, onSkip }: { first: string; onImport: () 
 /** Coming back to Kaizen AI: the last conversation to pick up, or a new one */
 function PickUp({ title, client, at, now, onPickUp, onFresh, onList }: { title: string; client: string | null; at: string; now: number; onPickUp: () => void; onFresh: () => void; /** Phones: every chat (the list is a drawer there) */ onList?: () => void }) {
   const ago = Math.round((now - Date.parse(at)) / 60000);
-  const said = ago < 2 ? "just now" : ago < 60 ? `${ago} min ago` : ago < 60 * 24 ? `${Math.round(ago / 60)} h ago` : new Date(at).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const said = ago < 2 ? "just now" : ago < 60 ? `${ago} min ago` : ago < 60 * 24 ? `${Math.round(ago / 60)} h ago` : new Date(at).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" });
   return (
     <div className="grid justify-items-center gap-5 pt-8 text-center md:pt-16">
       <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-faint">Welcome back</p>
