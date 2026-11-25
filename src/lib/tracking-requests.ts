@@ -2,6 +2,9 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askingSentence, clientFor, isTrackingRequest, sameText, SOURCE_LABEL, trackingTaskTitle } from "@/lib/tracking-requests-core";
 import { createItemIfNew } from "@/lib/reality-check";
+import { isWebRequest } from "@/lib/client-signals-core";
+
+const TRACKING_WORDS = /\b(track(ing|ed)?|pixel|capi|conversions? api|gtm|tag manager|ga4|google analytics|conversions?|events? (fire|firing)|purchase event|utm)\b/i;
 
 // Requests about a landing page, a tracking setup or a fix, said in Slack, Gmail, Asana, on a call or in Gemini meeting notes
 // (read from Drive into calls: context_items source "call"), become a task for
@@ -21,7 +24,8 @@ export async function trackingRequests(admin: SupabaseClient, now = new Date()):
   const found: { ref: string; clientId: string | null; text: string; source: string; url: string | null }[] = [];
   for (const i of items ?? []) {
     const text = `${i.title ?? ""} ${i.body ?? ""}`.trim();
-    if (isTrackingRequest(text)) found.push({ ref: `trk:${i.source}:${i.id}`, clientId: (i.client_id as string | null) ?? null, text: String(i.body ?? i.title ?? ""), source: String(i.source), url: (i.url as string | null) ?? null });
+    // A website or landing page ask with nothing about tracking in it is the web team's (client signals routes it)
+    if (isTrackingRequest(text) && !(isWebRequest(text) && !TRACKING_WORDS.test(text))) found.push({ ref: `trk:${i.source}:${i.id}`, clientId: (i.client_id as string | null) ?? null, text: String(i.body ?? i.title ?? ""), source: String(i.source), url: (i.url as string | null) ?? null });
   }
   for (const t of tasks ?? []) {
     const text = `${t.name ?? ""} ${t.notes ?? ""}`;
