@@ -2,8 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
-import { TAG_LABEL, type GtmNotes } from "@/lib/sales-gtm-core";
-import { gtmPdfAction, gtmStatusAction, startGtmAction } from "../actions";
+import { modeLabel, TAG_LABEL, type GtmNotes } from "@/lib/sales-gtm-core";
+import { gtmPdfAction, gtmStatusAction, setRelationshipAction, startGtmAction } from "../actions";
 
 // The prospect's go-to-market strategy, inside the Research view (no tab of its own): build it (Kaizen's branding or a
 // white-label partner's), follow it while it's built in the background (researching → writing → talking notes → PDF),
@@ -14,9 +14,17 @@ export type GtmView = { id: string; status: string; stage: string | null; partne
 
 const STAGE: Record<string, string> = { researching: "Researching the business and its market…", researched: "Research done, writing next…", writing: "Writing the strategy…", notes: "Writing your talking notes…", pdf: "Drawing the PDF…" };
 
-export function GtmCard({ prospectId, gtm, partners }: { prospectId: string; gtm: GtmView | null; partners: { key: string; name: string }[] }) {
+/** The branding badge: which mode is active, so nobody sends the wrong brand */
+export function ModeBadge({ relationship, partner }: { relationship: string | null; partner: string | null }) {
+  const tone = relationship === "white_label" ? "bg-warn-soft text-warn" : relationship === "direct" ? "bg-brand-soft text-brand-text" : "bg-surface-2 text-faint";
+  return <span className={`inline-flex w-fit items-center rounded-full px-2.5 py-1 text-[12px] font-medium ${tone}`}>{modeLabel(relationship, partner)}</span>;
+}
+
+export function GtmCard({ prospectId, gtm, partners, relationship, partnerKey }: { prospectId: string; gtm: GtmView | null; partners: { key: string; name: string; confirmed: boolean }[]; relationship: "direct" | "white_label" | null; partnerKey: string | null }) {
   const router = useRouter();
-  const [partner, setPartner] = useState("");
+  const mode = relationship === "white_label" && partnerKey ? `p:${partnerKey}` : relationship === "direct" ? "direct" : "";
+  const partnerName = partners.find((x) => x.key === partnerKey)?.name ?? null;
+  const kitMissing = relationship === "white_label" && partnerKey && !partners.find((x) => x.key === partnerKey)?.confirmed;
   const [ask, setAsk] = useState("");
   const [state, setState] = useState<{ status: string; stage: string | null } | null>(gtm ? { status: gtm.status, stage: gtm.stage } : null);
   const [pending, start] = useTransition();
@@ -45,7 +53,10 @@ export function GtmCard({ prospectId, gtm, partners }: { prospectId: string; gtm
   return (
     <section id="gtm" className="grid min-w-0 scroll-mt-20 gap-3 rounded-[20px] border border-line bg-surface p-4 md:p-6">
       <div className="grid gap-1">
-        <h2 className="text-[11px] font-medium uppercase tracking-[0.16em] text-faint">Go-to-market strategy</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.16em] text-faint">Go-to-market strategy</h2>
+          <ModeBadge relationship={relationship} partner={partnerName} />
+        </div>
         <p className="text-[13.5px] leading-relaxed text-muted">A branded PDF for the prospect (the market, competitors, positioning and offer, channel plan, investment tiers, 90-day plan) and your internal talking notes. Separate from the proposal. Takes several minutes; you&apos;ll get a notification.</p>
       </div>
 
@@ -60,7 +71,7 @@ export function GtmCard({ prospectId, gtm, partners }: { prospectId: string; gtm
         <div className="grid gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={download} disabled={pending || !gtm.documentId} className="inline-flex h-11 items-center justify-center rounded-full bg-brand px-5 text-[14px] font-medium text-white hover:bg-brand-hover disabled:opacity-60 md:h-9 md:text-[13px]">
-              Download the PDF{gtm.partner ? ` (${gtm.partner})` : ""}
+              Download the PDF · {gtm.partner ? `${gtm.partner} branding` : "Kaizen branding"}
             </button>
             <span className="text-[12.5px] text-faint">Save it to Drive or email it: ask your assistant (it confirms the folder first).</span>
           </div>
@@ -71,12 +82,12 @@ export function GtmCard({ prospectId, gtm, partners }: { prospectId: string; gtm
 
       {!live && (
         <form
-          className="grid gap-2 md:grid-cols-[180px_minmax(0,1fr)_auto]"
+          className="grid gap-2 md:grid-cols-[220px_minmax(0,1fr)_auto]"
           onSubmit={(e) => {
             e.preventDefault();
             setError(null);
             start(async () => {
-              const r = await startGtmAction(prospectId, partner || null, ask);
+              const r = await startGtmAction(prospectId, ask);
               if (!r.ok) setError(r.error);
               else {
                 setState({ status: "queued", stage: null });
@@ -86,22 +97,39 @@ export function GtmCard({ prospectId, gtm, partners }: { prospectId: string; gtm
           }}
         >
           <label className="grid">
-            <span className="sr-only">Branding</span>
-            <select value={partner} onChange={(e) => setPartner(e.target.value)} className="h-11 rounded-[14px] border border-line bg-bg px-3 text-[16px] text-fg md:text-[14px]">
-              <option value="">Kaizen branding</option>
+            <span className="sr-only">Direct Kaizen deal or white-label pitch</span>
+            <select
+              value={mode}
+              onChange={(e) => {
+                const v = e.target.value;
+                setError(null);
+                start(async () => {
+                  const r = await setRelationshipAction(prospectId, v === "direct" ? "direct" : "white_label", v.startsWith("p:") ? v.slice(2) : null);
+                  if (!r.ok) setError(r.error);
+                  else router.refresh();
+                });
+              }}
+              className="h-11 rounded-[14px] border border-line bg-bg px-3 text-[16px] text-fg md:text-[14px]"
+            >
+              <option value="" disabled>
+                Direct deal or white label?
+              </option>
+              <option value="direct">Direct · Kaizen branding</option>
               {partners.map((p) => (
-                <option key={p.key} value={p.key}>
-                  White label: {p.name}
+                <option key={p.key} value={`p:${p.key}`}>
+                  White label · {p.name}
                 </option>
               ))}
             </select>
           </label>
           <input value={ask} onChange={(e) => setAsk(e.target.value)} placeholder="Anything to focus on? (channels, the creative package, who it's for)" className="h-11 min-w-0 rounded-[14px] border border-line bg-bg px-3.5 text-[16px] text-fg placeholder:text-faint md:text-[14px]" />
-          <button type="submit" disabled={pending} className="inline-flex h-11 items-center justify-center rounded-full border border-line bg-surface px-5 text-[14px] font-medium text-fg hover:bg-surface-2 disabled:opacity-60">
+          <button type="submit" disabled={pending || !mode || Boolean(kitMissing)} className="inline-flex h-11 items-center justify-center rounded-full border border-line bg-surface px-5 text-[14px] font-medium text-fg hover:bg-surface-2 disabled:opacity-60">
             {gtm?.status === "done" ? "Build a new version" : "Build it"}
           </button>
         </form>
       )}
+      {!live && !mode && <p className="text-[12.5px] text-faint">Is this a direct Kaizen deal or a white-label pitch for a partner agency? Set it first: the PDF, the notes and the proposal follow it.</p>}
+      {kitMissing && <p className="text-[12.5px] text-warn">{partnerName}&apos;s brand kit isn&apos;t confirmed yet. Ask your assistant to set it up (it pulls the logo from their site for a yes).</p>}
       {error && <p className="text-[13px] text-bad">{error}</p>}
     </section>
   );

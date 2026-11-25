@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import type { CallReview, PitchDrafts, ProspectBrief, ProspectStatus } from "@/lib/sales-core";
 import { CallButton } from "@/components/call-button";
+import { ModeBadge } from "./gtm-card";
 import { pushParams, useParam } from "@/lib/url-state";
 import { deleteNoteAction, pitchAction, researchAction, reviewAction, updateAction, wonAction } from "../actions";
 import { ArchiveButton, FitBadge, StageSelect, UnarchiveButton } from "../sales-view";
@@ -17,7 +18,7 @@ export type ProspectNote =
   | { id: string; kind: "pitch"; title: string; at: string; pitch: PitchDrafts }
   | { id: string; kind: "call_review"; title: string; at: string; review: CallReview };
 
-type P = { id: string; name: string; website: string | null; industry: string | null; location: string | null; status: ProspectStatus; fit: number | null; fitReason: string | null; ownerId: string | null; notes: string | null; lostReason: string | null; researchedAt: string | null; source: string | null; archived?: { at: string; by: string | null; label: string } | null };
+type P = { id: string; name: string; website: string | null; industry: string | null; location: string | null; status: ProspectStatus; fit: number | null; fitReason: string | null; ownerId: string | null; notes: string | null; lostReason: string | null; researchedAt: string | null; source: string | null; mode?: { relationship: string | null; partner: string | null }; archived?: { at: string; by: string | null; label: string } | null };
 
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 const host = (url: string) => url.replace(/^https?:\/\//, "").replace(/\/$/, "");
@@ -87,6 +88,7 @@ export function ProspectView({ p, brief, notes, people, docs, client, meId, call
                 </a>
               )}
               {[p.industry, p.location].filter(Boolean).length > 0 && <span className="break-words">{[p.industry, p.location].filter(Boolean).join(" · ")}</span>}
+              {p.mode && <ModeBadge relationship={p.mode.relationship} partner={p.mode.partner} />}
             </p>
           </div>
           <FitBadge fit={brief?.fit_score ?? p.fit} large />

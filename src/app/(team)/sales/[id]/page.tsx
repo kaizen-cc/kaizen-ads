@@ -29,7 +29,7 @@ export default async function ProspectPage({ params }: PageProps<"/sales/[id]">)
   // The latest go-to-market strategy, and the white-label partners to brand one for
   const [{ data: g }, { data: partners }] = await Promise.all([
     db.from("prospect_gtms").select("id, status, stage, partner_key, document_id, notes, error, created_at").eq("prospect_id", p.id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
-    db.from("sales_partners").select("key, name").eq("active", true).order("name"),
+    db.from("sales_partners").select("key, name, kit_confirmed_at").eq("active", true).order("name"),
   ]);
   const { cleanNotes } = await import("@/lib/sales-gtm-core");
   const partnerName = (k: string | null) => ((partners ?? []) as { key: string; name: string }[]).find((x) => x.key === k)?.name ?? null;
@@ -42,7 +42,7 @@ export default async function ProspectPage({ params }: PageProps<"/sales/[id]">)
   return (
     <Suspense>
       <ProspectView
-        p={{ id: p.id, name: p.name, website: p.website, industry: p.industry, location: p.location, status: p.status, fit: p.fit_score, fitReason: p.fit_reason, ownerId: p.owner_id, notes: p.notes, lostReason: p.lost_reason, researchedAt: p.researched_at, source: p.source, archived: p.archived_at ? { at: p.archived_at, by: p.archived_by ? (people ?? []).find((x) => x.id === p.archived_by)?.full_name ?? null : null, label: archiveText(p.archive_reason, p.archive_note) } : null }}
+        p={{ id: p.id, name: p.name, website: p.website, industry: p.industry, location: p.location, status: p.status, fit: p.fit_score, fitReason: p.fit_reason, ownerId: p.owner_id, notes: p.notes, lostReason: p.lost_reason, researchedAt: p.researched_at, source: p.source, mode: { relationship: p.relationship, partner: partnerName(p.partner_key) }, archived: p.archived_at ? { at: p.archived_at, by: p.archived_by ? (people ?? []).find((x) => x.id === p.archived_by)?.full_name ?? null : null, label: archiveText(p.archive_reason, p.archive_note) } : null }}
         brief={p.brief ? cleanBrief(p.brief) : null}
         notes={list}
         people={(people ?? []).map((x) => ({ id: x.id as string, name: x.full_name as string }))}
@@ -50,7 +50,7 @@ export default async function ProspectPage({ params }: PageProps<"/sales/[id]">)
         client={client ? { name: client.name as string, slug: client.slug as string } : null}
         calls={(calls ?? []).map((c) => ({ id: c.id as string, title: c.title as string, startsAt: c.starts_at as string, status: c.status as string }))}
         meId={me.id}
-        gtmSlot={<GtmCard prospectId={p.id} gtm={gtm} partners={(partners ?? []) as { key: string; name: string }[]} />}
+        gtmSlot={<GtmCard prospectId={p.id} gtm={gtm} relationship={p.relationship} partnerKey={p.partner_key} partners={((partners ?? []) as { key: string; name: string; kit_confirmed_at: string | null }[]).map((x) => ({ key: x.key, name: x.name, confirmed: Boolean(x.kit_confirmed_at) }))} />}
       />
     </Suspense>
   );

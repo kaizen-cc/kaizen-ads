@@ -187,6 +187,9 @@ async function fromWebsite(website: string | null | undefined, name: string | nu
   return null;
 }
 
+/** A business's logo (and its main color) from its website, for other brand kits (a white-label partner's) */
+export const logoFromWebsite = (website: string | null | undefined, name: string | null = null) => fromWebsite(website, name);
+
 async function fromDrive(admin: SupabaseClient, clientId: string) {
   const { data } = await admin.from("client_assets").select("file_id, name").eq("client_id", clientId).eq("kind", "image").ilike("name", "%logo%").order("created_at", { ascending: false }).limit(3);
   if (!data?.length) return null;

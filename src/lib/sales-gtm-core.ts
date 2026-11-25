@@ -150,7 +150,26 @@ export function pickCaseStudies(industry: string | null | undefined, studies: re
   return [...studies].sort((a, b) => score(b) - score(a));
 }
 
-export type Partner = { key: string; name: string; prepared_by: string; brand: Record<string, string>; rules: string; show_fees: boolean };
+export type Partner = { key: string; name: string; prepared_by: string; brand: Record<string, string>; rules: string; show_fees: boolean; contact?: { name?: string; role?: string; email?: string } | null; website?: string | null; kit_confirmed_at?: string | null };
+
+/** Whether a prospect's site or research credits a partner ("Powered by ZenChange", forms on links.zenchange.com) */
+export function partnerCredited(text: string, p: { key: string; name: string; website?: string | null }): boolean {
+  const t = text.toLowerCase();
+  const name = p.name.toLowerCase();
+  const host = String(p.website ?? "").replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0].toLowerCase();
+  const squash = (x: string) => x.replace(/[^a-z0-9]/g, "");
+  return (
+    new RegExp(`(?:powered by|built by|designed by|website by|site by|managed by)\\s+${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`).test(t) ||
+    (Boolean(host) && t.includes(host)) ||
+    (squash(name).length >= 5 && /powered by|built by|website by/.test(t) && squash(t).includes(`poweredby${squash(name)}`))
+  );
+}
+
+/** What the agent asks when a prospect's record doesn't say (once) */
+export const RELATIONSHIP_QUESTION = "Is this a direct Kaizen deal or a white-label pitch for a partner agency?";
+
+/** The mode label shown on the prospect sheet and beside the PDF, so nobody sends the wrong brand */
+export const modeLabel = (relationship: string | null | undefined, partner: string | null | undefined) => (relationship === "white_label" ? `White label · ${partner ?? "partner"}` : relationship === "direct" ? "Direct · Kaizen branding" : "Branding not set");
 
 /** Every place a white-label document still says Kaizen (it must say none) */
 export function kaizenMentions(v: unknown): string[] {

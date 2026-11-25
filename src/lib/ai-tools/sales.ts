@@ -175,6 +175,8 @@ const save: AiTool = {
       location: { type: "string" },
       industry: { type: "string" },
       stage: { type: "string", enum: ["new", "researched", "contacted", "call_booked", "talking", "proposal", "won", "lost"] },
+      relationship: { type: "string", enum: ["direct", "white_label"], description: "A direct Kaizen deal, or a white-label pitch for a partner agency (with partner)" },
+      partner: { type: "string" },
       owner: { type: "string" },
       notes: { type: "string" },
       lost_reason: { type: "string" },
@@ -212,7 +214,14 @@ const save: AiTool = {
       if (error) return { ok: false, error: /prospects_site/.test(error.message) ? "A prospect with that website is already in the pipeline." : error.message };
       return { ok: true, added: true, id: data.id, name: data.name, page: pageOf(data.id as string), next: "Offer to research it (research_prospect)." };
     }
-    const r = await updateProspect(db, p.id, { status: input.stage, owner_id: ownerId, notes: input.notes, lost_reason: input.lost_reason, name: input.name, website: input.website, location: input.location, industry: input.industry });
+    let partnerKey: string | null | undefined;
+    if (str(input.partner)) {
+      const { partnerNamed } = await import("@/lib/sales-gtm");
+      const pt = await partnerNamed(createAdminClient(), str(input.partner));
+      if (!pt) return { ok: false, error: `${str(input.partner)} isn't a partner on file: partner_kit adds it.` };
+      partnerKey = pt.key;
+    }
+    const r = await updateProspect(db, p.id, { status: input.stage, owner_id: ownerId, notes: input.notes, lost_reason: input.lost_reason, name: input.name, website: input.website, location: input.location, industry: input.industry, relationship: input.relationship ?? (partnerKey ? "white_label" : undefined), partner_key: partnerKey });
     if (!r.ok) return r;
     return { ok: true, id: r.prospect.id, name: r.prospect.name, stage: r.prospect.status, page: pageOf(r.prospect.id), ...(r.prospect.status === "won" ? { next: "Run prospect_won to link the enrolled client and move its documents." } : {}) };
   },
@@ -430,8 +439,8 @@ const unarchive: AiTool = {
 const makeGtm: AiTool = {
   name: "make_gtm",
   description:
-    "Executives and leads: builds a prospect's go-to-market strategy in the background (several minutes): a client-facing branded PDF (cover, exec summary with 3 stat tiles, who they are, digital footprint leaks, the market and competitive landscape, positioning and front-door offer, channel plan, investment tiers with projections and sourced benchmarks, 90-day plan and 12-month calendar, measurement and next steps, sources) plus internal talking notes that are never sent (flags, strategy decisions, numbers caveats, risks and objections with the vertical's compliance rules, firm facts; every claim tagged certain / likely / guessing). The research is refreshed first when it's missing the market analysis or older than two weeks. partner: a white-label partner (e.g. ZenChange): their branding only, zero Kaizen mentions, ad spend only, notes written for the partner. ask: anything they said (channels, the creative package, who it's for). Say you've started it and they'll be notified; it's separate from the proposal (proposal_brief).",
-  input_schema: { type: "object", properties: { prospect: { type: "string" }, partner: { type: "string", description: "A white-label partner's name, e.g. ZenChange" }, ask: { type: "string" } }, required: ["prospect"], additionalProperties: false },
+    "Executives and leads: builds a prospect's go-to-market strategy in the background (several minutes): a client-facing branded PDF (cover, exec summary with 3 stat tiles, who they are, digital footprint leaks, the market and competitive landscape, positioning and front-door offer, channel plan, investment tiers with projections and sourced benchmarks, 90-day plan and 12-month calendar, measurement and next steps, sources) plus internal talking notes that are never sent (every claim tagged certain / likely / guessing). Branding follows the prospect's relationship: direct (Kaizen's brand, prepared by the CEO) or white_label (a partner agency's brand kit, zero Kaizen mentions, ad spend only, notes written for the partner). If the record doesn't say and it can't be detected, the result asks the question: ask it once, then call again with relationship (and partner for white label); it's stored on the prospect so the notes and proposal follow it. ask: anything they said (channels, the creative package, who it's for). Say you've started it and they'll be notified; the proposal is separate (proposal_brief).",
+  input_schema: { type: "object", properties: { prospect: { type: "string" }, relationship: { type: "string", enum: ["direct", "white_label"] }, partner: { type: "string", description: "The partner agency for a white-label pitch, e.g. ZenChange" }, ask: { type: "string" } }, required: ["prospect"], additionalProperties: false },
   only: worksSales,
   run: async (user: Staff, input) => {
     if (!worksSales(user)) return NOT_SALES;
@@ -440,11 +449,60 @@ const makeGtm: AiTool = {
     const p = await prospectFrom(input);
     if (!p) return { ok: false, error: "No prospect by that name. Research it first (research_prospect) or add it (save_prospect)." };
     const admin = createAdminClient();
-    const { queueGtm, partnerNamed } = await import("@/lib/sales-gtm");
-    const partner = str(input.partner) ? await partnerNamed(admin, str(input.partner)) : null;
-    if (str(input.partner) && !partner) return { ok: false, error: `${str(input.partner)} isn't a white-label partner on file. Ask an exec to add it, or leave partner out for Kaizen's own branding.` };
-    const q = await queueGtm(admin, { prospectId: p.id, profileId: user.id, partnerKey: partner?.key ?? null, ask: str(input.ask) });
-    return { ok: true, started: !q.existing, already_running: q.existing, gtm_id: q.id, partner: partner?.name ?? null, say: `${q.existing ? "A go-to-market strategy for them is already being built" : `I've started the go-to-market strategy${partner ? ` for ${partner.name}` : ""}`}. It takes several minutes (research, then the strategy, the talking notes and the PDF); you'll get a notification when it's ready.` };
+    const { queueGtm, partnerNamed, relationshipOf } = await import("@/lib/sales-gtm");
+    const { RELATIONSHIP_QUESTION, modeLabel } = await import("@/lib/sales-gtm-core");
+    // The relationship: what they said now, else what the record shows (set, or a partner credited on their site), else ask once
+    let rel: { relationship: "direct" | "white_label"; partner: import("@/lib/sales-gtm-core").Partner | null } | null = null;
+    if (input.relationship === "direct") rel = { relationship: "direct", partner: null };
+    else if (input.relationship === "white_label" || str(input.partner)) {
+      const partner = await partnerNamed(admin, str(input.partner));
+      if (!partner) return { ok: false, needs: "partner", say: str(input.partner) ? `${str(input.partner)} isn't a partner on file yet: partner_kit can add it (its brand kit, confirmed once).` : "Which partner agency is it for?" };
+      rel = { relationship: "white_label", partner };
+    } else {
+      const found = await relationshipOf(admin, p);
+      if (!found) return { ok: false, needs: "relationship", ask: RELATIONSHIP_QUESTION, note: "Ask exactly that once; call again with relationship (and partner for white label)." };
+      rel = found;
+    }
+    await (await createClient()).from("prospects").update({ relationship: rel.relationship, partner_key: rel.partner?.key ?? null, updated_at: new Date().toISOString() }).eq("id", p.id);
+    if (rel.partner && !rel.partner.kit_confirmed_at) return { ok: false, needs: "partner_kit", say: `${rel.partner.name}'s brand kit isn't confirmed yet. partner_kit pulls it from their site for a yes first; the GTM is built in their brand after that.` };
+    const q = await queueGtm(admin, { prospectId: p.id, profileId: user.id, partnerKey: rel.partner?.key ?? null, ask: str(input.ask) });
+    return { ok: true, started: !q.existing, already_running: q.existing, gtm_id: q.id, mode: modeLabel(rel.relationship, rel.partner?.name), say: `${q.existing ? "A go-to-market strategy for them is already being built" : `I've started the go-to-market strategy (${modeLabel(rel.relationship, rel.partner?.name)})`}. It takes several minutes; you'll get a notification when it's ready.` };
+  },
+};
+
+const partnerKit: AiTool = {
+  name: "partner_kit",
+  description: "Executives and leads: a white-label partner agency's brand kit, kept once and reused on every GTM for them (logo, colors, fonts, the 'Prepared by' name and contact). Without confirm: shows what's on file, or pulls the logo and main color from the partner's website (website) as a proposal; say it back and ask. confirm: true saves it (with any corrections: prepared_by, contact_name, contact_role, contact_email, accent, dark). Adding a new partner: name + website. Never guess silently: always confirm before it's used.",
+  input_schema: { type: "object", properties: { partner: { type: "string" }, website: { type: "string" }, prepared_by: { type: "string" }, contact_name: { type: "string" }, contact_role: { type: "string" }, contact_email: { type: "string" }, accent: { type: "string" }, dark: { type: "string" }, confirm: { type: "boolean" } }, required: ["partner"], additionalProperties: false },
+  only: worksSales,
+  run: async (user: Staff, input) => {
+    if (!worksSales(user)) return NOT_SALES;
+    const v = viewing(user);
+    if (v) return v;
+    const admin = createAdminClient();
+    const { partnerNamed } = await import("@/lib/sales-gtm");
+    const name = str(input.partner)!;
+    const existing = await partnerNamed(admin, name);
+    const website = str(input.website) ?? existing?.website ?? null;
+    let logo = existing?.brand?.logo ?? null;
+    let color: string | null = null;
+    if (!logo && website) {
+      const { logoFromWebsite } = await import("@/lib/reports/brand-server");
+      const got = await logoFromWebsite(website, name).catch(() => null);
+      logo = got?.logo ?? null;
+      color = got?.color ?? null;
+    }
+    const hex = (x: unknown) => (typeof x === "string" && /^#[0-9a-f]{6}$/i.test(x.trim()) ? x.trim() : null);
+    const brand = { ...(existing?.brand ?? {}), ...(logo ? { logo } : {}), ...(hex(input.accent) ?? color ? { accent: (hex(input.accent) ?? color)! } : {}), ...(hex(input.dark) ? { dark: hex(input.dark)! } : {}) };
+    const contact = { ...(existing?.contact ?? {}), ...(str(input.contact_name) ? { name: str(input.contact_name)! } : {}), ...(str(input.contact_role) ? { role: str(input.contact_role)! } : {}), ...(str(input.contact_email) ? { email: str(input.contact_email)! } : {}) };
+    const preparedBy = str(input.prepared_by) ?? existing?.prepared_by ?? `${name} Marketing`;
+    const summary = { partner: existing?.name ?? name, prepared_by: preparedBy, contact, website, logo_found: Boolean(logo), colors: { accent: brand.accent ?? null, dark: brand.dark ?? null }, confirmed: Boolean(existing?.kit_confirmed_at) };
+    if (input.confirm !== true) return { ok: true, proposed: summary, say: `${summary.partner}'s kit: prepared by "${preparedBy}"${contact.name ? `, contact ${contact.name}` : ""}, ${logo ? "logo found" : "no logo (their name in text)"}${brand.accent ? `, accent ${brand.accent}` : ""}. Use it?`, note: "Say it back and ask; call again with confirm: true (and any corrections)." };
+    const key = existing?.key ?? name.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 30);
+    const row = { key, name: existing?.name ?? name, prepared_by: preparedBy, brand, contact, website, kit_confirmed_at: new Date().toISOString(), updated_at: new Date().toISOString(), ...(existing ? {} : { rules: "White-label partner: their branding only, zero Kaizen mentions, ad spend only unless told otherwise; internal notes rewritten for the partner.", show_fees: false }) };
+    const { error } = await admin.from("sales_partners").upsert(row, { onConflict: "key" });
+    if (error) return { ok: false, error: error.message };
+    return { ok: true, saved: row.name, say: `${row.name}'s brand kit is saved; every white-label GTM for them uses it.` };
   },
 };
 
@@ -501,7 +559,9 @@ const proposalBrief: AiTool = {
     const b = p.brief ? cleanBrief(p.brief) : null;
     const picked = pickCaseStudies(`${p.industry ?? ""} ${b?.sells ?? ""}`, (studies ?? []) as import("@/lib/sales-gtm-core").CaseStudy[], verticalOf(p.industry, b?.sells));
     const gtm = g?.content ? cleanGtm(g.content) : null;
+    const whiteLabel = p.relationship === "white_label";
     const brief = [
+      whiteLabel ? `WHITE LABEL (${p.partner_key ?? "a partner agency"}): no Kaizen mentions, ad spend only unless told. Kaizen's proposal deck template is Kaizen-branded: for a white-label pitch, say so and offer the partner-branded GTM PDF instead (or ask the owner for a partner proposal template). Don't make a Kaizen-branded proposal for a white-label prospect.` : "Direct Kaizen deal: Kaizen branding, prepared by the CEO.",
       `Proposal for ${p.name}${p.website ? ` (${p.website})` : ""}. Proposed services: ${str(input.services)}.`,
       `Game plan (how we deliver; weave into the executive summary, the platform playbook bullets and the game plan slide): ${str(input.game_plan)}`,
       `Rules: the CEO's 11 slides; only the proposed services; exact prices from the pricing reference below; ad spend paid directly to the platforms, never marked up; the 60-day minimum (90 days with email) AND the 30-day written notice to cancel, together; month to month after; the client owns every account and asset; tracking and analytics setup included; no competitor names; never a placeholder or an invented stat.`,
@@ -516,4 +576,4 @@ const proposalBrief: AiTool = {
   },
 };
 
-export const tools: AiTool[] = [webResearch, research, find, mine, details, save, pitch, review, won, myBriefs, saveToBrief, scanBriefs, archive, unarchive, searchStatus, makeGtm, gtmStatus, proposalBrief].map(execPagesOnly);
+export const tools: AiTool[] = [webResearch, research, find, mine, details, save, pitch, review, won, myBriefs, saveToBrief, scanBriefs, archive, unarchive, searchStatus, makeGtm, gtmStatus, proposalBrief, partnerKit].map(execPagesOnly);

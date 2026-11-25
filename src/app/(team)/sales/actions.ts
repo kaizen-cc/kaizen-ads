@@ -199,12 +199,22 @@ export async function unarchiveAction(id: string): Promise<Result> {
 }
 
 /** Starts a go-to-market strategy for a prospect in the background (Kaizen's branding, or a white-label partner's) */
-export async function startGtmAction(prospectId: string, partnerKey: string | null, ask: string): Promise<Result<{ id: string }>> {
+export async function startGtmAction(prospectId: string, ask: string): Promise<Result<{ id: string }>> {
   const g = await gate();
   if ("error" in g) return { ok: false, error: g.error };
   try {
-    const { queueGtm } = await import("@/lib/sales-gtm");
-    const q = await queueGtm(createAdminClient(), { prospectId, profileId: g.me.id, partnerKey: partnerKey || null, ask: ask.trim() || null });
+    // The branding follows the relationship stored on the prospect (set first on the page, or detected)
+    const { queueGtm, relationshipOf, partnerOf } = await import("@/lib/sales-gtm");
+    const { getProspect } = await import("@/lib/sales-agent");
+    const admin = createAdminClient();
+    const p = await getProspect(await createClient(), prospectId);
+    if (!p) return { ok: false, error: "That prospect isn't there anymore." };
+    const rel = await relationshipOf(admin, p);
+    if (!rel) return { ok: false, error: "Is this a direct Kaizen deal or a white-label pitch for a partner agency? Set it first." };
+    if (rel.detected) await (await createClient()).from("prospects").update({ relationship: rel.relationship, partner_key: rel.partner?.key ?? null }).eq("id", prospectId);
+    const partner = rel.partner ? await partnerOf(admin, rel.partner.key) : null;
+    if (partner && !partner.kit_confirmed_at) return { ok: false, error: `${partner.name}'s brand kit isn't confirmed yet: ask your assistant to set it up (partner_kit), then build.` };
+    const q = await queueGtm(admin, { prospectId, profileId: g.me.id, partnerKey: partner?.key ?? null, ask: ask.trim() || null });
     refresh(prospectId);
     return { ok: true, id: q.id };
   } catch (e) {
@@ -231,4 +241,16 @@ export async function gtmPdfAction(documentId: string): Promise<Result<{ url: st
   const { data, error } = await createAdminClient().storage.from(d.bucket as string).createSignedUrl(d.path as string, 600, { download: (d.file_name as string) || true });
   if (error || !data) return { ok: false, error: error?.message ?? "The link couldn't be made." };
   return { ok: true, url: data.signedUrl };
+}
+
+/** Direct Kaizen deal or white-label pitch (with its partner), stored on the prospect */
+export async function setRelationshipAction(prospectId: string, relationship: "direct" | "white_label", partnerKey: string | null): Promise<Result> {
+  const g = await gate();
+  if ("error" in g) return { ok: false, error: g.error };
+  if (relationship === "white_label" && !partnerKey) return { ok: false, error: "Which partner agency?" };
+  const { updateProspect } = await import("@/lib/sales-agent");
+  const r = await updateProspect(await createClient(), prospectId, { relationship, partner_key: relationship === "white_label" ? partnerKey : null });
+  if (!r.ok) return r;
+  refresh(prospectId);
+  return { ok: true };
 }

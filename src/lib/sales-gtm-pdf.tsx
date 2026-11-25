@@ -1,4 +1,4 @@
-import { Document, Font, Page, StyleSheet, Text, View, renderToBuffer } from "@react-pdf/renderer";
+import { Document, Font, Image, Page, StyleSheet, Text, View, renderToBuffer } from "@react-pdf/renderer";
 import type { GtmContent, Stat, Table } from "./sales-gtm-core";
 
 // The go-to-market strategy as a client-facing PDF, in the gold-standard structure: a dark cover, then one page per
@@ -8,62 +8,166 @@ import type { GtmContent, Stat, Table } from "./sales-gtm-core";
 
 Font.registerHyphenationCallback((word) => [word]);
 
-export type GtmBrand = { preparedBy: string; dark: string; accent: string; accentSoft: string; highlight: string; ink: string; muted: string };
+/**
+ * A document's look. Kaizen's (direct deals): near-black cover, off-white interior pages, Kaizen red, light gray cards,
+ * table headers with a red underline rule, Osake for display, GT Flexa for titles and body (Poppins' closest fallback
+ * is Helvetica for captions), the logo and "The 1% Agency", prepared by the CEO. A white-label partner's: its own kit
+ * (logo, colors, fonts when given, its "Prepared by" name and contact), with nothing of Kaizen's anywhere.
+ */
+export type GtmBrand = {
+  mode: "kaizen" | "partner";
+  preparedBy: string;
+  /** The person under "Prepared by" ("Kyle Barry, CEO & Founder"; a partner's contact) */
+  preparedLine: string | null;
+  tagline: string | null;
+  dark: string;
+  accent: string;
+  accentSoft: string;
+  highlight: string;
+  ink: string;
+  muted: string;
+  page: string;
+  /** Logos: a file path or data URI (interior pages on light, the cover on dark) */
+  logo: string | null;
+  coverLogo: string | null;
+  fonts: { display: string; title: string; body: string; bodyBold: string };
+};
 
-export const KAIZEN_BRAND: GtmBrand = { preparedBy: "Kaizen Marketing", dark: "#060606", accent: "#B21E2C", accentSoft: "#F2F2F2", highlight: "#E0505C", ink: "#060606", muted: "#5B5B63" };
+const HELV = { display: "Helvetica-Bold", title: "Helvetica-Bold", body: "Helvetica", bodyBold: "Helvetica-Bold" };
+let kaizenFonts: GtmBrand["fonts"] | null = null;
 
-export function brandFor(partner: { prepared_by: string; brand: Record<string, string> } | null): GtmBrand {
-  if (!partner) return KAIZEN_BRAND;
-  const b = partner.brand ?? {};
-  return { preparedBy: partner.prepared_by, dark: b.dark ?? "#0F1F2E", accent: b.accent ?? "#178F92", accentSoft: b.accent_soft ?? "#EEF5F5", highlight: b.highlight ?? b.accent ?? "#5CCFD6", ink: b.ink ?? "#0F1F2E", muted: b.muted ?? "#5B6470" };
+/** Kaizen's fonts, from the repo (public/fonts); Helvetica when they can't be read */
+function kaizenFontSet(): GtmBrand["fonts"] {
+  if (kaizenFonts) return kaizenFonts;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require("node:fs") as typeof import("node:fs");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const path = require("node:path") as typeof import("node:path");
+    const dir = path.join(process.cwd(), "public", "fonts");
+    const osake = path.join(dir, "Osake-ads.woff2");
+    const flexa = path.join(dir, "GT-Flexa-Regular-Trial.woff2");
+    if (!fs.existsSync(osake) || !fs.existsSync(flexa)) throw new Error("fonts missing");
+    Font.register({ family: "Osake", src: osake });
+    Font.register({ family: "GT Flexa", src: flexa });
+    kaizenFonts = { display: "Osake", title: "GT Flexa", body: "GT Flexa", bodyBold: "Helvetica-Bold" };
+  } catch {
+    kaizenFonts = HELV;
+  }
+  return kaizenFonts;
 }
 
-const SOFT = "#F2F3F5";
+function publicFile(name: string): string | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require("node:fs") as typeof import("node:fs");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const path = require("node:path") as typeof import("node:path");
+    const f = path.join(process.cwd(), "public", name);
+    return fs.existsSync(f) ? f : null;
+  } catch {
+    return null;
+  }
+}
+
+export type KaizenSender = { name: string | null; title: string | null; tagline: string | null };
+
+export function kaizenBrand(sender: KaizenSender = { name: null, title: null, tagline: "The 1% Agency" }): GtmBrand {
+  return {
+    mode: "kaizen",
+    preparedBy: "Kaizen Marketing",
+    preparedLine: sender.name ? `${sender.name}${sender.title ? `, ${sender.title}` : ""}` : null,
+    tagline: sender.tagline ?? "The 1% Agency",
+    dark: "#060606",
+    accent: "#B21E2C",
+    accentSoft: "#F2F2F2",
+    highlight: "#E0505C",
+    ink: "#060606",
+    muted: "#5B5B63",
+    page: "#FAFAFA",
+    logo: publicFile("kaizen-logo.png"),
+    coverLogo: publicFile("kaizen-logo.png"),
+    fonts: kaizenFontSet(),
+  };
+}
+
+/** Kept for the tests and callers without a sender: Kaizen's look */
+export const KAIZEN_BRAND: GtmBrand = { ...kaizenBrand(), fonts: HELV };
+
+export type PartnerKit = { prepared_by: string; brand: Record<string, string>; contact?: { name?: string; role?: string; email?: string } | null };
+
+export function brandFor(partner: PartnerKit | null, sender?: KaizenSender): GtmBrand {
+  if (!partner) return kaizenBrand(sender);
+  const b = partner.brand ?? {};
+  const c = partner.contact ?? null;
+  return {
+    mode: "partner",
+    preparedBy: partner.prepared_by,
+    preparedLine: c?.name ? `${c.name}${c.role ? `, ${c.role}` : ""}${c.email ? ` · ${c.email}` : ""}` : null,
+    tagline: b.tagline ?? null,
+    dark: b.dark ?? "#0F1F2E",
+    accent: b.accent ?? "#178F92",
+    accentSoft: b.accent_soft ?? "#EEF5F5",
+    highlight: b.highlight ?? b.accent ?? "#5CCFD6",
+    ink: b.ink ?? "#0F1F2E",
+    muted: b.muted ?? "#5B6470",
+    page: b.page ?? "#FFFFFF",
+    logo: b.logo ?? null,
+    coverLogo: b.logo_dark ?? b.logo ?? null,
+    fonts: HELV,
+  };
+}
+
+const SOFT = "#F2F2F2";
 const LINE = "#E3E5E8";
 
 function styles(b: GtmBrand) {
+  const f = b.fonts;
   return StyleSheet.create({
-    page: { fontFamily: "Helvetica", fontSize: 9.6, color: b.ink, paddingTop: 54, paddingBottom: 56, paddingHorizontal: 50, backgroundColor: "#FFFFFF" },
-    head: { position: "absolute", top: 22, left: 50, right: 50, flexDirection: "row", justifyContent: "space-between", fontSize: 7, color: b.muted, letterSpacing: 0.6, textTransform: "uppercase", borderBottomWidth: 0.6, borderBottomColor: LINE, paddingBottom: 6 },
+    page: { fontFamily: f.body, fontSize: 9.6, color: b.ink, paddingTop: 58, paddingBottom: 56, paddingHorizontal: 50, backgroundColor: b.page },
+    head: { position: "absolute", top: 20, left: 50, right: 50, flexDirection: "row", justifyContent: "space-between", alignItems: "center", fontSize: 7, color: b.muted, letterSpacing: 0.6, textTransform: "uppercase", borderBottomWidth: 0.6, borderBottomColor: LINE, paddingBottom: 6 },
+    headLogo: { height: 12, objectFit: "contain" },
     foot: { position: "absolute", bottom: 24, left: 50, right: 50, flexDirection: "row", justifyContent: "space-between", fontSize: 7.5, color: b.muted, borderTopWidth: 0.6, borderTopColor: LINE, paddingTop: 7 },
-    num: { fontSize: 8, color: b.accent, fontFamily: "Helvetica-Bold", letterSpacing: 1, textTransform: "uppercase", marginBottom: 6 },
-    h1: { fontSize: 22, fontFamily: "Helvetica-Bold", letterSpacing: -0.5, marginBottom: 8, lineHeight: 1.15 },
+    num: { fontSize: 8, color: b.accent, fontFamily: f.bodyBold, letterSpacing: 1, textTransform: "uppercase", marginBottom: 6 },
+    h1: { fontSize: 22, fontFamily: f.title === "Helvetica-Bold" ? "Helvetica-Bold" : f.title, letterSpacing: -0.3, marginBottom: 8, lineHeight: 1.15 },
     lede: { fontSize: 11, color: "#33363C", lineHeight: 1.5, marginBottom: 14 },
-    h3: { fontSize: 11.5, fontFamily: "Helvetica-Bold", marginTop: 12, marginBottom: 6 },
+    h3: { fontSize: 11.5, fontFamily: f.title, marginTop: 12, marginBottom: 6 },
     p: { fontSize: 9.6, lineHeight: 1.55, color: "#2B2E33", marginBottom: 6 },
     li: { flexDirection: "row", marginBottom: 5 },
-    dot: { width: 12, color: b.accent, fontFamily: "Helvetica-Bold" },
+    dot: { width: 12, color: b.accent, fontFamily: f.bodyBold },
     liText: { flex: 1, fontSize: 9.6, lineHeight: 1.5, color: "#2B2E33" },
-    bold: { fontFamily: "Helvetica-Bold", color: b.ink },
+    bold: { fontFamily: f.bodyBold, color: b.ink },
     stats: { flexDirection: "row", marginBottom: 14, marginTop: 2 },
-    stat: { flex: 1, backgroundColor: SOFT, borderTopWidth: 3, borderTopColor: b.accent, padding: 11, marginRight: 8 },
-    statLast: { flex: 1, backgroundColor: SOFT, borderTopWidth: 3, borderTopColor: b.accent, padding: 11 },
-    statValue: { fontSize: 20, fontFamily: "Helvetica-Bold", color: b.accent, marginBottom: 4 },
+    stat: { flex: 1, backgroundColor: SOFT, borderTopWidth: 3, borderTopColor: b.accent, padding: 11, marginRight: 8, borderRadius: 5 },
+    statLast: { flex: 1, backgroundColor: SOFT, borderTopWidth: 3, borderTopColor: b.accent, padding: 11, borderRadius: 5 },
+    statValue: { fontSize: 20, fontFamily: f.display, color: b.accent, marginBottom: 4 },
     statLabel: { fontSize: 8.2, lineHeight: 1.4, color: "#33363C" },
     table: { marginTop: 4, marginBottom: 8 },
     th: { flexDirection: "row", borderBottomWidth: 1.4, borderBottomColor: b.accent, paddingBottom: 5 },
-    thCell: { flex: 1, fontSize: 8, color: b.accent, fontFamily: "Helvetica-Bold", paddingRight: 6 },
+    thCell: { flex: 1, fontSize: 8, color: b.accent, fontFamily: f.bodyBold, paddingRight: 6 },
     tr: { flexDirection: "row", borderBottomWidth: 0.6, borderBottomColor: LINE, paddingVertical: 6 },
-    trAlt: { flexDirection: "row", borderBottomWidth: 0.6, borderBottomColor: LINE, paddingVertical: 6, backgroundColor: "#F7F8F9" },
+    trAlt: { flexDirection: "row", borderBottomWidth: 0.6, borderBottomColor: LINE, paddingVertical: 6, backgroundColor: SOFT },
     cell: { flex: 1, fontSize: 8.4, lineHeight: 1.42, color: "#2B2E33", paddingRight: 6 },
-    cellFirst: { flex: 1, fontSize: 8.4, lineHeight: 1.42, color: b.ink, fontFamily: "Helvetica-Bold", paddingRight: 6 },
+    cellFirst: { flex: 1, fontSize: 8.4, lineHeight: 1.42, color: b.ink, fontFamily: f.bodyBold, paddingRight: 6 },
     note: { fontSize: 7.4, color: b.muted, lineHeight: 1.4, marginTop: 2, marginBottom: 8 },
-    callout: { backgroundColor: b.accentSoft, borderLeftWidth: 3, borderLeftColor: b.accent, padding: 12, marginTop: 10, marginBottom: 6 },
-    calloutTitle: { fontSize: 10.5, color: b.accent, fontFamily: "Helvetica-Bold", marginBottom: 4 },
+    callout: { backgroundColor: b.accentSoft, borderLeftWidth: 3, borderLeftColor: b.accent, padding: 12, marginTop: 10, marginBottom: 6, borderRadius: 5 },
+    calloutTitle: { fontSize: 10.5, color: b.accent, fontFamily: f.title, marginBottom: 4 },
     two: { flexDirection: "row", marginTop: 10 },
-    card: { flex: 1, backgroundColor: SOFT, padding: 12, marginRight: 10 },
-    cardLast: { flex: 1, backgroundColor: SOFT, padding: 12 },
-    cardTitle: { fontSize: 10.5, fontFamily: "Helvetica-Bold", marginBottom: 5 },
-    cover: { backgroundColor: b.dark, color: "#FFFFFF", paddingHorizontal: 56, paddingTop: 110, paddingBottom: 56, justifyContent: "space-between" },
+    card: { flex: 1, backgroundColor: SOFT, padding: 12, marginRight: 10, borderRadius: 5 },
+    cardLast: { flex: 1, backgroundColor: SOFT, padding: 12, borderRadius: 5 },
+    cardTitle: { fontSize: 10.5, fontFamily: f.title, marginBottom: 5 },
+    cover: { backgroundColor: b.dark, color: "#FFFFFF", paddingHorizontal: 56, paddingTop: 64, paddingBottom: 56, justifyContent: "space-between" },
+    coverLogo: { height: 26, objectFit: "contain", marginBottom: 46, alignSelf: "flex-start" },
     coverEyebrow: { fontSize: 8.5, letterSpacing: 1.2, color: "#C2C7CE", textTransform: "uppercase" },
     coverRule: { width: 36, height: 3, backgroundColor: b.accent, marginTop: 12, marginBottom: 40 },
-    coverHead: { fontSize: 32, fontFamily: "Helvetica-Bold", lineHeight: 1.15, letterSpacing: -0.6 },
-    coverHi: { fontSize: 32, fontFamily: "Helvetica-Bold", lineHeight: 1.15, letterSpacing: -0.6, color: b.highlight },
+    coverHead: { fontSize: 32, fontFamily: f.display, lineHeight: 1.15, letterSpacing: -0.4 },
+    coverHi: { fontSize: 32, fontFamily: f.display, lineHeight: 1.15, letterSpacing: -0.4, color: b.highlight },
     coverSub: { fontSize: 12, color: "#C2C7CE", marginTop: 18 },
     coverMetaRow: { flexDirection: "row", borderTopWidth: 0.6, borderTopColor: "#3A4049", paddingTop: 18 },
     coverLabel: { fontSize: 7.2, color: "#9CA3AD", letterSpacing: 0.8, textTransform: "uppercase", marginBottom: 4 },
     coverValue: { fontSize: 11.5, color: "#FFFFFF" },
     coverSmall: { fontSize: 8.5, color: "#C2C7CE", marginTop: 3 },
+    tagline: { fontSize: 8, color: "#9CA3AD", letterSpacing: 1, textTransform: "uppercase", marginTop: 18 },
   });
 }
 
@@ -141,8 +245,11 @@ function Section({ s, b, short, prepFor, n, eyebrow, title, lede, children }: { 
   return (
     <Page size="LETTER" style={s.page}>
       <View style={s.head} fixed>
-        <Text>{short} · Go-to-market strategy</Text>
-        <Text>Confidential · Prepared for {prepFor}</Text>
+        {/* eslint-disable-next-line jsx-a11y/alt-text -- react-pdf images take no alt */}
+        {b.logo ? <Image src={b.logo} style={s.headLogo} /> : <Text>{short} · Go-to-market strategy</Text>}
+        <Text>
+          {b.logo ? `${short} · Go-to-market strategy · ` : ""}Confidential · Prepared for {prepFor}
+        </Text>
       </View>
       <Text style={s.num}>
         {n} · {eyebrow}
@@ -151,7 +258,10 @@ function Section({ s, b, short, prepFor, n, eyebrow, title, lede, children }: { 
       {lede ? <Text style={s.lede}>{lede}</Text> : null}
       {children}
       <View style={s.foot} fixed>
-        <Text>{b.preparedBy}</Text>
+        <Text>
+          {b.preparedBy}
+          {b.tagline ? ` · ${b.tagline}` : ""}
+        </Text>
         <Text render={({ pageNumber }) => `${pageNumber}`} />
       </View>
     </Page>
@@ -165,6 +275,8 @@ export function GtmDoc({ c, brand, prospect }: { c: GtmContent; brand: GtmBrand;
     <Document title={`${prospect.name} · Go-to-market strategy`} author={brand.preparedBy} creator={brand.preparedBy} producer={brand.preparedBy}>
       <Page size="LETTER" style={s.cover}>
         <View>
+          {/* eslint-disable-next-line jsx-a11y/alt-text -- react-pdf images take no alt */}
+          {brand.coverLogo ? <Image src={brand.coverLogo} style={s.coverLogo} /> : null}
           <Text style={s.coverEyebrow}>{c.cover.eyebrow}</Text>
           <View style={s.coverRule} />
           <Text style={s.coverHead}>{c.cover.headline}</Text>
@@ -185,7 +297,9 @@ export function GtmDoc({ c, brand, prospect }: { c: GtmContent; brand: GtmBrand;
           </View>
           <View style={{ marginTop: 22 }}>
             <Text style={s.coverLabel}>Prepared by</Text>
-            <Text style={s.coverValue}>{brand.preparedBy}</Text>
+            <Text style={s.coverValue}>{brand.preparedLine ?? brand.preparedBy}</Text>
+            {brand.preparedLine ? <Text style={s.coverSmall}>{brand.preparedBy}</Text> : null}
+            {brand.tagline ? <Text style={s.tagline}>{brand.tagline}</Text> : null}
           </View>
         </View>
       </Page>

@@ -36,9 +36,11 @@ export type Prospect = {
   archived_by: string | null;
   archive_reason: string | null;
   archive_note: string | null;
+  relationship: "direct" | "white_label" | null;
+  partner_key: string | null;
 };
 
-export const PROSPECT_COLS = "id, name, website, industry, location, contacts, fit_score, fit_reason, brief, status, owner_id, source, notes, lost_reason, client_id, won_at, researched_at, created_at, updated_at, archived_at, archived_by, archive_reason, archive_note";
+export const PROSPECT_COLS = "id, name, website, industry, location, contacts, fit_score, fit_reason, brief, status, owner_id, source, notes, lost_reason, client_id, won_at, researched_at, created_at, updated_at, archived_at, archived_by, archive_reason, archive_note, relationship, partner_key";
 
 const RESEARCH_RULES = `Public sources only: the business's own website, Google (Business Profile, reviews), Yelp and similar review sites, their public social profiles (Instagram, Facebook, TikTok, YouTube), the Meta Ad Library (facebook.com/ads/library, search the page name: active ads and how long they've run) and the Google Ads Transparency Center (adstransparency.google.com). LinkedIn: only what a public web search shows (a company page or a person's title in a search result); never log in, browse or scrape LinkedIn. Never guess: when you can't see something (an ad library page that won't load), say "not visible" and why.`;
 
@@ -443,8 +445,15 @@ Only what the transcript supports.`,
 }
 
 /** Changes a prospect's stage, owner, notes or details (the person's own session; RLS checks they work sales) */
-export async function updateProspect(db: SupabaseClient, id: string, patch: { status?: unknown; owner_id?: unknown; notes?: unknown; lost_reason?: unknown; name?: unknown; website?: unknown; location?: unknown; industry?: unknown; fit_score?: unknown }): Promise<{ ok: true; prospect: Prospect } | { ok: false; error: string }> {
+export async function updateProspect(db: SupabaseClient, id: string, patch: { status?: unknown; owner_id?: unknown; notes?: unknown; lost_reason?: unknown; name?: unknown; website?: unknown; location?: unknown; industry?: unknown; fit_score?: unknown; relationship?: unknown; partner_key?: unknown }): Promise<{ ok: true; prospect: Prospect } | { ok: false; error: string }> {
   const row: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  // Direct Kaizen deal or a white-label pitch (with its partner): the GTM, notes and proposal follow it
+  if (patch.relationship !== undefined) {
+    if (patch.relationship !== "direct" && patch.relationship !== "white_label" && patch.relationship !== null) return { ok: false, error: "The relationship is direct or white_label." };
+    row.relationship = patch.relationship;
+    if (patch.relationship === "direct") row.partner_key = null;
+  }
+  if (patch.partner_key !== undefined && patch.relationship !== "direct") row.partner_key = typeof patch.partner_key === "string" && patch.partner_key ? patch.partner_key : null;
   if (patch.status !== undefined) {
     if (!isProspectStatus(patch.status)) return { ok: false, error: "The stage is one of new, researched, contacted, talking, proposal, won or lost." };
     row.status = patch.status;

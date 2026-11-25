@@ -43,7 +43,7 @@ const NOTES_SCHEMA = obj({ headline: STR, flags: CLAIMS, decisions: CLAIMS, cave
 
 export async function partnerOf(admin: Admin, key: string | null | undefined): Promise<Partner | null> {
   if (!key) return null;
-  const { data } = await admin.from("sales_partners").select("key, name, prepared_by, brand, rules, show_fees").eq("key", key).eq("active", true).maybeSingle();
+  const { data } = await admin.from("sales_partners").select("key, name, prepared_by, brand, rules, show_fees, contact, website, kit_confirmed_at").eq("key", key).eq("active", true).maybeSingle();
   return (data as Partner | null) ?? null;
 }
 
@@ -51,8 +51,24 @@ export async function partnerOf(admin: Admin, key: string | null | undefined): P
 export async function partnerNamed(admin: Admin, text: string | null | undefined): Promise<Partner | null> {
   const t = String(text ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
   if (!t) return null;
-  const { data } = await admin.from("sales_partners").select("key, name, prepared_by, brand, rules, show_fees").eq("active", true);
+  const { data } = await admin.from("sales_partners").select("key, name, prepared_by, brand, rules, show_fees, contact, website, kit_confirmed_at").eq("active", true);
   return ((data ?? []) as Partner[]).find((p) => t.includes(p.key) || t.includes(p.name.toLowerCase().replace(/[^a-z0-9]/g, ""))) ?? null;
+}
+
+/**
+ * Whether a prospect is a direct Kaizen deal or a white-label pitch, from what its record already shows: the relationship
+ * set on it, a partner on it, or a partner credited in its research ("Powered by ZenChange", the partner's domain on its
+ * forms). Null: ask, once ("Is this a direct Kaizen deal or a white-label pitch for a partner agency?").
+ */
+export async function relationshipOf(admin: Admin, p: { relationship?: string | null; partner_key?: string | null; brief?: unknown; id: string }): Promise<{ relationship: "direct" | "white_label"; partner: Partner | null; detected: boolean } | null> {
+  if (p.relationship === "direct") return { relationship: "direct", partner: null, detected: false };
+  if (p.relationship === "white_label" && p.partner_key) return { relationship: "white_label", partner: await partnerOf(admin, p.partner_key), detected: false };
+  const { data: partners } = await admin.from("sales_partners").select("key, name, prepared_by, brand, rules, show_fees, contact, website, kit_confirmed_at").eq("active", true);
+  const { data: rn } = await admin.from("prospect_notes").select("body").eq("prospect_id", p.id).eq("kind", "research").order("created_at", { ascending: false }).limit(1).maybeSingle();
+  const text = `${JSON.stringify(p.brief ?? {})} ${String((rn?.body as { notes?: string } | null)?.notes ?? "")}`.toLowerCase();
+  const { partnerCredited } = await import("@/lib/sales-gtm-core");
+  const hit = ((partners ?? []) as Partner[]).find((x) => partnerCredited(text, x));
+  return hit ? { relationship: "white_label", partner: hit, detected: true } : null;
 }
 
 export async function queueGtm(admin: Admin, o: { prospectId: string; profileId: string; partnerKey?: string | null; ask?: string | null }): Promise<{ id: string; existing: boolean }> {
@@ -90,6 +106,9 @@ export async function runGtm(admin: Admin, id: string): Promise<{ ran: boolean; 
     const { data: rn } = await admin.from("prospect_notes").select("body").eq("prospect_id", p.id).eq("kind", "research").order("created_at", { ascending: false }).limit(1).maybeSingle();
     const raw = (rn?.body ?? {}) as { notes?: string; market_notes?: string };
     const partner = await partnerOf(admin, job.partner_key as string | null);
+    const { data: sb } = await admin.from("app_settings").select("value").eq("key", "sales_brand").maybeSingle();
+    const sv = (sb?.value ?? {}) as { sender_name?: string; sender_title?: string; tagline?: string };
+    const sender = { name: sv.sender_name ?? null, title: sv.sender_title ?? null, tagline: sv.tagline ?? "The 1% Agency" };
     const vertical = verticalOf(p.industry, brief.sells);
     const [rates, { data: studies }] = await Promise.all([rateCardText(admin), admin.from("sales_case_studies").select("key, name, vertical, fits, services, results, connection").eq("active", true).order("sort_order")]);
     const by = partner ? partner.prepared_by : "Kaizen Marketing";
@@ -149,7 +168,7 @@ Rules: every number comes from the research or is clearly an estimate; never inv
     // 4. The PDF, filed as a document (Drive saving goes through upload_to_drive and the Drive rule)
     await set({ stage: "pdf", notes });
     const { renderGtmPdf, brandFor } = await import("@/lib/sales-gtm-pdf");
-    const pdf = await renderGtmPdf(content, brandFor(partner), { name: p.name, short: content.cover.short || short0 });
+    const pdf = await renderGtmPdf(content, brandFor(partner, sender), { name: p.name, short: content.cover.short || short0 });
     const path = `prospects/${p.id}/gtm-${id}.pdf`;
     const up = await admin.storage.from("client-docs").upload(path, pdf, { contentType: "application/pdf", upsert: true });
     if (up.error) throw new Error(`The PDF couldn't be stored: ${up.error.message}`);
