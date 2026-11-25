@@ -6,10 +6,13 @@
 import type { KlaviyoMetric } from "./core";
 import { MAX_CONVERSION_METRICS, type ConversionMetric } from "@/lib/email-metrics";
 
-/** Names an order (placed, completed, a closed check, a purchase, a sale) */
-const ORDER = /\b(placed order|order placed|completed order|order completed|new order|orders?|purchase[ds]?|checkout completed|closed check|check closed|transaction|sale)\b/i;
+/**
+ * Names an order (placed, completed, a closed check, a purchase, a sale), or a booking a clinic or club sells through
+ * (Remedy Place: Zenoti's booked appointments)
+ */
+const ORDER = /\b(placed order|order placed|completed order|order completed|new order|orders?|purchase[ds]?|checkout completed|closed check|check closed|transaction|sale|booked|appointments?|bookings?)\b/i;
 /** Order-like names that are a step, a line item or an undo, never the order itself */
-const NOT_ORDER = /ordered product|product ordered|line item|item|cancel|refund|return|fulfill|ship|deliver|started checkout|checkout started|viewed|abandon|added|subscri|review|status|updated|edited|paid out/i;
+const NOT_ORDER = /ordered product|product ordered|line item|item|cancel|refund|return|fulfill|ship|deliver|started checkout|checkout started|viewed|abandon|added|subscri|review|status|updated|edited|paid out|remind|resched|no.?show|missed/i;
 
 /** How many unranked metrics one check reads (each is one Events-tier aggregate call, not the Reporting API) */
 export const MAX_CANDIDATES = 6;
@@ -20,7 +23,7 @@ export const isOrderMetric = (name: string) => ORDER.test(name) && !NOT_ORDER.te
 /** The account's order metrics not ranked yet, most order-like first (a "Placed Order" before a "Sale"), at most three */
 export function sourceCandidates(all: KlaviyoMetric[], rankedIds: string[]): KlaviyoMetric[] {
   const ranked = new Set(rankedIds);
-  const score = (m: KlaviyoMetric) => (/placed order|order placed/i.test(m.name) ? 0 : /order/i.test(m.name) ? 1 : 2);
+  const score = (m: KlaviyoMetric) => (/placed order|order placed/i.test(m.name) ? 0 : /order|booked/i.test(m.name) ? 1 : 2);
   return all
     .filter((m) => !ranked.has(m.id) && ORDER.test(m.name) && !NOT_ORDER.test(m.name))
     .sort((a, b) => score(a) - score(b) || a.name.localeCompare(b.name))
@@ -56,6 +59,16 @@ export type SourcesMemo = {
   metrics?: { id: string; name: string; integration: string | null; ranked: boolean }[];
   error?: string | null;
 };
+
+/**
+ * The metric to count as the sale when the account has no Placed Order and nobody picked one (a wellness club selling
+ * booked appointments through Zenoti): the order or booking metric Klaviyo credits the most revenue to email on, then
+ * the most orders. Null when none earned anything, so nothing is guessed.
+ */
+export function firstSource(found: SourcesMemo["found"] | null | undefined): ConversionMetric | null {
+  const top = [...(found ?? [])].filter((f) => f?.id && (Number(f.revenue) > 0 || Number(f.orders) > 0)).sort((a, b) => Number(b.revenue) - Number(a.revenue) || Number(b.orders) - Number(a.orders))[0];
+  return top ? { id: top.id, name: top.name, integration: top.integration ?? null } : null;
+}
 
 /** The check runs once a week per client */
 export const SOURCES_EVERY_MS = 7 * 86_400_000;

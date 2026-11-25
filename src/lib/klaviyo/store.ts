@@ -329,12 +329,12 @@ export async function saveFlowDays(admin: SupabaseClient, clientId: string, seri
  * ranked, each one's revenue Klaviyo credits to email over the last 30 days, kept in sync_state for the report's QA.
  * Read only in Klaviyo; a failure is noted in the memo, never failing the read.
  */
-async function checkUnrankedSources(admin: SupabaseClient, conn: ConnRow, key: string, ranked: string[], today: string, tz: string | null) {
+async function checkUnrankedSources(admin: SupabaseClient, conn: ConnRow, key: string, ranked: string[], today: string, tz: string | null, force = false) {
   const { SOURCES_EVERY_MS, parseAttributedTotal, sourceCandidates, isOrderMetric } = await import("./sources");
   const source = `klaviyo-sources:${conn.client_id}`;
   const { data } = await admin.from("sync_state").select("last_result").eq("source", source).maybeSingle();
   const was = (data?.last_result as { at?: string } | null) ?? null;
-  if (was?.at && Date.now() - Date.parse(was.at) < SOURCES_EVERY_MS) return;
+  if (!force && was?.at && Date.now() - Date.parse(was.at) < SOURCES_EVERY_MS) return;
   const found: { id: string; name: string; integration: string | null; revenue: number; orders: number }[] = [];
   let metrics: { id: string; name: string; integration: string | null; ranked: boolean }[] = [];
   let error: string | null = null;
@@ -371,6 +371,24 @@ async function rankBySources(admin: SupabaseClient, conn: ConnRow, key: string) 
   if (!next) return;
   const { error } = await admin.from("klaviyo_connections").update({ conversion_metrics: next, conversion_metric_id: next[0].id, conversion_metric_name: next[0].name.slice(0, 120) }).eq("client_id", conn.client_id).eq("conversion_metric_manual", false);
   if (!error) Object.assign(conn, { conversion_metrics: next, conversion_metric_id: next[0].id, conversion_metric_name: next[0].name });
+}
+
+/**
+ * No Placed Order and nothing picked (Remedy Place: booked appointments through Zenoti): the order or booking metric
+ * Klaviyo credits the most email revenue to becomes the sale, saved as the ranked list so every read and report uses
+ * it. Checked on each full read until one is found (never once a lead or an exec picked by hand). Null when none earns.
+ */
+async function adoptSource(admin: SupabaseClient, conn: ConnRow, key: string, today: string, tz: string | null): Promise<string | null> {
+  if (conn.conversion_metric_manual) return null;
+  const { firstSource } = await import("./sources");
+  await checkUnrankedSources(admin, conn, key, [], today, tz, true);
+  const { data } = await admin.from("sync_state").select("last_result").eq("source", `klaviyo-sources:${conn.client_id}`).maybeSingle();
+  const m = firstSource((data?.last_result as { found?: import("./sources").SourcesMemo["found"] } | null)?.found);
+  if (!m) return null;
+  const { error } = await admin.from("klaviyo_connections").update({ conversion_metrics: [m], conversion_metric_id: m.id, conversion_metric_name: m.name.slice(0, 120) }).eq("client_id", conn.client_id).eq("conversion_metric_manual", false);
+  if (error) return null;
+  Object.assign(conn, { conversion_metrics: [m], conversion_metric_id: m.id, conversion_metric_name: m.name });
+  return m.id;
 }
 
 // ─── The lower ranked conversion metrics ───────────────────────────────────
@@ -531,7 +549,15 @@ async function readFull(admin: SupabaseClient, conn: ConnRow, key: string): Prom
   const ranked = Array.isArray(conn.conversion_metrics) && conn.conversion_metrics.length > 0;
   const picked = (conn.conversion_metric_manual || ranked) && conn.conversion_metric_id ? conn.conversion_metric_id : null;
   if (!picked && metrics?.placedOrder && metrics.placedOrder !== conn.conversion_metric_id) await admin.from("klaviyo_connections").update({ conversion_metric_id: metrics.placedOrder, conversion_metric_name: "Placed Order" }).eq("client_id", clientId);
-  const metricId = picked ?? metrics?.placedOrder ?? (await metricOf(admin, conn, key));
+  // No Placed Order either (a club selling booked appointments): the booking or order metric email earns on, found by itself
+  const adopted =
+    !picked && metrics && !metrics.placedOrder
+      ? await adoptSource(admin, conn, key, today, tz).catch((e) => {
+          if (isAuth(e)) throw e;
+          return null;
+        })
+      : null;
+  const metricId = picked ?? metrics?.placedOrder ?? adopted ?? (await metricOf(admin, conn, key));
   await step(12, "Reading the campaigns");
   const email = await listCampaigns(key, "email", sinceIso);
   const sms = await listCampaigns(key, "sms", sinceIso).catch(() => []);
