@@ -138,9 +138,9 @@ async function readClient(admin: Admin, clientId: string, batch: Msg[], team: st
     system: `You read new messages in a client's shared Slack channel and email with Kaizen, a paid ads, creative, email and social agency, and pick out only what changes the work. Most messages change nothing: return no signals for them.
 cancel: the CLIENT calls off or drops something (a promotion, a send, a campaign, a meeting, an ask): kill the open items and promises it makes moot, and add the tasks it implies for the line owners (e.g. unschedule related sends, confirm nothing related is queued, check before any related ad runs).
 dated_request: the CLIENT asks for work with a date or deadline (go live by, take down after, send on): one task per piece (each offer, each change, the take-down after the date), due when it must be live or done (go live before an event, not on the event day) (YYYY-MM-DD; this year unless said), for the owner of the line it belongs to; include the details given (offers, prices to their customers, dates on and off).
-hold: anyone says the client is on hold, paused, in a dispute or crisis, or that nothing should go to them until something is approved: kill reminders and promises that would contact them, and one task for the account's owner to pause every automated send to the client (reports, check-ins, review emails, sequences) until it's lifted.
+hold: the CLIENT AS A WHOLE is on hold, paused, in a dispute or crisis, or nothing should go to them until something is approved (one product, ad, offer or campaign held back is NOT a hold: that's a cancel or a dated_request): kill reminders and promises that would contact them, and one task for the account's owner to pause every automated send to the client (reports, check-ins, review emails, sequences) until it's lifted.
 resume: a hold is lifted.
-recurring: a TEAMMATE commits to a repeating deliverable ("I'll send registrations and cost per registration daily until 12/5"): owner (that teammate), what, cadence, weekday for weekly (0 Sunday), until (YYYY-MM-DD or null).
+recurring: only a message marked (Kaizen team) where a TEAMMATE commits to a repeating report or deliverable they'll send (a standing rule like "always use unique codes" is not recurring) ("I'll send registrations and cost per registration daily until 12/5"): owner (that teammate), what, cadence, weekday for weekly (0 Sunday), until (YYYY-MM-DD or null).
 Owners are names from the client's team: ${seats || "none listed"}. Never state what Kaizen charges the client. ${PEOPLE_RULE} Today is ${today}.`,
     schema: SCHEMA,
     prompt: [
@@ -201,12 +201,13 @@ Owners are names from the client's team: ${seats || "none listed"}. Never state 
           tally.made++;
         }
       }
-      if (s.kind === "recurring" && s.recurring) {
+      // A recurring commitment is the team's word only (a client's standing rule isn't one)
+      if (s.kind === "recurring" && s.recurring && isTeamAuthor(m.author, team)) {
         const owner = ownerOf(s.recurring.owner);
         if (owner) outcome.recurring = { ownerId: owner.profileId, owner: owner.name, what: s.recurring.what.slice(0, 200), cadence: s.recurring.cadence, weekday: s.recurring.weekday, until: s.recurring.until, from: m.occurred_at };
       }
     }
-    const main = sigs.find((s) => s.kind === "hold" || s.kind === "resume")?.kind ?? sigs[0]?.kind ?? "none";
+    const main = sigs.find((s) => s.kind === "hold" || s.kind === "resume")?.kind ?? (outcome.recurring ? "recurring" : sigs.find((s) => s.kind !== "recurring")?.kind) ?? "none";
     await admin.from("client_signals").upsert({ context_item_id: m.id, client_id: clientId, said_at: m.occurred_at, kind: main, signals: sigs, outcome }, { onConflict: "context_item_id", ignoreDuplicates: true });
   }
   return tally;
