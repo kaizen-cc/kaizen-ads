@@ -1,4 +1,5 @@
 import "server-only";
+import { isBareSlackLink, slackLink, workspaceBase } from "@/lib/slack-link";
 import type { Tracker } from "@/lib/progress";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { compact, getCursor, saveItems, setCursor, trimBody, type CollectResult, type ContextItem } from "./shared";
@@ -151,14 +152,26 @@ async function personName(id: string | undefined) {
 }
 
 /** A message's link. A reply inside a thread needs the thread too, or Slack opens the channel and the reply isn't there. */
-export const permalink = (channel: string, ts: string, threadTs?: string | null) => `https://slack.com/archives/${channel}/p${ts.replace(".", "")}${threadTs && threadTs !== ts ? `?thread_ts=${threadTs}&cid=${channel}` : ""}`;
+/** The workspace's own address once known (set by slackWorkspace()): links made after that open the Slack app at the message */
+let knownBase: string | null = null;
+
+/** A message's link, with the workspace's own address when it's known (a bare slack.com link doesn't open the app on a phone) */
+export const permalink = (channel: string, ts: string, threadTs?: string | null) =>
+  slackLink(`https://slack.com/archives/${channel}/p${ts.replace(".", "")}${threadTs && threadTs !== ts ? `?thread_ts=${threadTs}&cid=${channel}` : ""}`, knownBase);
 
 let workspace: Promise<string | null> | null = null;
 /** Our workspace's own address (https://name.slack.com/), asked of Slack once per server */
 export function slackWorkspace(): Promise<string | null> {
   if (!slackConfigured()) return Promise.resolve(null);
   workspace ??= slack<{ url?: string }>("auth.test", {})
-    .then((r) => (r.url ? r.url.replace(/\/?$/, "/") : null))
+    .then((r) => {
+      const base = workspaceBase(r.url);
+      if (base) {
+        knownBase = base;
+        void rememberWorkspace(base);
+      }
+      return base;
+    })
     .catch(() => {
       workspace = null;
       return null;
@@ -174,9 +187,32 @@ export function slackWorkspace(): Promise<string | null> {
  */
 export async function openableLink<T extends string | null>(href: T): Promise<T> {
   if (href?.startsWith("https://mail.google.com/")) return fixGmailLink(href);
-  if (!href || !href.startsWith("https://slack.com/archives/")) return href;
+  if (!href || !isBareSlackLink(href)) return href;
+  return slackLink(href, await slackWorkspace());
+}
+
+/** Kept in app_settings (slack_workspace) so pages can fix links without asking Slack: src/components/slack-link-fix.tsx */
+async function rememberWorkspace(base: string) {
+  try {
+    const { adminConfigured, createAdminClient } = await import("@/lib/supabase/admin");
+    if (!adminConfigured()) return;
+    await createAdminClient().from("app_settings").upsert({ key: "slack_workspace", value: { url: base } }, { onConflict: "key" });
+  } catch {
+    // Pages fall back to asking at click time; nothing breaks
+  }
+}
+
+/**
+ * Every Slack link already saved (context, owed replies, promises, notifications, done checks, heads-ups, hidden items,
+ * nudges, direction changes, line reviews, email suggestions) given the workspace's own address, in the database at
+ * once (rewrite_slack_links). Idempotent: only bare links change. Run with the Slack step.
+ */
+export async function fixStoredSlackLinks(admin: SupabaseClient): Promise<number> {
   const base = await slackWorkspace();
-  return (base ? href.replace("https://slack.com/", base) : href) as T;
+  if (!base) return 0;
+  const { data, error } = await admin.rpc("rewrite_slack_links" as never, { p_base: base } as never);
+  if (error) throw new Error(error.message);
+  return Number(data) || 0;
 }
 
 export async function readChannel(channel: string, since: Date, clientId: string, source: ContextItem["source"]) {

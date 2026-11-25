@@ -556,6 +556,8 @@ export async function GET(request: Request) {
     // Execs, by hand: check every ad for fatigue now
     if (step === "fatigue") return Response.json({ ...(await runFatigue(admin)), refreshes: await prewriteRefreshes(admin) });
     if (step === "suggest") return Response.json(await runStrategist(admin, null));
+    // Saved Slack links get the workspace's own address first, so they open the app at the message on a phone
+    if (step === "slack") await (await import("@/lib/context/slack")).fixStoredSlackLinks(admin).catch((e) => console.error("[slack links]", e instanceof Error ? e.message : e));
     if (step === "slack" || step === "drive" || step === "gmail" || step === "meta") return Response.json(await collectStep(admin, step as Step));
     return Response.json({ error: "Use ?step=slack, drive, gmail, brief or check" }, { status: 400 });
   } catch (e) {

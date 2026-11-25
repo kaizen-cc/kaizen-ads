@@ -3,6 +3,8 @@ import { UploadProvider } from "@/components/upload-provider";
 import { AgentCallProvider } from "@/components/agent-call-provider";
 import { Toaster } from "@/components/toasts";
 import { AuditWatcher } from "@/components/audit-watcher";
+import { SlackLinkFix } from "@/components/slack-link-fix";
+import { workspaceBase } from "@/lib/slack-link";
 import { ActivityTracker } from "@/components/activity-tracker";
 import { AssistantRinger } from "@/components/assistant-ringer";
 import { FeedbackBubble } from "@/components/feedback-bubble";
@@ -39,11 +41,20 @@ export default async function TeamLayout({ children }: LayoutProps<"/">) {
   // Their own assistant's color is read on its own, so the theme still loads before its migration
   // The team's pictures (profiles are staff-wide) and their own profile bits are read the same way: before the profiles
   // migration the second just comes back empty
-  const [{ data: pref }, { data: look }, { data: people }, { data: mine }] = await Promise.all([
+  const [{ data: pref }, { data: look }, { data: people }, { data: mine }, slackBase] = await Promise.all([
     db.from("profiles").select("theme").eq("id", me.id).maybeSingle(),
     db.from("profiles").select("assistant_color").eq("id", me.id).maybeSingle(),
     db.from("profiles").select("id, full_name, avatar_url"),
     db.from("profiles").select("display_name, assistant_name, profile_seeded_at").eq("id", me.id).maybeSingle(),
+    // The Slack workspace's own address (saved by the Slack step), so every Slack link opens the app at the message
+    adminConfigured()
+      ? createAdminClient()
+          .from("app_settings")
+          .select("value")
+          .eq("key", "slack_workspace")
+          .maybeSingle()
+          .then((r) => workspaceBase((r.data?.value as { url?: string } | null)?.url ?? null))
+      : Promise.resolve(null),
   ]);
   // First setup: their picture, name, title and status come over from Slack once (never again on its own)
   // (never while the owner views as them: nothing is changed for a real person)
@@ -62,6 +73,7 @@ export default async function TeamLayout({ children }: LayoutProps<"/">) {
       </TeamShell>
       <Toaster />
       <AuditWatcher />
+      <SlackLinkFix base={slackBase} />
       <ActivityTracker />
       {/* Urgent items: their assistant rings them in the app (or leaves it in the chat) */}
       <AssistantRinger />
