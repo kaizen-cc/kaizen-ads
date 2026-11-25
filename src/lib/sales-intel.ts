@@ -1,4 +1,5 @@
 import "server-only";
+import { createHmac } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 // The real market data a prospect's go-to-market strategy is written from (read at writing time, src/lib/sales-gtm.ts):
@@ -115,6 +116,28 @@ async function readCensus(o: { location: string | null; places: string[] }): Pro
   return `<census source="U.S. Census Bureau API: ACS 5-year 2023 estimates; County Business Patterns 2022" read="${new Date().toISOString().slice(0, 10)}">\n${lines.join("\n")}\n</census>`;
 }
 
+/**
+ * Meta's own Ad Library API (graph ads_archive), asked first for every brand by name. For US advertisers it returns
+ * only social-issue, election and political ads (all ad types are open only for ads delivered in the EU), so a
+ * commercial advertiser usually comes back empty or refused: the exact answer is kept and shown, never hidden.
+ */
+async function adsArchive(term: string): Promise<{ ok: true; ads: { page: string; start: string | null; stop: string | null; body: string; title: string }[] } | { ok: false; error: string }> {
+  const token = process.env.META_SYSTEM_USER_TOKEN;
+  if (!token) return { ok: false, error: "no Meta token configured" };
+  const v = process.env.META_API_VERSION || "v24.0";
+  const proof: Record<string, string> = process.env.META_APP_SECRET ? { appsecret_proof: createHmac("sha256", process.env.META_APP_SECRET).update(token).digest("hex") } : {};
+  const params = new URLSearchParams({ search_terms: term, ad_reached_countries: '["US"]', ad_active_status: "ALL", ad_type: "ALL", fields: "page_name,ad_delivery_start_time,ad_delivery_stop_time,ad_creative_bodies,ad_creative_link_titles", limit: "50", ...proof, access_token: token });
+  try {
+    const r = (await (await fetch(`https://graph.facebook.com/${v}/ads_archive?${params}`, { cache: "no-store", signal: AbortSignal.timeout(20_000) })).json()) as { data?: { page_name?: string; ad_delivery_start_time?: string; ad_delivery_stop_time?: string; ad_creative_bodies?: string[]; ad_creative_link_titles?: string[] }[]; error?: { message?: string; code?: number } };
+    if (r.error) return { ok: false, error: `${r.error.message ?? "refused"}${r.error.code ? ` (code ${r.error.code})` : ""}` };
+    return { ok: true, ads: (r.data ?? []).map((a) => ({ page: a.page_name ?? "", start: a.ad_delivery_start_time ?? null, stop: a.ad_delivery_stop_time ?? null, body: a.ad_creative_bodies?.[0] ?? "", title: a.ad_creative_link_titles?.[0] ?? "" })) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message.slice(0, 160) : String(e) };
+  }
+}
+
+const month = (iso: string | null | undefined) => (iso && !Number.isNaN(Date.parse(iso)) ? new Date(iso).toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" }) : null);
+
 const domainOf = (site: string | null | undefined) => (site ? site.replace(/^https?:\/\//i, "").replace(/^www\./i, "").split("/")[0].toLowerCase() : null);
 
 /**
@@ -134,6 +157,9 @@ export async function metaAdIntel(admin: Admin, brands: { name: string; website:
     const out: string[] = [];
     for (const b of brands.slice(0, 6)) {
       const domain = domainOf(b.website);
+      // Meta's own API first, its answer kept as it came
+      const arch = await adsArchive(b.name);
+      const archLine = arch.ok ? `Meta Ad Library API (ads_archive, US, all statuses): ${arch.ads.length} ads returned${arch.ads.length ? ` (pages: ${[...new Set(arch.ads.map((a) => a.page))].slice(0, 3).join(", ")}; first seen ${month(arch.ads.map((a) => a.start).filter(Boolean).sort()[0]) ?? "n/a"})` : " (for US advertisers the API covers only political and issue ads)"}` : `Meta Ad Library API (ads_archive) refused: ${arch.error}`;
       let brandId: string | null = null;
       let brandName = b.name;
       if (domain) {
@@ -148,25 +174,27 @@ export async function metaAdIntel(admin: Admin, brands: { name: string; website:
       }
       const label = `${b.role === "prospect" ? "PROSPECT" : "COMPETITOR"} ${b.name}${domain ? ` (${domain})` : ""}`;
       if (!brandId) {
-        out.push(`${label}: no Meta advertiser found for this ${domain ? "website" : "name"} in the Ad Library index (read ${read}); treat as not running Meta ads now.`);
+        out.push(`${label}: no Meta advertiser found for ${domain ? `the website ${domain} or the name "${b.name}"` : `the name "${b.name}"`} in the Ad Library index via Motion (read ${read}); treat as not running Meta ads now. ${archLine}.`);
         continue;
       }
       const r = await s.call("get_inspo_creatives", { brandIds: [brandId], status: "ACTIVE", sort: "NEWEST", limit: 60 }).catch((e) => e instanceof Error ? e.message : String(e));
       if (typeof r === "string") {
-        out.push(`${label}: Motion couldn't read its ads (${r.slice(0, 160)}).`);
+        out.push(`${label}: not checked: Motion couldn't read its ads (error: ${r.slice(0, 160)}). ${archLine}.`);
         continue;
       }
       const entry = itemsOf(r).find((e) => str(pick(e, "id", "brandId")) === brandId) ?? itemsOf(r)[0];
       const ads = (entry ? itemsOf((entry as Record<string, unknown>).creatives ?? entry) : []).map((ad) => adRow(ad, brandId!, null)).filter((x): x is NonNullable<typeof x> => Boolean(x));
       if (!ads.length) {
-        out.push(`${label} [Meta advertiser "${brandName}"]: 0 active ads right now (read ${read}).`);
+        out.push(`${label} [Meta advertiser "${brandName}"]: 0 active ads right now (read ${read}). ${archLine}.`);
         continue;
       }
       const formats = Object.entries(ads.reduce<Record<string, number>>((m, a) => ({ ...m, [a.format ?? "other"]: (m[a.format ?? "other"] ?? 0) + 1 }), {})).map(([k, v]) => `${v} ${k}`).join(", ");
       const longest = Math.max(...ads.map((a) => a.days_active ?? 0));
       const landings = [...new Set(ads.map((a) => domainOf(a.landing_url) && a.landing_url!.replace(/[?#].*$/, "")).filter(Boolean))].slice(0, 5);
       const samples = ads.slice(0, 6).map((a) => `  - ${a.format ?? "ad"}, ${a.days_active ?? "?"} days: "${(a.headline ?? "").slice(0, 120)}" / "${(a.body ?? "").replace(/\s+/g, " ").slice(0, 260)}" CTA ${a.cta ?? "n/a"}${a.landing_url ? ` → ${a.landing_url.replace(/[?#].*$/, "").slice(0, 120)}` : ""}`);
-      out.push(`${label} [Meta advertiser "${brandName}"]: ${ads.length}${ads.length >= 60 ? "+" : ""} active ads (${formats}); longest running ${longest} days; landing pages: ${landings.join(", ") || "n/a"}\n${samples.join("\n")}`);
+      const since = month(ads.map((a) => a.launched_at).filter((x): x is string => Boolean(x)).sort()[0]);
+      const newest = month(ads.map((a) => a.launched_at).filter((x): x is string => Boolean(x)).sort().at(-1));
+      out.push(`${label} [Meta advertiser "${brandName}"]: ${ads.length}${ads.length >= 60 ? "+" : ""} active ads${since ? ` running since ${since} (newest launched ${newest})` : ""} (${formats}); longest running ${longest} days; landing pages: ${landings.join(", ") || "n/a"}. ${archLine}.\n${samples.join("\n")}`);
     }
     return `<meta_ads source="Meta Ad Library via Motion" read="${read}">\n${out.join("\n")}\n</meta_ads>`;
   } catch (e) {
