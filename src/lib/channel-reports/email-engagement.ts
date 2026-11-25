@@ -1,3 +1,4 @@
+import { campaignDay } from "./campaign-day";
 import { daysIn, monthSoFar, shiftDay } from "@/lib/reports/period";
 import type { CampaignLite, DailyRow } from "@/lib/klaviyo/insights";
 
@@ -591,7 +592,7 @@ const inRange = <T extends { sendTime: string | null; recipients: number }>(
   r: Range,
 ) =>
   cs.filter((c) => {
-    const d = etDay(c.sendTime);
+    const d = campaignDay(c);
     return d >= r.start && d <= r.end && c.recipients > 0;
   });
 
@@ -676,7 +677,7 @@ export function emailEngagement(i: EngagementInput): Engagement {
 
   // Each campaign, with its best-clicked link when the source gives clicks per link
   const sent = inRange(email, i.main).sort((a, b) =>
-    etDay(a.sendTime).localeCompare(etDay(b.sendTime)),
+    campaignDay(a).localeCompare(campaignDay(b)),
   );
   const median =
     [...sent.map((c) => c.delivered)].sort((a, b) => a - b)[
@@ -695,7 +696,7 @@ export function emailEngagement(i: EngagementInput): Engagement {
       id: c.id,
       name: c.name,
       subject: c.subject,
-      date: etDay(c.sendTime),
+      date: campaignDay(c),
       delivered: c.delivered,
       opens: c.opensUnique,
       clickers: c.clicksUnique,

@@ -1,3 +1,4 @@
+import type { ConversionNoun } from "./core";
 import type { LocationMetricBreakdown } from "@/lib/klaviyo/locations";
 import { int, pct } from "./core";
 import { wholeMoney } from "./email-message";
@@ -88,7 +89,7 @@ export const fromKlaviyo = (source: string | null | undefined) => !source || sou
 export type CardStat = { key: string; label: string; value: string; sub?: string | null; grade?: Grade | null; /** 0..1 along the gauge, and where the bar sits on it */ gauge?: { fill: number; mark: number } | null; strong?: boolean };
 
 /** A campaign card's numbers: recipients, open and click rate, orders, revenue and revenue per recipient (never graded against Kaizen's internal bars: those are for the team) */
-export function cardStats(r: Pick<MessageRow, "channel" | "recipients" | "openRate" | "clickRate" | "orders" | "orderRate" | "revenue">, currency: string | null, revenueMeasured = true): CardStat[] {
+export function cardStats(r: Pick<MessageRow, "channel" | "recipients" | "openRate" | "clickRate" | "orders" | "orderRate" | "revenue">, currency: string | null, revenueMeasured = true, noun: Pick<ConversionNoun, "title" | "rate"> = { title: "Orders", rate: "ordered" }): CardStat[] {
   const sms = r.channel === "sms";
   const rpr = r.recipients > 0 ? r.revenue / r.recipients : null;
   // A text has no open rate: its card reads recipients, clicks and orders, never an email's open gauge
@@ -99,7 +100,7 @@ export function cardStats(r: Pick<MessageRow, "channel" | "recipients" | "openRa
   ];
   if (!revenueMeasured) return out;
   out.push(
-    { key: "orders", label: "Orders", value: int(r.orders), sub: r.orderRate != null ? `${pct(r.orderRate, 2)} ordered` : null },
+    { key: "orders", label: noun.title, value: int(r.orders), sub: r.orderRate != null ? `${pct(r.orderRate, 2)} ${noun.rate}` : null },
     { key: "revenue", label: "Revenue", value: wholeMoney(r.revenue, currency), strong: true },
     { key: "rpr", label: "Revenue per recipient", value: rpr == null ? "–" : rprMoney(rpr, currency), sub: "Over every email and text sent" },
   );

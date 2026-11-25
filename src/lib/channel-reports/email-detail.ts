@@ -1,3 +1,4 @@
+import { campaignDay } from "./campaign-day";
 import { deliverabilityScore, EMAIL_CHECKS, type EmailCheckKey } from "@/lib/email-score";
 import type { CampaignLite, DailyRow, FlowLite } from "@/lib/klaviyo/insights";
 import type { CampaignAudiences } from "@/lib/klaviyo/audiences";
@@ -102,7 +103,7 @@ const nextDay = (d: string) => new Date(Date.parse(`${d}T12:00:00Z`) + 86_400_00
 type Win = { start: string; end: string };
 const inWin = (d: string, w: Win) => d >= w.start && d <= w.end;
 
-const sentIn = (list: CampaignLite[], w: Win) => list.filter((c) => inWin(etDay(c.sendTime), w) && c.recipients > 0);
+const sentIn = (list: CampaignLite[], w: Win) => list.filter((c) => inWin(campaignDay(c), w) && c.recipients > 0);
 
 function campaignPerf(list: CampaignLite[]) {
   const em = list.filter((c) => c.channel !== "sms");
@@ -187,7 +188,7 @@ function dayParts(i: DetailInput, w: Win, sent: CampaignLite[]): { date: string;
   const out: { date: string; campaign: number; flow: number; sms: number; smsCampaign: number }[] = [];
   for (let d = w.start; d <= w.end; d = nextDay(d)) {
     const row = byDate.get(d);
-    const smsCampaign = r2(sum(sent.filter((c) => c.channel === "sms" && etDay(c.sendTime) === d), (c) => c.revenue));
+    const smsCampaign = r2(sum(sent.filter((c) => c.channel === "sms" && campaignDay(c) === d), (c) => c.revenue));
     out.push({ date: d, campaign: r2(row?.campaignRevenue ?? 0), flow: r2(row?.flowRevenue ?? 0), sms: r2(Math.max(row?.smsRevenue ?? 0, smsCampaign)), smsCampaign });
   }
   return out;
@@ -208,7 +209,7 @@ export function emailDetail(i: DetailInput): EmailDetail {
     .map((c) => ({
       id: c.id,
       name: c.name,
-      date: etDay(c.sendTime),
+      date: campaignDay(c),
       channel: c.channel === "sms" ? "sms" : "email",
       status: null,
       recipients: c.recipients,

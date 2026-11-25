@@ -5,7 +5,7 @@ import { scrubAgency, scrubSections } from "@/lib/reports/white-label";
 import type { Sections } from "@/lib/reports/write";
 import type { Move } from "@/lib/reports/weekly-core";
 import { BENCHMARKS } from "@/lib/klaviyo/insights";
-import { cadenceWord, channelName, fitFont, int, isEngagement, metricsSupport, money, moveOf, pct, priorWordOf, shortMoney, signed, takeawaysFor, type EmailMetrics, type SocialMetrics } from "./core";
+import { cadenceWord, channelName, fitFont, int, isEngagement, metricsSupport, money, moveOf, pct, priorWordOf, shortMoney, signed, takeawaysFor, type EmailMetrics, type SocialMetrics, nounOf, type ConversionNoun, edgeLine } from "./core";
 import { channelMtdView, MTD_STATUS_WORD, type ChannelMtdView } from "./mtd";
 import { columnKeys, tileViews, type ChannelLayout, type TileView } from "./layout";
 import { wholeMoney } from "./email-message";
@@ -667,7 +667,7 @@ function cell(r: MessageRow, key: string, currency: string | null): string {
 /** The columns picked for the email tables (the name always first): each header one click in the preview */
 const pickedCols = (cols: Col[], keys: string[]) => cols.filter((c) => c.key === "name" || keys.includes(c.key));
 
-function Table({ cols, rows, currency, foot, keys, hot }: { cols: Col[]; rows: (MessageRow & { muted?: boolean })[]; currency: string | null; foot?: string | null; keys?: string[]; hot?: HotOf }) {
+function Table({ cols, rows, currency, foot, keys, hot, noun }: { cols: Col[]; rows: (MessageRow & { muted?: boolean })[]; currency: string | null; foot?: string | null; keys?: string[]; hot?: HotOf; /** What a conversion is called (booked appointments for a booking client) */ noun?: ConversionNoun }) {
   // A long list keeps each name to one line so it stays on the two pages
   const lines = rows.length > 8 ? 1 : 2;
   const th = { fontSize: 5.4, color: "#6f7f92", fontFamily: "Helvetica-Bold" as const, textTransform: "uppercase" as const, letterSpacing: 0.25 };
@@ -679,7 +679,7 @@ function Table({ cols, rows, currency, foot, keys, hot }: { cols: Col[]; rows: (
       <View style={s.th} fixed={!framed}>
         {cols.map((c) => (
           <View key={c.key} style={box(c)}>
-            <Text style={[th, { textAlign: c.align ?? "right" }]}>{c.head}</Text>
+            <Text style={[th, { textAlign: c.align ?? "right" }]}>{noun && c.key === "orders" ? noun.title : noun && c.key === "orderRate" ? noun.rateHead : c.head}</Text>
             {hot && keys && c.key !== "name" ? <Hot href={hot(`col/${keys.indexOf(c.key)}`)} /> : null}
           </View>
         ))}
@@ -771,7 +771,7 @@ const PICK_H = CARD_H + 26;
 
 function CampaignCard({ r, m, pic, total, look, pick }: { r: MessageRow; m: EmailMetrics; pic: string | null | undefined; total: number; look: Look; pick?: CardPick }) {
   const link = fromKlaviyo(m.source) ? klaviyoCampaignUrl(r.id) : null;
-  const stats = cardStats(r, m.currency, m.revenueMeasured !== false);
+  const stats = cardStats(r, m.currency, m.revenueMeasured !== false, nounOf(m));
   const right = INNER - 2 - PIC_W - 28;
   const cw = right / 3;
   const share = total > 0 && m.revenueMeasured !== false ? r.revenue / total : null;
@@ -887,7 +887,7 @@ function CampaignPerformance({ m, keys, hot, images, look }: { m: EmailMetrics; 
         <CampaignCard r={picks.lowest.row} m={m} pic={images[shotKey(picks.lowest.row.id)]} total={total} look={look} pick={{ tone: "lowest", why: picks.lowest.why }} />
         <View wrap={n > 18} minPresenceAhead={60}>
           <Text style={[s.h3, { marginTop: 14 }]}>{`All ${n} campaigns, by send date`}</Text>
-          <Table cols={cols} rows={d.campaigns} currency={m.currency} foot={measured ? "Per recipient: revenue over everyone the campaign went to." : null} />
+          <Table noun={nounOf(m)} cols={cols} rows={d.campaigns} currency={m.currency} foot={measured ? "Per recipient: revenue over everyone the campaign went to." : null} />
         </View>
       </View>
     );
@@ -905,12 +905,14 @@ function CampaignPerformance({ m, keys, hot, images, look }: { m: EmailMetrics; 
       <View wrap={false} minPresenceAhead={120}>
         <Head title="Campaign performance" sub={`${n} ${n === 1 ? "campaign" : "campaigns"} sent · against the ${prior} before`} />
         <PerfCells p={d.campaign} prior={prior} kind="campaign" currency={m.currency} measured={measured} />
+        {/* A send at the edge of the dates, dated in the account's time zone (Klaviyo's summary may put it the other week) */}
+        {edgeLine(m) ? <Text style={{ fontSize: 6.4, color: "#6f7f92", marginTop: 5, lineHeight: 1.35 }}>{edgeLine(m)}</Text> : null}
       </View>
       {cards.map(card)}
       {shown.length ? (
         <View wrap={shown.length > 18} minPresenceAhead={60}>
           <Text style={[s.h3, { marginTop: 14 }]}>{`The other ${others.length} ${others.length === 1 ? "campaign" : "campaigns"}`}</Text>
-          <Table cols={pickedCols(CAMPAIGN_COLS, keys)} rows={shown} currency={m.currency} foot={foot} keys={keys} hot={hot} />
+          <Table noun={nounOf(m)} cols={pickedCols(CAMPAIGN_COLS, keys)} rows={shown} currency={m.currency} foot={foot} keys={keys} hot={hot} />
         </View>
       ) : null}
     </View>
@@ -972,7 +974,7 @@ function FlowCard({ v, m, w, look }: { v: FlowCardView; m: EmailMetrics; w: numb
         {measured ? <FlowMini label="Revenue per recipient" value={centsMoney(v.rpr, c)} mv={moveOf(v.rpr, r.prevRpr)} /> : <FlowMini label="Recipients" value={int(r.recipients)} />}
         <FlowMini label="Open rate" value={pct(r.openRate, 1)} />
         <FlowMini label="Click rate" value={pct(r.clickRate, 2)} />
-        {measured ? <FlowMini label="Orders" value={int(r.orders)} sub={`${int(r.recipients)} recipients`} /> : null}
+        {measured ? <FlowMini label={nounOf(m).title} value={int(r.orders)} sub={`${int(r.recipients)} recipients`} /> : null}
       </View>
       {measured && v.share != null ? (
         <View style={{ flexDirection: "row", alignItems: "center", marginTop: 3, height: 10 }}>

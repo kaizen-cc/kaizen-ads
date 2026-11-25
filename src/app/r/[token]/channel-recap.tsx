@@ -1,4 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
+import { edgeLine, nounOf } from "@/lib/channel-reports/core";
 import { int, isEngagement, metricsSupport, money, moveOf, pct, signed, socialName, takeawaysFor, postRateText, type EmailMetrics, type SocialMetrics } from "@/lib/channel-reports/core";
 import { rateLabelOf, socialInsights } from "@/lib/channel-reports/social-report";
 import { overrideNote, teamFindingsOf, withTeamFindings } from "@/lib/channel-reports/social-notes";
@@ -433,6 +434,8 @@ function CampaignCards({ m, shots }: { m: EmailMetrics; shots: Record<string, st
   const count = m.detail ? all.length : m.campaignsTotal;
   return (
     <Block title={`Campaigns · ${count} sent`}>
+      {/* A send at the edge of the dates, dated in the account's time zone (Klaviyo's summary may put it the other week) */}
+      {edgeLine(m) && <p className="mb-3 text-[12.5px] leading-snug text-faint">{edgeLine(m)}</p>}
       <div className="grid gap-4 lg:grid-cols-2">
         {rows.map((r) => {
           const href = link ? klaviyoCampaignUrl(r.id) : null;
@@ -476,7 +479,7 @@ function CampaignCards({ m, shots }: { m: EmailMetrics; shots: Record<string, st
                   )}
                 </div>
                 <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-4 border-t border-line pt-4 sm:grid-cols-3">
-                  {cardStats(r, m.currency, measured).map((x) => (
+                  {cardStats(r, m.currency, measured, nounOf(m)).map((x) => (
                     <StatCell key={x.key} x={x} />
                   ))}
                 </div>
@@ -616,7 +619,7 @@ function FlowCard({ v, m }: { v: FlowCardView; m: EmailMetrics }) {
           <dd className="mt-0.5 font-medium">{rate(r.clickRate, 2)}</dd>
         </div>
         <div>
-          <dt className="text-[10px] tracking-[0.08em] text-faint uppercase">{measured ? "Orders" : "Recipients"}</dt>
+          <dt className="text-[10px] tracking-[0.08em] text-faint uppercase">{measured ? nounOf(m).title : "Recipients"}</dt>
           <dd className="mt-0.5 font-medium">{int(measured ? r.orders : r.recipients)}</dd>
         </div>
       </dl>

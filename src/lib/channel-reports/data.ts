@@ -1,4 +1,12 @@
 import "server-only";
+/** An ISO time's calendar day in a time zone (Eastern when the zone is unknown) */
+const dayInZone = (iso: string, tz: string) => {
+  try {
+    return new Date(iso).toLocaleDateString("en-CA", { timeZone: tz });
+  } catch {
+    return new Date(iso).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  }
+};
 import { providerHasFlows, providerName } from "@/lib/email-providers/core";
 import { emailConnection } from "@/lib/email-providers/which";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -6,7 +14,7 @@ import { keyFlowCoverage, shiftDay, type CampaignLite, type DailyRow as EmailDay
 import type { DailyRow as SocialDay } from "@/lib/social/insights";
 import type { Platform, PostFormat, SocialPost } from "@/lib/social/core";
 import { upcomingItems, type FlowDay, type Upcoming } from "./email-detail";
-import { campaignsIn, channelPeriods, conversionNounFor, emailMetrics, heroImage, platformOfLine, socialMetrics, targetLine, windowsFor, type ChannelKind, type ChannelLine, type EmailMetrics, type MetricSide, type SocialMetrics, type TargetRow, type Window } from "./core";
+import { campaignsIn, channelPeriods, conversionNounFor, edgeSends, emailMetrics, heroImage, platformOfLine, socialMetrics, targetLine, windowsFor, type ChannelKind, type ChannelLine, type EmailMetrics, type MetricSide, type SocialMetrics, type TargetRow, type Window } from "./core";
 import { conversionMetricsOf, revenueTarget, type ConversionMetric } from "@/lib/email-metrics";
 import { monthSoFar } from "@/lib/reports/period";
 import { locationBreakdown, type LocationBreakdown, type LocationRow } from "@/lib/klaviyo/locations";
@@ -170,11 +178,14 @@ export async function loadEmailMetrics(admin: SupabaseClient, clientId: string, 
   // Several order systems counting toward revenue (the Klaviyo card's ranking): every day and every campaign adds them up
   const sourcesRead = await combinedSources(admin, clientId, from, today, (camps ?? []).map((c) => c.campaign_id as string)).catch(() => null);
   if (sourcesRead) dailyRows.splice(0, dailyRows.length, ...combineDays(dailyRows, sourcesRead.days, sourcesRead.ids));
+  // The report's days are the account's (the sync rolls them up in its time zone): each campaign is dated the same way
+  const tz = ((await admin.from("klaviyo_connections").select("timezone").eq("client_id", clientId).maybeSingle()).data?.timezone as string | null) ?? "America/New_York";
   const campaigns: CampaignLite[] = (camps ?? []).map((c) => ({
     id: c.campaign_id as string,
     name: (c.name as string | null) ?? "(untitled)",
     channel: (c.channel as string | null) ?? "email",
     sendTime: (c.send_time as string | null) ?? null,
+    sendDay: c.send_time ? dayInZone(String(c.send_time), tz) : null,
     subject: (c.subject as string | null) ?? null,
     recipients: num(c.recipients),
     delivered: num(c.delivered),
@@ -284,6 +295,8 @@ export async function loadEmailMetrics(admin: SupabaseClient, clientId: string, 
   // The month to date counts against the whole month's target, not a weekly share of it
   if (m.mtd) m.mtd.target = agreed ? targetLine("email", agreed, { kind: "monthly", main: m.mtd.window, revenue: m.mtd.now.revenue }) : null;
   m.paceTarget = row && !agreed ? { target: row.target, basis: "last month + 10%" } : null;
+  m.edgeSends = edgeSends(campaigns, main);
+  m.timezone = tz;
   // A clinic or club whose sale is a booking (Remedy Place: Zenoti's booked appointments): its conversions are named so
   m.conversionNoun = conversionNounFor((await rankedMetrics(admin, clientId).catch(() => []))[0]?.name ?? null);
   // Several metrics counting as the sale: each one's numbers side by side, primary first

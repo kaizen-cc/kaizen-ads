@@ -1,4 +1,5 @@
 import type { Move } from "@/lib/reports/weekly-core";
+import { campaignDay } from "./campaign-day";
 import { lastFullWeek, monthSoFar, previousPeriod, rangeLabel, shiftDay, type Range } from "@/lib/reports/period";
 import { monthProgress, paceStatus, projectMonthEnd } from "@/lib/reports/mtd-core";
 import { BENCHMARKS, deliverabilityOutliers, pulseWindow, type CampaignLite, type DailyRow as EmailDay, type FlowLite, type KeyFlow, type PulseWindow } from "@/lib/klaviyo/insights";
@@ -186,6 +187,10 @@ export type EmailMetrics = {
   refreshNote?: RefreshNote;
   /** A weekly's month to date (older stored reports and monthlies have none) */
   mtd?: EmailMtd | null;
+  /** A send near the window's edge whose day differs between the account's time zone and UTC (Klaviyo's summary may date it the other way) */
+  edgeSends?: { name: string; day: string; utcDay: string; revenue: number; inWindow: boolean }[];
+  /** The account's time zone (the report's days) */
+  timezone?: string | null;
   /** What a conversion is for this client: orders, or booked appointments (a clinic or club whose sale is a booking) */
   conversionNoun?: ConversionNoun | null;
   /** Our automatic pace for the month (last month + 10%) when no target was agreed: internal, never shown as the client's target */
@@ -261,9 +266,11 @@ export type EmailInput = {
 };
 
 /** Campaigns that reached someone in the window (a scheduled, cancelled or test one with no recipients doesn't count) */
-export const campaignsIn = <T extends { sendTime: string | null; recipients: number }>(list: T[], start: string, end: string) =>
+export { campaignDay };
+
+export const campaignsIn = <T extends { sendTime: string | null; sendDay?: string | null; recipients: number }>(list: T[], start: string, end: string) =>
   list.filter((c) => {
-    const d = etDay(c.sendTime);
+    const d = campaignDay(c);
     return d >= start && d <= end && c.recipients > 0;
   });
 
@@ -296,7 +303,7 @@ export function emailMetrics(i: EmailInput): EmailMetrics {
       name: c.name,
       subject: c.subject,
       channel: c.channel,
-      sendDay: etDay(c.sendTime),
+      sendDay: campaignDay(c),
       recipients: c.recipients,
       delivered: c.delivered,
       openRate: c.channel === "sms" ? null : c.openRate,
@@ -999,9 +1006,9 @@ export function catchUpKind(p: { weekday: string; dom: number; hour: number }): 
 
 // ─── What a conversion is called ────────────────────────────────────────────────────────────────────────────────────
 
-export type ConversionNoun = { one: string; many: string; title: string; average: string; rate: string };
-const ORDERS: ConversionNoun = { one: "order", many: "orders", title: "Orders", average: "Average order", rate: "ordered" };
-const BOOKINGS: ConversionNoun = { one: "booked appointment", many: "booked appointments", title: "Booked appointments", average: "Average booking", rate: "booked" };
+export type ConversionNoun = { one: string; many: string; title: string; average: string; rate: string; rateHead: string };
+const ORDERS: ConversionNoun = { one: "order", many: "orders", title: "Orders", average: "Average order", rate: "ordered", rateHead: "Order rate" };
+const BOOKINGS: ConversionNoun = { one: "booked appointment", many: "booked appointments", title: "Booked appointments", average: "Average booking", rate: "booked", rateHead: "Booking rate" };
 
 /** A metric that's a booking, not an order (Zenoti's "Booked Appointment", a reservation, a class booked) */
 export const isBookingMetric = (name: string | null | undefined) => /\b(book(ed|ing)?|appointments?|reservations?|reserved)\b/i.test(String(name ?? "")) && !/\b(cancel|resched|no.?show|missed|remind)/i.test(String(name ?? ""));
@@ -1013,3 +1020,38 @@ export function conversionNounFor(primaryName: string | null | undefined): Conve
 
 /** The report's word for its conversions (orders unless set) */
 export const nounOf = (m: { conversionNoun?: ConversionNoun | null }): ConversionNoun => m.conversionNoun ?? ORDERS;
+
+/**
+ * Sends whose day in the account's time zone and in UTC fall on different sides of the window's edge (Remedy Place: a
+ * campaign at 4 pm Pacific on Nov 15 is Nov 16 in UTC). The report counts the account's day; Klaviyo's summary may put
+ * it in the other week, so the report says so in one line.
+ */
+export function edgeSends(list: { name: string; sendTime: string | null; sendDay?: string | null; revenue: number; recipients: number }[], w: { start: string; end: string }) {
+  const inW = (d: string) => d >= w.start && d <= w.end;
+  return list
+    .filter((c) => c.sendTime && c.sendDay && c.recipients > 0)
+    .map((c) => ({ name: c.name, day: c.sendDay as string, utcDay: (c.sendTime as string).slice(0, 10), revenue: c.revenue }))
+    .filter((c) => c.day !== c.utcDay && inW(c.day) !== inW(c.utcDay))
+    .map((c) => ({ ...c, inWindow: inW(c.day) }));
+}
+
+/** The one line the report carries about them, or null */
+export function edgeNote(sends: EmailMetrics["edgeSends"], money: (n: number) => string, tzName: string): string | null {
+  if (!sends?.length) return null;
+  const words = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+  const one = sends[0];
+  const more = sends.length > 1 ? ` and ${sends.length - 1} more` : "";
+  return `Dated in ${tzName}: “${one.name}”${more} went out ${words(one.day)} (${words(one.utcDay)} in UTC), so it's ${one.inWindow ? "counted in" : "left out of"} these dates (${money(sends.reduce((t, s) => t + s.revenue, 0))}); Klaviyo's summary may count it ${one.inWindow ? "in the other week" : "here"}.`;
+}
+
+/** A time zone in words for the report ("Pacific time"), else its name */
+export function zoneWords(tz: string | null | undefined): string {
+  const z = String(tz ?? "America/New_York");
+  const known: Record<string, string> = { "America/New_York": "Eastern time", "US/Eastern": "Eastern time", "America/Chicago": "Central time", "US/Central": "Central time", "America/Denver": "Mountain time", "US/Mountain": "Mountain time", "America/Phoenix": "Arizona time", "America/Los_Angeles": "Pacific time", "US/Pacific": "Pacific time" };
+  return known[z] ?? z.replace(/_/g, " ");
+}
+
+/** The report's one line about a send dated differently at the window's edge, in the account's time zone, or null */
+export function edgeLine(m: Pick<EmailMetrics, "edgeSends" | "timezone" | "currency">): string | null {
+  return edgeNote(m.edgeSends, (n) => money(n, m.currency), zoneWords(m.timezone));
+}
