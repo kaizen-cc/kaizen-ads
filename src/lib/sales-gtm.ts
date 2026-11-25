@@ -1,6 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { askJson } from "@/lib/ai";
+import { askJson, researchWeb } from "@/lib/ai";
 import { briefText, cleanBrief, type ProspectBrief } from "@/lib/sales-core";
 import { BASIC_CREATIVE, cleanGtm, RELATIONSHIP_QUESTION, shortName, cleanNotes, feeMentions, GTM_FILE, kaizenMentions, scrubKaizen, tierPlan, VERTICAL_FOCUS, verticalOf, type CaseStudy, type GtmContent, type GtmNotes, type Partner } from "@/lib/sales-gtm-core";
 
@@ -123,6 +123,25 @@ export async function autoGtm(admin: Admin, o: { prospectId: string; profileId: 
 
 const today = () => new Date().toLocaleDateString("en-US", { timeZone: "America/New_York", month: "long", year: "numeric" });
 
+/** The 3-5 closest local competitors, each with its own website, from a short web search (Google and Maps results) */
+async function findCompetitors(p: { name: string; website: string | null; location: string | null; industry: string | null }, brief: ProspectBrief): Promise<{ name: string; website: string | null; role: "competitor" }[]> {
+  const notes = await researchWeb({
+    agent: "sales_research",
+    label: "gtm competitors",
+    model: "sonnet",
+    maxSearches: 6,
+    maxFetches: 4,
+    maxTurns: 4,
+    system: "You find a business's closest direct competitors from Google and Google Maps results. Real businesses only, each with its own website; never directories, listicles or the business itself.",
+    prompt: `Business: ${p.name} (${p.website ?? "no site"}), ${p.industry ?? ""}, in ${p.location ?? brief.locations.join("; ")}. Sells: ${brief.sells.slice(0, 400)}\nList the 5 closest direct competitors in the same area, one per line exactly as: Name | https://their-site`,
+  });
+  const own = (p.website ?? "").replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0].toLowerCase();
+  return [...notes.matchAll(/^\s*[-*\d.)]*\s*([^|\n]{2,80}?)\s*\|\s*(https?:\/\/[^\s|)]+)/gm)]
+    .map((m) => ({ name: m[1].replace(/\*+/g, "").trim(), website: m[2], role: "competitor" as const }))
+    .filter((x) => !own || !x.website.toLowerCase().includes(own))
+    .slice(0, 5);
+}
+
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 /**
@@ -236,7 +255,9 @@ export async function runGtm(admin: Admin, id: string): Promise<{ ran: boolean; 
     const short0 = shortName(p.name);
     // The market data, read now: search demand (Keyword Planner), the trade area (Census), live Meta ads (Motion)
     const { censusProfile, metaAdIntel } = await import("@/lib/sales-intel");
-    const rivals = (brief.market?.competitors ?? []).filter((x) => x.name).slice(0, 5).map((x) => ({ name: x.name, website: x.website ?? null, role: "competitor" as const }));
+    let rivals = (brief.market?.competitors ?? []).filter((x) => x.name).slice(0, 5).map((x) => ({ name: x.name, website: x.website ?? null, role: "competitor" as const }));
+    // The research named none (its search ran short): a quick search for the closest local competitors and their sites
+    if (!rivals.length) rivals = await findCompetitors(p, brief).catch(() => []);
     const [keywordData, censusData, adData] = await Promise.all([
       prospectKeywordData(admin, p, brief),
       censusProfile({ location: p.location, places: brief.locations }),
