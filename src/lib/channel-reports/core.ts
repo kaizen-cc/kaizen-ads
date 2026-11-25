@@ -186,6 +186,8 @@ export type EmailMetrics = {
   refreshNote?: RefreshNote;
   /** A weekly's month to date (older stored reports and monthlies have none) */
   mtd?: EmailMtd | null;
+  /** What a conversion is for this client: orders, or booked appointments (a clinic or club whose sale is a booking) */
+  conversionNoun?: ConversionNoun | null;
   /** Our automatic pace for the month (last month + 10%) when no target was agreed: internal, never shown as the client's target */
   paceTarget?: { target: number; basis: string } | null;
   /** Orders, the daily split, each campaign and flow for the period, deliverability and subscribers (older stored reports have none) */
@@ -994,3 +996,20 @@ export function catchUpKind(p: { weekday: string; dom: number; hour: number }): 
   const monday = p.dom - since;
   return monday >= 1 && monday <= 7 ? "monthly" : "weekly";
 }
+
+// ─── What a conversion is called ────────────────────────────────────────────────────────────────────────────────────
+
+export type ConversionNoun = { one: string; many: string; title: string; average: string; rate: string };
+const ORDERS: ConversionNoun = { one: "order", many: "orders", title: "Orders", average: "Average order", rate: "ordered" };
+const BOOKINGS: ConversionNoun = { one: "booked appointment", many: "booked appointments", title: "Booked appointments", average: "Average booking", rate: "booked" };
+
+/** A metric that's a booking, not an order (Zenoti's "Booked Appointment", a reservation, a class booked) */
+export const isBookingMetric = (name: string | null | undefined) => /\b(book(ed|ing)?|appointments?|reservations?|reserved)\b/i.test(String(name ?? "")) && !/\b(cancel|resched|no.?show|missed|remind)/i.test(String(name ?? ""));
+
+/** What this client's conversions are called in its report: booked appointments when the sale it counts is a booking */
+export function conversionNounFor(primaryName: string | null | undefined): ConversionNoun {
+  return isBookingMetric(primaryName) ? BOOKINGS : ORDERS;
+}
+
+/** The report's word for its conversions (orders unless set) */
+export const nounOf = (m: { conversionNoun?: ConversionNoun | null }): ConversionNoun => m.conversionNoun ?? ORDERS;

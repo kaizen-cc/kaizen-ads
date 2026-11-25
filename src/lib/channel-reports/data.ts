@@ -6,7 +6,7 @@ import { keyFlowCoverage, shiftDay, type CampaignLite, type DailyRow as EmailDay
 import type { DailyRow as SocialDay } from "@/lib/social/insights";
 import type { Platform, PostFormat, SocialPost } from "@/lib/social/core";
 import { upcomingItems, type FlowDay, type Upcoming } from "./email-detail";
-import { campaignsIn, channelPeriods, emailMetrics, heroImage, platformOfLine, socialMetrics, targetLine, windowsFor, type ChannelKind, type ChannelLine, type EmailMetrics, type MetricSide, type SocialMetrics, type TargetRow, type Window } from "./core";
+import { campaignsIn, channelPeriods, conversionNounFor, emailMetrics, heroImage, platformOfLine, socialMetrics, targetLine, windowsFor, type ChannelKind, type ChannelLine, type EmailMetrics, type MetricSide, type SocialMetrics, type TargetRow, type Window } from "./core";
 import { conversionMetricsOf, revenueTarget, type ConversionMetric } from "@/lib/email-metrics";
 import { monthSoFar } from "@/lib/reports/period";
 import { locationBreakdown, type LocationBreakdown, type LocationRow } from "@/lib/klaviyo/locations";
@@ -284,6 +284,8 @@ export async function loadEmailMetrics(admin: SupabaseClient, clientId: string, 
   // The month to date counts against the whole month's target, not a weekly share of it
   if (m.mtd) m.mtd.target = agreed ? targetLine("email", agreed, { kind: "monthly", main: m.mtd.window, revenue: m.mtd.now.revenue }) : null;
   m.paceTarget = row && !agreed ? { target: row.target, basis: "last month + 10%" } : null;
+  // A clinic or club whose sale is a booking (Remedy Place: Zenoti's booked appointments): its conversions are named so
+  m.conversionNoun = conversionNounFor((await rankedMetrics(admin, clientId).catch(() => []))[0]?.name ?? null);
   // Several metrics counting as the sale: each one's numbers side by side, primary first
   const ranked = await rankedMetrics(admin, clientId);
   if (ranked.length > 1) m.byMetric = await metricSides(admin, clientId, ranked, main, compare).catch(() => null);

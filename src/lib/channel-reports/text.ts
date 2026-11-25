@@ -1,4 +1,4 @@
-import { emailSupport, isEngagement, int, money, pct, priorWordOf, signed, socialName, socialSupport, targetSub, type EmailMetrics, type SocialMetrics } from "./core";
+import { emailSupport, isEngagement, int, money, nounOf, pct, priorWordOf, signed, socialName, socialSupport, targetSub, type EmailMetrics, type SocialMetrics } from "./core";
 import type { MessageRow, Pair } from "./email-detail";
 import { engagementText } from "./email-engagement";
 import { periodWords, socialHappenedBullets, whatHappenedBullets } from "./email-message";
@@ -91,7 +91,8 @@ function detailText(m: EmailMetrics): string {
   const out: string[] = [
     `The message's What happened bullets, exactly (period ${periodWords(m.main)}):`,
     ...whatHappenedBullets(m).map((b) => `- ${b}`),
-    `- Orders before: ${int(d.orders.before)}`,
+    `- ${nounOf(m).title} before: ${int(d.orders.before)}`,
+    ...(nounOf(m).one !== "order" ? [`- This client's conversions are ${nounOf(m).many} (the metric that counts as the sale), never call them orders or purchases in the message or the report.`] : []),
     `Campaign performance (${d.campaign.sent.now ?? 0} sent; before: ${d.campaign.sent.before ?? 0}): recipients ${was(d.campaign.recipients, int)}; open rate ${was(d.campaign.open, (x) => pct(x))}; click rate ${was(d.campaign.click, (x) => pct(x, 2))}; placed order rate ${was(d.campaign.orderRate, (x) => pct(x, 2))}.`,
     ...(d.campaign.rpr ? [`Campaign revenue per recipient: ${was(d.campaign.rpr, (x) => money(x, c))}.`] : []),
     `Every campaign sent in the period, by date:`,

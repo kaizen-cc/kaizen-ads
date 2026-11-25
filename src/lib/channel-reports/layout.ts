@@ -1,5 +1,5 @@
 import type { Move } from "@/lib/reports/weekly-core";
-import { int, money, moveOf, pct, rateSub, reachSub, signed, targetSub, type ChannelPlatform, type EmailMetrics, type SocialMetrics } from "./core";
+import { int, money, moveOf, nounOf, pct, rateSub, reachSub, signed, targetSub, type ChannelPlatform, type EmailMetrics, type SocialMetrics } from "./core";
 import type { Grade } from "./email-detail";
 
 // What an email or social report shows, picked the way an ads report's tiles and columns are: the tiles at the top of
@@ -150,7 +150,8 @@ export function tileView(m: Metrics, key: string): TileView | null {
     case "orders": {
       if (!d) return null;
       const aov = d.orders.now ? now.revenue / d.orders.now : null;
-      return tile(key, "Orders", int(d.orders.now), aov != null ? `Average order ${money(aov, c)}` : null, int(d.orders.before), moveOf(d.orders.now, d.orders.before));
+      const w = nounOf(m);
+      return tile(key, w.title, int(d.orders.now), aov != null ? `${w.average} ${money(aov, c)}` : null, int(d.orders.before), moveOf(d.orders.now, d.orders.before));
     }
     case "split": {
       if (!d) return null;

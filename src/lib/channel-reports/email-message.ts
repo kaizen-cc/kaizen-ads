@@ -1,4 +1,4 @@
-import { cadenceWord, int, pct, signed, type ChannelKind, type DataFlag, type EmailMetrics, type SocialMetrics } from "./core";
+import { cadenceWord, int, nounOf, pct, signed, type ChannelKind, type DataFlag, type EmailMetrics, type SocialMetrics } from "./core";
 
 // The email report's message, the way the email team writes it today: a title line, "Hi Team,", one line, then What
 // happened (a short paragraph and four set bullets), Highlights, What we learned and Coming up. The parts that are pure
@@ -54,7 +54,7 @@ export function whatHappenedBullets(m: EmailMetrics): string[] {
   const orders = m.detail?.orders.now;
   return [
     `Revenue from email and SMS: ${wholeMoney(m.now.revenue, c)}`,
-    ...(orders != null ? [`Orders: ${orders.toLocaleString("en-US")}`] : []),
+    ...(orders != null ? [`${nounOf(m).title}: ${orders.toLocaleString("en-US")}`] : []),
     `From automated emails: ${wholeMoney(m.now.flowRevenue, c)}`,
     `From campaigns: ${wholeMoney(m.now.campaignRevenue, c)}`,
   ];
