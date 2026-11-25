@@ -75,7 +75,7 @@ export async function prepUpcomingCalls(admin: Admin, me: Me, at?: string | null
       const report = await clientBrief(admin, me, m, client);
       await admin.from("routine_runs").update({ status: "done", headline: report.headline.slice(0, 400), report, finished_at: new Date().toISOString() }).eq("id", claimed.id);
       const at = new Date(m.start).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" });
-      await admin.from("notifications").upsert({ profile_id: me.id, kind: "recap", key: `routine:${claimed.id}`, title: `Call prep · ${m.title} at ${at}: ${report.headline.split(/(?<=[.!?])\s/)[0]}`.slice(0, 200), body: report.sections.map((s) => s.title).join(" · ").slice(0, 1000), href: "/today", priority: "normal" }, { onConflict: "profile_id,key", ignoreDuplicates: true });
+      await admin.from("notifications").upsert({ profile_id: me.id, kind: "recap", key: `routine:${claimed.id}`, title: `Call prep · ${m.title} at ${at}: ${report.headline.split(/(?<=[.!?])\s/)[0]}`.slice(0, 200), body: (await import("@/lib/routines-core")).sectionCounts(report).slice(0, 1000), href: "/today", priority: "normal" }, { onConflict: "profile_id,key", ignoreDuplicates: true });
       made++;
     } catch (e) {
       await admin.from("routine_runs").update({ status: "failed", error: (e instanceof Error ? e.message : String(e)).slice(0, 1000), finished_at: new Date().toISOString() }).eq("id", claimed.id);

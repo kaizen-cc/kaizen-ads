@@ -236,3 +236,46 @@ export async function closeSubItem(key: string, how: "done" | "dismissed"): Prom
   }
   return { ok: false, error: "Can't close that here." };
 }
+
+/**
+ * A report row's "Send" (Mel, Nov 25 2026: every routine report is a card whose rows act): the nightly agent's drafted
+ * message, posted as this person in the client's internal channel; the item closes as sent. Email and teammate drafts
+ * are copied (or opened in Gmail) and sent by them.
+ */
+export async function sendItemDraft(id: string, text: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  if (me.viewAs) return { ok: false, error: "You're viewing as someone else: nothing changes." };
+  if (!adminConfigured()) return { ok: false, error: "Not available here." };
+  const admin = createAdminClient();
+  const { data: it } = await admin.from("agent_asks").select("owner_id, status, draft, detail").eq("id", id).maybeSingle();
+  const d = it?.draft as { kind?: string; channelId?: string | null } | null;
+  if (!it || it.owner_id !== me.id || !d) return { ok: false, error: "That draft isn't yours." };
+  if (it.status !== "open") return { ok: false, error: "That one isn't open any more." };
+  if (d.kind !== "slack" || !d.channelId) return { ok: false, error: "This one goes by email or to a teammate: copy it and send it yourself." };
+  const body = text.trim();
+  if (!body) return { ok: false, error: "Write the message first." };
+  const { postAsUser } = await import("@/lib/slack-user");
+  const sent = await postAsUser(me.id, { channel: d.channelId, text: body.slice(0, 3900) });
+  if (!sent.ok) return { ok: false, error: sent.error };
+  const now = new Date().toISOString();
+  await admin
+    .from("agent_asks")
+    .update({ status: "done", done_at: now, draft: { ...(it.draft as object), text: body, sentAt: now }, detail: `${String(it.detail ?? "").trim()}\nSent by ${me.fullName.split(" ")[0]} from Kaizen OS`.trim().slice(0, 4000) })
+    .eq("id", id);
+  await markItem(await createClient(), me.id, `ask:${id}`, "done", { topic: "needs", client: "", title: "", clientId: null }, {}).catch(() => null);
+  return { ok: true };
+}
+
+/** A report row's inline answer to the agent's question: saved on the item, and the nightly agent works it tonight */
+export async function answerAgent(id: string, text: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  if (me.viewAs) return { ok: false, error: "You're viewing as someone else: nothing changes." };
+  const body = text.trim();
+  if (!body) return { ok: false, error: "Write your answer first." };
+  if (!adminConfigured()) return { ok: false, error: "Not available here." };
+  const admin = createAdminClient();
+  const { data: it } = await admin.from("agent_asks").select("owner_id, client_id").eq("id", id).maybeSingle();
+  if (!it || it.owner_id !== me.id) return { ok: false, error: "That question isn't yours." };
+  const { error } = await admin.from("item_comments").insert({ key: `ask:${id}`, client_id: it.client_id ?? null, author_id: me.id, body: body.slice(0, 4000) });
+  return error ? { ok: false, error: error.message } : { ok: true };
+}

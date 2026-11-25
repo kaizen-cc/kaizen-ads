@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { PEOPLE_RULE } from "@/lib/people-matters";
-import { dueRuns, hasContent, nyClock, pushLine, routineOf, ROUTINES, type RecapSection, type RoutineKind, type RoutineReport } from "@/lib/routines-core";
+import { dueRuns, hasContent, nyClock, pushLine, routineOf, ROUTINES, type RecapSection, type RoutineKind, type RoutineReport, sectionCounts } from "@/lib/routines-core";
 
 // Per-person routines (owner, Nov 24 2026): Kaizen OS does what an exec's Claude scheduled runs did, inside the OS, for
 // anyone who turns them on (execs and leads), at their own times. Each run writes a report (the person's recaps page and
@@ -77,7 +77,7 @@ export async function runRoutine(admin: Admin, profileId: string, kind: RoutineK
     if (hasContent(report)) {
       const label = routineOf(kind)?.label ?? "Recap";
       await admin.from("notifications").upsert(
-        { profile_id: profileId, kind: "recap", key: `routine:${claimed.id}`, title: `${label}: ${pushLine(report)}`.slice(0, 200), body: report.sections.map((s) => `${s.title}: ${s.lines.length}`).join(" · ").slice(0, 1000), href: "/today", priority: report.urgent ? "critical" : "normal" },
+        { profile_id: profileId, kind: "recap", key: `routine:${claimed.id}`, title: `${label}: ${pushLine(report)}`.slice(0, 200), body: sectionCounts(report).slice(0, 1000), href: "/today", priority: report.urgent ? "critical" : "normal" },
         { onConflict: "profile_id,key", ignoreDuplicates: true },
       );
     }
@@ -153,7 +153,7 @@ const REPORT_SCHEMA = {
         type: "object",
         properties: {
           title: { type: "string" },
-          lines: { type: "array", items: { type: "object", properties: { text: { type: "string" }, href: { type: ["string", "null"] }, tag: { type: ["string", "null"], enum: ["certain", "likely", "guessing", null] } }, required: ["text", "href", "tag"], additionalProperties: false } },
+          lines: { type: "array", items: { type: "object", properties: { text: { type: "string", description: "Verb-first, under 10 words (\"Send Acme the Q4 plan\")" }, client: { type: ["string", "null"], description: "The client's name, else null" }, due: { type: ["string", "null"], description: "YYYY-MM-DD, or a time today like 3pm, else null" }, detail: { type: ["string", "null"], description: "One short sentence more (the number, who, why), else null" }, href: { type: ["string", "null"] }, tag: { type: ["string", "null"], enum: ["certain", "likely", "guessing", null] } }, required: ["text", "client", "due", "detail", "href", "tag"], additionalProperties: false } },
         },
         required: ["title", "lines"],
         additionalProperties: false,
@@ -164,7 +164,7 @@ const REPORT_SCHEMA = {
   additionalProperties: false,
 };
 
-const RULES = `Rules: never state what Kaizen charges a client (fees, retainers, invoices); ad spend and budgets are fine. Revenue-first: protect revenue at risk, then grow revenue, then decisions only they can make. Tag claims you inferred [likely] or [guessing] (tag field), facts from the data [certain]. One line each, plain words, with the link (href) when the data has one. Never invent a meeting, number, quote or link. Leave a section out when it has nothing. Something already done or already being handled by a teammate is not an open item: say it's handled or leave it out; never chase it.`;
+const RULES = `Rules: never state what Kaizen charges a client (fees, retainers, invoices); ad spend and budgets are fine. Revenue-first: protect revenue at risk, then grow revenue, then decisions only they can make. Tag claims you inferred [likely] or [guessing] (tag field), facts from the data [certain]. One row each: a short verb-first title (under 10 words), the client in its own field (never in the title), the due date when there is one, and at most one short sentence of detail; the link (href) when the data has one. Never invent a meeting, number, quote or link. Leave a section out when it has nothing. Something already done or already being handled by a teammate is not an open item: say it's handled or leave it out; never chase it.`;
 
 async function compose(me: Person, kind: RoutineKind, brief: string, data: unknown, failed: string[]): Promise<RoutineReport> {
   const g = data as { meetings?: unknown[]; upcoming?: unknown[]; calls?: unknown[]; items?: unknown[]; owed?: unknown[]; said?: unknown[]; callPromises?: unknown[]; comms?: unknown[] };

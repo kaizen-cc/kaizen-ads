@@ -76,9 +76,67 @@ export const runKey = (profileId: string, kind: string, date: string, slot: stri
 /** Whether a run has anything to say (a recap with nothing in it is never sent) */
 export const hasContent = (r: { sections: readonly { lines: readonly unknown[] }[]; urgent?: boolean }) => Boolean(r.urgent || r.sections.some((s) => s.lines.length));
 
-export type RecapLine = { text: string; href?: string | null; tag?: "certain" | "likely" | "guessing" | null };
+/**
+ * One row of a report (Mel, Nov 25 2026: every report is a scannable card): a short verb-first title, the client chip,
+ * when it's due, and what the row does: open the item, send its drafted message, answer the agent's question inline,
+ * or hand it off. The older fields (text, href, tag) stay so reports saved before still read.
+ */
+export type RecapAct = "open" | "send" | "answer" | "handoff";
+export type RecapDraft = { kind: "slack" | "email"; text: string; channel?: string | null; canPost?: boolean; to?: string | null; subject?: string | null };
+export type RecapLine = {
+  text: string;
+  href?: string | null;
+  tag?: "certain" | "likely" | "guessing" | null;
+  /** The agent_asks item behind the row, for its actions */
+  itemId?: string | null;
+  client?: string | null;
+  /** YYYY-MM-DD, or a short time ("3pm") */
+  due?: string | null;
+  /** The longer words under the title (truncated in the card, expand to read) */
+  detail?: string | null;
+  act?: RecapAct | null;
+  draft?: RecapDraft | null;
+  question?: string | null;
+};
+
 export type RecapSection = { title: string; lines: RecapLine[] };
 export type RoutineReport = { headline: string; sections: RecapSection[]; failedSources?: string[]; urgent?: boolean; /** Calls a debrief already read (it reads each once) */ processed?: string[] };
 
 /** A report's first sentence, for the bell and the push (what the person must do first) */
 export const pushLine = (r: RoutineReport) => r.headline.split(/(?<=[.!?])\s/)[0].slice(0, 200);
+
+/** Where an item opens: its sheet on the Overview */
+export const itemHref = (id: string) => `/pipeline?block=needs&item=${encodeURIComponent(`ask:${id}`)}`;
+
+/** An item's title without the "[Agent 11/24] " tag a routine stamps on it */
+export const plainTitle = (t: string) => t.replace(/^\[[^\]]{1,24}\]\s*/, "").trim();
+
+/** The bell's body: each section with its count ("Only you can do 3 · Just hit send 2") */
+export const sectionCounts = (r: Pick<RoutineReport, "sections">) =>
+  r.sections
+    .filter((s) => s.lines.length)
+    .map((s) => `${s.title} ${s.lines.length}`)
+    .join(" · ");
+
+/** The short version for the assistant to say or write: the headline, then each section's count and its first rows */
+export function shortReport(r: RoutineReport, per = 3) {
+  return {
+    headline: r.headline,
+    sections: r.sections
+      .filter((s) => s.lines.length)
+      .map((s) => ({ title: s.title, count: s.lines.length, top: s.lines.slice(0, per).map((l) => [l.client ? `${l.client}: ` : "", l.text, l.due ? ` (due ${l.due})` : ""].join("")) })),
+    ...(r.failedSources?.length ? { couldnt_read: r.failedSources } : {}),
+  };
+}
+
+/** Due, said short: "today", "tomorrow", "overdue", "Dec 2", or a time as given */
+export function dueLabel(due: string | null | undefined, today: string): { text: string; late: boolean } | null {
+  if (!due) return null;
+  if (!/^\d{4}-\d{2}-\d{2}/.test(due)) return { text: due, late: false };
+  const d = due.slice(0, 10);
+  if (d < today) return { text: "overdue", late: true };
+  if (d === today) return { text: "today", late: false };
+  const next = new Date(Date.parse(`${today}T12:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+  if (d === next) return { text: "tomorrow", late: false };
+  return { text: new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }), late: false };
+}

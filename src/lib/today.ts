@@ -92,6 +92,8 @@ export type TodayItem = {
   due?: string | null;
   /** An exec's card (src/lib/exec-overview-core.ts): the lead to nudge, the drafted message, the account's numbers */
   exec?: import("@/lib/exec-overview-core").ExecCard;
+  /** A routine's report, drawn as its card (src/components/recap-card.tsx) instead of the story */
+  recap?: { label: string; at: string; report: import("@/lib/routines-core").RoutineReport };
 };
 export type Resolved = { key: string; topic: TopicKey; client: string; title: string; by: string | null; what: string };
 /** counts: items by tier (kept for older readers); looks: what every screen shows, counted by client (src/lib/today-counts.ts) */
@@ -1001,22 +1003,26 @@ async function withRecap(db: SupabaseClient, me: Staff, drafts: Draft[]): Promis
     .order("finished_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  const r = data as { id: string; kind: string; headline: string | null; report: { headline?: string; sections?: { title: string; lines: { text: string; href?: string | null }[] }[] } | null; finished_at: string } | null;
+  const r = data as { id: string; kind: string; headline: string | null; report: import("@/lib/routines-core").RoutineReport | null; finished_at: string } | null;
   const sections = (r?.report?.sections ?? []).filter((s) => s.lines?.length);
   if (!r || !r.headline || !sections.length) return drafts;
-  const { routineOf } = await import("@/lib/routines-core");
+  const { routineOf, sectionCounts } = await import("@/lib/routines-core");
+  const label = routineOf(r.kind)?.label ?? "Your recap";
+  const at = new Date(r.finished_at).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" });
   const firstLink = sections.flatMap((s) => s.lines).find((l) => l.href)?.href ?? null;
   return [
     {
       key: `recap:${r.id}`,
       topic: "mine",
       score: 95,
-      client: routineOf(r.kind)?.label ?? "Your recap",
+      client: label,
       clientSlug: "",
       clientId: null,
-      stat: { value: new Date(r.finished_at).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" }), label: routineOf(r.kind)?.label ?? "recap" },
+      stat: { value: at, label },
       title: r.headline,
-      story: sections.map((s) => `${s.title}: ${s.lines.map((l) => l.text).join("; ")}`).join("\n").slice(0, 1600),
+      // Short (the card draws the rest): each section and its count
+      story: sectionCounts({ sections }),
+      recap: { label, at, report: { headline: r.headline, sections, failedSources: r.report?.failedSources ?? [] } },
       why: "Your recap, written by Kaizen OS from your calendar, calls, messages and items",
       evidence: [],
       action: firstLink ? { label: "Open the first one", href: firstLink } : { label: "Open your Overview", href: "/pipeline" },

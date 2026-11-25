@@ -5,6 +5,8 @@ import type { ChatTool, ToolCtx } from "./tools";
 // morning sweep", "give me my end-of-day recap", "track what I delegated today", "prep me for my 2pm" runs it now for
 // them, scoped to their account, and answers with it; "send my recap at 9 instead" changes their own times, quietly.
 
+const SAY = "Say it short: the headline, then each section as its name and count with its top one or two rows (client, what, when). No wall of text; offer the rest or point them to the card on their day.";
+
 const KINDS = ["morning", "afternoon", "eod", "week_recap", "week_ahead", "debrief", "delegation", "nightly", "clean_sweep", "call_prep"];
 
 export function routineTools(ctx: ToolCtx): ChatTool[] {
@@ -24,12 +26,16 @@ export function routineTools(ctx: ToolCtx): ChatTool[] {
           const n = await prepUpcomingCalls(ctx.admin, { id: ctx.me.id, full_name: ctx.me.fullName, email: ctx.me.email, role: String(ctx.me.role ?? ""), is_exec: Boolean(ctx.me.isExec), is_lead: Boolean(ctx.me.isLead) }, typeof input.at === "string" ? input.at : null);
           if (!n) return { note: "No client call on their calendar around then (sales calls are briefed by the Sales agent)." };
           const { data } = await ctx.db.from("routine_runs").select("report").eq("profile_id", ctx.me.id).eq("kind", "call_prep").order("started_at", { ascending: false }).limit(1).maybeSingle();
-          return { brief: data?.report ?? null };
+          const { shortReport } = await import("@/lib/routines-core");
+          return data?.report ? { brief: shortReport(data.report as never, 4), say_it: SAY } : { brief: null };
         }
         const { runRoutine } = await import("@/lib/routines");
         const r = await runRoutine(ctx.admin, ctx.me.id, kind as never);
         if (!r.report) return { error: r.error ?? "It didn't finish." };
-        return r.report.sections.length ? { headline: r.report.headline, sections: r.report.sections, couldnt_read: r.report.failedSources ?? [] } : { note: "Nothing to report right now." };
+        const { shortReport } = await import("@/lib/routines-core");
+        // Short, the card's shape (Mel, Nov 25 2026): the headline, each section's count and its first rows; the full
+        // card is on their day (/today) with every row's Send, Answer and Open
+        return r.report.sections.length ? { ...shortReport(r.report), say_it: SAY, full_card: "/today" } : { note: "Nothing to report right now." };
       },
     },
     {

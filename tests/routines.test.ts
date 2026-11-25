@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CATCH_UP_MIN, dueRuns, hasContent, nyClock, pushLine, routineOf, ROUTINES, runsOn, validTime } from "@/lib/routines-core";
+import { CATCH_UP_MIN, dueLabel, dueRuns, hasContent, itemHref, nyClock, plainTitle, pushLine, routineOf, ROUTINES, runsOn, sectionCounts, shortReport, validTime } from "@/lib/routines-core";
 
 // 2026-11-24 is a Tuesday; New York is UTC-5 in November
 const at = (ny: string) => new Date(`2026-11-24T${ny}:00-05:00`);
@@ -55,5 +55,31 @@ describe("per-person routines (Nov 24 2026)", () => {
   });
   it("the bell's line is the report's first sentence", () => {
     expect(pushLine({ headline: "Call Chris before 10am. Then the rest.", sections: [] })).toBe("Call Chris before 10am.");
+  });
+  it("a report is a card: counts per section for the bell, a short version for the assistant", () => {
+    const r = {
+      headline: "Board's clean: 2 need you today.",
+      sections: [
+        { title: "Only you can do", lines: [{ text: "Call Acme about the Q4 plan", client: "Acme", due: "2026-11-24" }, { text: "Approve the Bolt brief" }] },
+        { title: "Just hit send", lines: [{ text: "Send the recap", client: "Bolt" }] },
+        { title: "Empty", lines: [] },
+      ],
+    };
+    expect(sectionCounts(r)).toBe("Only you can do 2 · Just hit send 1");
+    const s = shortReport(r, 1);
+    expect(s.sections).toEqual([
+      { title: "Only you can do", count: 2, top: ["Acme: Call Acme about the Q4 plan (due 2026-11-24)"] },
+      { title: "Just hit send", count: 1, top: ["Bolt: Send the recap"] },
+    ]);
+  });
+  it("rows: due said short, titles without the routine's tag, items open in their sheet", () => {
+    expect(dueLabel("2026-11-23", "2026-11-24")).toEqual({ text: "overdue", late: true });
+    expect(dueLabel("2026-11-24", "2026-11-24")?.text).toBe("today");
+    expect(dueLabel("2026-11-25", "2026-11-24")?.text).toBe("tomorrow");
+    expect(dueLabel("2026-12-02", "2026-11-24")?.text).toBe("Dec 2");
+    expect(dueLabel("3pm", "2026-11-24")?.text).toBe("3pm");
+    expect(dueLabel(null, "2026-11-24")).toBeNull();
+    expect(plainTitle("[Agent 11/24] Hand to Mel · Build the deck")).toBe("Hand to Mel · Build the deck");
+    expect(itemHref("abc")).toBe("/pipeline?block=needs&item=ask%3Aabc");
   });
 });

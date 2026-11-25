@@ -7,6 +7,7 @@ import { todaySnapshot } from "@/lib/today-snapshot";
 import { TodayLive } from "./today-live";
 import { TodayLoading } from "./today-loading";
 import { HoverCard } from "@/components/hover-card";
+import { RecapCard } from "@/components/recap-card";
 import { LayoutSwitch } from "./layout-switch";
 import { TodayList } from "./today-list";
 
@@ -106,6 +107,8 @@ export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
   const rows = groups.flatMap((g) => g.buckets.map((b) => ({ ...b, topic: g.topic })));
   const first = rows.reduce<(typeof rows)[number] | null>((a, b) => (!a || b.items[0].score > a.items[0].score ? b : a), null);
   const top = first?.items[0];
+  // The latest routine report (the clean sweep, a recap): its card right here, each row acting in place
+  const recap = t.items.find((i) => i.recap)?.recap ?? null;
   // The button says what it opens, with the day's own number, never a different one (owner, Nov 24 2026: "Review 61 new
   // notifications" beside a 6-thing day: the 61 were Asana tasks not due yet, never opened in the recap)
   const cta = looks.total ? `Review ${looks.total} ${looks.total === 1 ? "thing" : "things"}` : t.resolved.length ? "See what's changed" : "Start your day";
@@ -207,6 +210,12 @@ export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
           ) : null}
         </div>
       </div>
+
+      {recap && (
+        <div className="relative">
+          <RecapCard report={recap.report} label={recap.label} at={recap.at} compact />
+        </div>
+      )}
 
       <div className="relative flex flex-wrap items-center justify-between gap-2">
         <span className="text-[11px] uppercase tracking-[0.16em] text-ink/40">{layout === "list" ? "Everything on your day" : "View"}</span>

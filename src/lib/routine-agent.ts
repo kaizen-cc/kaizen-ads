@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson, clientContext, contextBlock } from "@/lib/ai";
-import { nyClock, type RecapLine, type RoutineReport } from "@/lib/routines-core";
+import { itemHref, nyClock, plainTitle, type RecapDraft, type RecapLine, type RoutineReport } from "@/lib/routines-core";
 import { tagged } from "@/lib/routine-sweeps-core";
 import { isPeopleMatter, PEOPLE_RULE } from "@/lib/people-matters";
 
@@ -16,6 +16,13 @@ import { isPeopleMatter, PEOPLE_RULE } from "@/lib/people-matters";
 type Admin = SupabaseClient;
 type Me = { id: string; full_name: string; email: string; role: string; is_exec: boolean; is_lead: boolean };
 const DAY = 86_400_000;
+
+// A report row for an item (the card's row: client chip, short title, due, and what it does)
+type Row = { id: unknown; title: unknown; due_on?: unknown; clients?: unknown };
+const clientName = (r: Row) => (r.clients as { name?: string } | null)?.name ?? null;
+const itemLine = (r: Row, more: Partial<RecapLine> = {}): RecapLine => ({ text: plainTitle(String(r.title)), itemId: String(r.id), client: clientName(r), due: (r.due_on as string | null) ?? null, href: itemHref(String(r.id)), act: "open", tag: null, ...more });
+const draftOf = (d: ItemDraft): RecapDraft | null =>
+  d.text && (d.kind === "slack" || d.kind === "email") ? { kind: d.kind, text: d.text, channel: d.channelName ?? null, canPost: d.kind === "slack" && Boolean(d.channelId), to: d.to ?? null, subject: d.subject ?? null } : null;
 
 export type ItemDraft = {
   at: string;
@@ -66,7 +73,7 @@ async function sentSince(admin: Admin, me: Me, item: { client_id: string | null 
 
 /** Step 0 (and the clean sweep's first step): items whose draft was sent close as "Sent by"; the rest still wait */
 async function closeSent(admin: Admin, me: Me) {
-  const { data } = await admin.from("agent_asks").select("id, title, client_id, detail, draft").eq("owner_id", me.id).eq("status", "open").not("draft", "is", null).limit(100);
+  const { data } = await admin.from("agent_asks").select("id, title, client_id, detail, draft, due_on, clients(name)").eq("owner_id", me.id).eq("status", "open").not("draft", "is", null).limit(100);
   const closed: RecapLine[] = [];
   const waiting: RecapLine[] = [];
   for (const it of data ?? []) {
@@ -76,8 +83,8 @@ async function closeSent(admin: Admin, me: Me) {
     if (sent) {
       const when = new Date(sent.at).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
       await admin.from("agent_asks").update({ status: "done", done_at: new Date().toISOString(), detail: `${String(it.detail ?? "").trim()}\nSent by ${me.full_name.split(" ")[0]} ${when}${sent.link ? ` ${sent.link}` : ""}`.trim().slice(0, 4000) }).eq("id", it.id);
-      closed.push({ text: `${it.title} (sent ${when})`, href: sent.link, tag: "certain" });
-    } else waiting.push({ text: `${it.title}: ${d.kind === "slack" ? `send the draft${d.channelName ? ` in #${d.channelName}` : ""}` : `send the email${d.to ? ` to ${d.to}` : ""}`}`, href: "/pipeline", tag: null });
+      closed.push(itemLine(it, { detail: `Sent ${when}`, href: sent.link ?? itemHref(String(it.id)), tag: "certain" }));
+    } else waiting.push(itemLine(it, { detail: d.kind === "slack" ? `The draft${d.channelName ? ` for #${d.channelName}` : ""}` : `The email${d.to ? ` to ${d.to}` : ""}`, act: draftOf(d) ? "send" : "open", draft: draftOf(d) }));
   }
   return { closed, waiting };
 }
@@ -104,21 +111,21 @@ export async function nightly(admin: Admin, me: Me): Promise<RoutineReport> {
     .sort((a, b) => revenueRank(a as never) - revenueRank(b as never));
   const cap = me.is_exec || me.is_lead || me.role.startsWith("head_of_") ? 20 : 8;
   const now = queue.slice(0, cap);
-  const notReached = queue.slice(cap).map((i) => ({ text: String(i.title), href: "/pipeline", tag: null }) as RecapLine);
+  const notReached = queue.slice(cap).map((i) => itemLine(i));
   const { data: people } = await admin.from("profiles").select("id, full_name").eq("is_active", true);
   const { matchPerson } = await import("@/lib/routine-sweeps-core");
   const team = (people ?? []).filter((p) => p.id !== me.id).map((p) => ({ id: p.id as string, name: p.full_name as string }));
   const { loadReality, createItemIfNew } = await import("@/lib/reality-check");
   const found = await loadReality(admin, { clientIds: now.map((i) => (i.client_id as string | null) ?? null), ownerIds: team.map((t) => t.id) }).catch(() => []);
   const drafts: RecapLine[] = [];
-  const questions: string[] = [];
+  const questions: RecapLine[] = [];
   const cant: RecapLine[] = [];
   let pdfs = 0;
   const dest = await (await import("@/lib/drive-destination")).backgroundDestination(admin, { profileId: me.id, clientId: null, docType: "nightly_deliverable" }).catch(() => null);
   for (const it of now) {
     // A people matter is the person's own to handle: never drafted, staged or sent to anyone (owner, Nov 24 2026)
     if (isPeopleMatter(`${it.title}\n${String(it.detail ?? "")}`)) {
-      cant.push({ text: `${it.title}: yours to handle personally`, href: "/pipeline", tag: null });
+      cant.push(itemLine(it, { detail: "Yours to handle personally" }));
       continue;
     }
     const client = it.clients as unknown as { name: string; internal_slack_channel_id: string | null } | null;
@@ -154,12 +161,12 @@ Never state what Kaizen charges a client. Tag inferred claims [likely] or [guess
     }
     const stamp = new Date().toISOString();
     if (plan.decision === "question" && plan.question) {
-      questions.push(`${it.title}: ${plan.question}`);
+      questions.push(itemLine(it, { detail: plan.question, act: "answer", question: plan.question }));
       await admin.from("agent_asks").update({ draft: { at: stamp, kind: "question", question: plan.question } satisfies ItemDraft }).eq("id", it.id);
       continue;
     }
     if (plan.decision === "cant") {
-      cant.push({ text: `${it.title}: ${plan.reason}`, href: "/pipeline", tag: null });
+      cant.push(itemLine(it, { detail: plan.reason }));
       continue;
     }
     // A PDF for a substantive deliverable, into their standing confirmed folder only (never a guessed folder)
@@ -194,14 +201,14 @@ Never state what Kaizen charges a client. Tag inferred claims [likely] or [guess
         : { at: stamp, kind: "slack", text: m.text, channelId: m.where === "internal_channel" ? internal : null, channelName: m.where === "teammate" ? m.teammate : client ? `internal ${client.name}` : null, pdf, staged, leftToDo: plan.left_to_do }
       : { at: stamp, kind: "slack", text: "", pdf, staged, leftToDo: plan.left_to_do };
     await admin.from("agent_asks").update({ draft, detail: `${String(it.detail ?? "").trim()}\nDraft ready (${today}): ${plan.left_to_do}${pdf ? ` · ${pdf}` : ""}${draft.text ? `\n---\n${draft.kind === "email" && draft.subject ? `Subject: ${draft.subject}\n` : ""}${draft.text}` : ""}`.trim().slice(0, 4000) }).eq("id", it.id);
-    drafts.push({ text: `${it.title}: ${plan.left_to_do}`, href: "/pipeline", tag: null });
+    drafts.push(itemLine(it, { detail: [plan.left_to_do, pdf ? `PDF: ${pdf}` : "", staged ? `${staged} task${staged === 1 ? "" : "s"} to hand off` : ""].filter(Boolean).join(" · "), act: draftOf(draft) ? "send" : "open", draft: draftOf(draft) }));
   }
-  const top = drafts[0]?.text ?? cant[0]?.text ?? waiting[0]?.text ?? null;
+  const top = drafts[0] ?? cant[0] ?? waiting[0] ?? null;
   return {
-    headline: `${drafts.length} draft${drafts.length === 1 ? "" : "s"} ready, ${cant.length} couldn't be done, ${questions.length} question${questions.length === 1 ? "" : "s"}.${top ? ` Top priority: ${top}` : ""}`,
+    headline: `${drafts.length} draft${drafts.length === 1 ? "" : "s"} ready, ${cant.length} couldn't be done, ${questions.length} question${questions.length === 1 ? "" : "s"}.${top ? ` Top priority: ${top.client ? `${top.client}, ` : ""}${top.text}.` : ""}`,
     sections: [
       { title: "Drafts ready to review", lines: drafts },
-      { title: "Questions for you", lines: questions.map((q, i) => ({ text: `${i + 1}. ${q}`, href: "/pipeline", tag: null })) },
+      { title: "Answer the agent", lines: questions },
       { title: "Couldn't do", lines: cant },
       { title: "Still waiting on you to send", lines: waiting },
       { title: "Closed tonight", lines: closed },
@@ -218,10 +225,14 @@ export async function cleanSweep(admin: Admin, me: Me): Promise<RoutineReport> {
   // Provably done (the done-check's guardrails: a plain confirmation, never a decision or partial progress)
   const { checkNow } = await import("@/lib/done-check-now");
   const checked = await checkNow(admin, { id: me.id, role: me.role, isExec: me.is_exec, isLead: me.is_lead }, { scope: "mine", cap: 20 }).catch(() => null);
-  const proven = (checked?.closed ?? []).map((c) => ({ text: `${c.what}${c.quote ? `: "${c.quote}"` : ""}`, href: c.link, tag: "certain" as const }));
-  const probably = (checked?.moving ?? []).slice(0, 6).map((c) => ({ text: `${c.what}${c.quote ? `: "${c.quote}"` : ""}`, href: c.link, tag: "likely" as const }));
+  const fromCheck = (c: { key: string; client: string; what: string; quote: string | null; link: string | null }, tag: "certain" | "likely"): RecapLine => {
+    const id = c.key.startsWith("ask:") ? c.key.slice(4) : null;
+    return { text: plainTitle(c.what), client: c.client, detail: c.quote ? `"${c.quote}"` : null, itemId: id, href: c.link ?? (id ? itemHref(id) : null), act: "open", tag };
+  };
+  const proven = (checked?.closed ?? []).map((c) => fromCheck(c, "certain"));
+  const probably = (checked?.moving ?? []).slice(0, 6).map((c) => fromCheck(c, "likely"));
   // Duplicates (recaps, the tracker and the nightly agent can each make one): the oldest keeps the details
-  const { data: open } = await admin.from("agent_asks").select("id, title, detail, client_id, due_on, urgent, created_at, draft, status, staged_for, released_at").eq("owner_id", me.id).in("status", ["open", "staged"]).order("created_at").limit(300);
+  const { data: open } = await admin.from("agent_asks").select("id, title, detail, client_id, due_on, urgent, created_at, draft, status, staged_for, released_at, clients(name)").eq("owner_id", me.id).in("status", ["open", "staged"]).order("created_at").limit(300);
   const { sameWork } = await import("@/lib/reality-check-core");
   const merged: RecapLine[] = [];
   const keep: typeof open = [];
@@ -233,7 +244,7 @@ export async function cleanSweep(admin: Admin, me: Me): Promise<RoutineReport> {
     }
     await admin.from("agent_asks").update({ detail: `${String(k.detail ?? "").trim()}\nAlso: ${String(it.detail ?? it.title).split("\n")[0].slice(0, 300)}`.trim().slice(0, 4000) }).eq("id", k.id);
     await admin.from("agent_asks").update({ status: "dismissed", done_at: new Date().toISOString(), detail: `Duplicate of: ${k.title}` }).eq("id", it.id);
-    merged.push({ text: `${it.title} → kept "${k.title}"`, href: "/pipeline", tag: null });
+    merged.push(itemLine(k, { detail: `Merged a duplicate: ${plainTitle(String(it.title))}` }));
   }
   const staged = (open ?? []).filter((i) => i.status === "open" && String(i.title).includes("] Hand to "));
   const answers = keep!.filter((i) => (i.draft as ItemDraft | null)?.kind === "question");
@@ -241,15 +252,15 @@ export async function cleanSweep(admin: Admin, me: Me): Promise<RoutineReport> {
     .filter((i) => !i.draft && (!i.due_on || String(i.due_on) <= today))
     .sort((a, b) => revenueRank(a as never) - revenueRank(b as never))
     .slice(0, 10)
-    .map((i) => ({ text: String(i.title), href: "/pipeline", tag: null }) as RecapLine);
+    .map((i) => itemLine(i));
   const cleaned = [...closed, ...proven, ...merged];
   return {
-    headline: `Board's clean: ${onlyYou.length} need${onlyYou.length === 1 ? "s" : ""} you today, ${waiting.length} just need${waiting.length === 1 ? "s" : ""} a send.${onlyYou[0] ? ` First: ${onlyYou[0].text}` : ""}`,
+    headline: `Board's clean: ${onlyYou.length} need${onlyYou.length === 1 ? "s" : ""} you today, ${waiting.length} just need${waiting.length === 1 ? "s" : ""} a send.${onlyYou[0] ? ` First: ${onlyYou[0].client ? `${onlyYou[0].client}, ` : ""}${onlyYou[0].text}.` : ""}`,
     sections: [
       { title: "Only you can do", lines: onlyYou },
       { title: "Just hit send", lines: waiting },
-      { title: "Answer the agent", lines: answers.map((i) => ({ text: `${i.title}: ${(i.draft as ItemDraft).question}`, href: "/pipeline", tag: null })) },
-      { title: "Hand off", lines: staged.map((i) => ({ text: String(i.title), href: "/pipeline", tag: null })) },
+      { title: "Answer the agent", lines: answers.map((i) => itemLine(i, { detail: (i.draft as ItemDraft).question ?? null, act: "answer", question: (i.draft as ItemDraft).question ?? null })) },
+      { title: "Hand off", lines: staged.map((i) => itemLine(i, { act: "handoff" })) },
       { title: "Probably done, confirm", lines: probably },
       { title: "Cleaned up overnight", lines: cleaned },
     ].filter((s) => s.lines.length),

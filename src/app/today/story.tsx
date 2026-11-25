@@ -1,5 +1,6 @@
 "use client";
 
+import { RecapCard } from "@/components/recap-card";
 import { DraftReply } from "@/components/draft-reply";
 import { LinePauseControl } from "@/components/line-pause";
 import Link from "next/link";
@@ -839,7 +840,12 @@ function ItemBody({ i: item, status, big = false, onChoose, onAct, onNext }: { i
         </>
       )}
       {/* Enough to answer right here: the conversation (theirs and ours) or the exact words promised, else the story */}
-      {i.context?.length ? (
+      {i.recap ? (
+        // A routine's report: its card, each row acting where it sits (src/components/recap-card.tsx)
+        <div className="relative">
+          <RecapCard report={i.recap.report} label={i.recap.label} at={i.recap.at} dark headline={!big} compact={!big} />
+        </div>
+      ) : i.context?.length ? (
         <div className="relative">
           <ItemContext lines={i.context} dark />
         </div>

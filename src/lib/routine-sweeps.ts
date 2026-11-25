@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
-import { nyClock, type RecapLine, type RoutineReport } from "@/lib/routines-core";
+import { itemHref, nyClock, type RecapLine, type RoutineReport } from "@/lib/routines-core";
 import { coverageGaps, dueOf, matchPerson, tagged, type Person as Teammate } from "@/lib/routine-sweeps-core";
 import { blockedForPeople, PEOPLE_RULE } from "@/lib/people-matters";
 
@@ -99,7 +99,7 @@ ${PEOPLE_RULE} Mark any such item personnel: true; it is never filed.`,
     } catch {
       continue;
     }
-    callLines.push({ text: `${c.title}${client ? ` (${client})` : ""}: ${read.type}${read.my_items.length ? `, ${read.my_items.length} for you` : ""}`, href: (c.url as string | null) ?? null, tag: null });
+    callLines.push({ text: String(c.title), client, detail: `${read.type}${read.my_items.length ? `, ${read.my_items.length} for you` : ""}`, href: (c.url as string | null) ?? null, tag: null });
     if (read.urgent) urgent.push(read.urgent);
     for (const [n, it] of read.my_items.slice(0, 6).entries()) {
       // People matters never become an item (owner, Nov 24 2026)
@@ -109,7 +109,7 @@ ${PEOPLE_RULE} Mark any such item personnel: true; it is never filed.`,
         { owner_id: me.id, client_id: (c.client_id as string | null) ?? null, title: tagged("Call", today, it.title), detail: `${it.why}\nFrom the call "${c.title}"${c.url ? `: ${c.url}` : ""}\n(Created by Kaizen OS from the call notes.)`, due_on: dueOf(today, it.due, it.soon, 1, 3), source_ref: `routine:call:${c.id}:${n}`, urgent: it.soon },
         found,
       );
-      if (r.state === "new" && r.id) created.push({ text: tagged("Call", today, it.title), href: "/pipeline", tag: null });
+      if (r.state === "new" && r.id) created.push({ text: it.title, itemId: r.id, client, due: dueOf(today, it.due, it.soon, 1, 3), detail: it.why, href: itemHref(r.id), act: "open", tag: null });
       else if (r.match) handled.push({ text: r.state === "done" ? `Already done: ${r.match.title}` : `Already in motion${r.match.owner ? ` (${r.match.owner} is on it)` : ""}: ${r.match.title}`, href: r.match.href, tag: null });
     }
     if (read.type === "sales" && read.sales && salesMade < 5) {
@@ -242,7 +242,7 @@ export async function delegation(admin: Admin, me: Me): Promise<RoutineReport> {
       found,
     );
     const line = `${who.name} · ${a.scope}`;
-    if (r.state === "new" && r.id) created.push({ text: line, href: "/pipeline", tag: null });
+    if (r.state === "new" && r.id) created.push({ text: `${who.name.split(" ")[0]}: ${a.scope}`, client: a.client, due: dueOf(today, a.due, a.soon, 1, 3), href: (m.url as string | null) ?? null, tag: null });
     else existing.push({ text: r.match ? `${line} (${r.state === "done" ? "already done" : `already in motion${r.match.owner ? `, ${r.match.owner}` : ""}`}: ${r.match.title})` : line, href: r.match?.href ?? null, tag: null });
   }
   const sections = [
