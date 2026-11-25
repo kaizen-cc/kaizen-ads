@@ -3,7 +3,7 @@
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
-import { backoffDelay } from "@/lib/fail-fast";
+import { backoffDelay, pollJson } from "@/lib/fail-fast";
 import { BEAT_MS, RING_MS, ringLeft, ringStep, type RingState } from "@/lib/assistant/ring-core";
 import { setUnreadHeadsUps } from "@/lib/assistant/heads-up-store";
 import { AgentGlyph } from "./assistant-call-parts";
@@ -19,9 +19,7 @@ type HeadsUp = { id: string; line: string; href: string | null; items: { title: 
 type Beat = { ring: HeadsUp | null; unread: { id: string }[] };
 
 const post = (body: Record<string, unknown>) =>
-  fetch("/api/assistant/heads-up", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), cache: "no-store", signal: AbortSignal.timeout(10_000) })
-    .then((r) => (r.ok ? (r.json() as Promise<Beat>) : null))
-    .catch(() => null);
+  pollJson<Beat>("/api/assistant/heads-up", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), cache: "no-store" }, 10_000);
 
 /** A soft two-note ring, every two seconds while it rings (silent when the browser won't play sound yet) */
 function useRingTone(on: boolean) {

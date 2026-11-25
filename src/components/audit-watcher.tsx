@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
-import { backoffDelay } from "@/lib/fail-fast";
+import { backoffDelay, pollJson } from "@/lib/fail-fast";
 import { toast } from "./toasts";
 
 type Feed = {
@@ -44,14 +44,8 @@ export function AuditWatcher() {
     const poll = async () => {
       // A hidden tab doesn't poll; it checks again the moment it's back in view
       if (document.visibilityState === "hidden") return;
-      let feed: Feed | null = null;
       const started = Date.now();
-      try {
-        const res = await fetch("/api/audits/feed", { cache: "no-store", signal: AbortSignal.timeout(10_000) });
-        if (res.ok) feed = (await res.json()) as Feed;
-      } catch {
-        feed = null;
-      }
+      const feed = await pollJson<Feed>("/api/audits/feed", { cache: "no-store" }, 10_000);
       if (!alive) return;
       // Errors and slow answers double the wait (up to five minutes); a good answer resets it
       failures = feed && Date.now() - started < 5000 ? 0 : failures + 1;
