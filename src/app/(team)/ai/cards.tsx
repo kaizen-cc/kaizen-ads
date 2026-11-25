@@ -16,8 +16,8 @@ import type { BriefCard, Card, CopyCard, CopyField, LinkCard, ListCard, MetricsC
 // What Kaizen AI's tools put on screen: metrics tables, copy sets with character counts, briefs ready to send, report
 // and Google file links, ad change plans (confirmed on the card, never in the chat), and short lists.
 
-const money = (x: number | null | undefined) => (x == null ? "—" : `$${x >= 1000 ? Math.round(x).toLocaleString() : x.toFixed(2).replace(/\.00$/, "")}`);
-const n = (x: number | null | undefined, d = 0) => (x == null ? "—" : x.toLocaleString(undefined, { maximumFractionDigits: d }));
+const money = (x: number | null | undefined) => (x == null ? "—" : `$${x >= 1000 ? Math.round(x).toLocaleString("en-US") : x.toFixed(2).replace(/\.00$/, "")}`);
+const n = (x: number | null | undefined, d = 0) => (x == null ? "—" : x.toLocaleString("en-US", { maximumFractionDigits: d }));
 
 export function CopyButton({ text, label = "Copy", className = "" }: { text: string; label?: string; className?: string }) {
   const [done, setDone] = useState(false);

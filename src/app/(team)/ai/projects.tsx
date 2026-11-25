@@ -49,7 +49,7 @@ const ago = (iso: string) => {
   if (d < 1) return "today";
   if (d < 2) return "yesterday";
   if (d < 30) return `${Math.floor(d)} days ago`;
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  return new Date(iso).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", year: "numeric" });
 };
 const size = (chars: number) => (chars >= 1000 ? `${Math.round(chars / 1000)}k characters` : `${chars} characters`);
 const btn = "inline-flex min-h-11 items-center justify-center gap-2 rounded-full px-4 text-[14px] transition";
@@ -585,7 +585,7 @@ function InstructionsSheet({ p, onClose, onSaved }: { p: ProjectDetail; onClose:
           <textarea autoFocus value={v} onChange={(e) => setV(e.target.value)} rows={14} maxLength={40_000} placeholder="For example: answer as a senior media buyer, lead with the numbers, always check the client's KPI target before suggesting budget changes." className="min-h-[260px] resize-y rounded-[14px] border border-line bg-bg px-3.5 py-3 text-[14px] leading-relaxed text-fg outline-none focus:border-brand/50" />
           {error ? <p className="rounded-[12px] bg-bad-soft px-3 py-2 text-[13px] text-bad">{error}</p> : null}
           <div className="flex items-center justify-end gap-2">
-            <span className="mr-auto text-[12px] tabular-nums text-faint">{v.length.toLocaleString()} / 40,000</span>
+            <span className="mr-auto text-[12px] tabular-nums text-faint">{v.length.toLocaleString("en-US")} / 40,000</span>
             <button type="button" onClick={onClose} className={`${btn} text-muted hover:text-fg`}>
               Cancel
             </button>
