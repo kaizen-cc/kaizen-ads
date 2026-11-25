@@ -195,7 +195,8 @@ async function rung3Rows(admin: SupabaseClient, focus: readonly string[]): Promi
     .in("status", ["open", "sent"])
     .limit(500);
   const { roleLabel } = await import("@/lib/roles");
-  const rows = ((data ?? []) as unknown as NudgeRow[]).filter((r) => execHears(r.line, focus));
+  // Only the exec(s) whose line it is (a stuck item with no line reaches nobody but an exec with no focus set)
+  const rows = ((data ?? []) as unknown as NudgeRow[]).filter((r) => (r.line ? execHears(r.line, focus) : !focus.length));
   // The actual words behind each (owner, Nov 24 2026): the message waiting on a reply, the promise made
   const idsOf = (p: RegExp) => [...new Set(rows.map((r) => p.exec(r.item_key)?.[1]).filter((x): x is string => Boolean(x)))].slice(0, 200);
   const owedIds = idsOf(/^owed2?:(.+)$/);

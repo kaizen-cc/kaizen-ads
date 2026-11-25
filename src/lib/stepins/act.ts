@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
-import { execSees, type CardStatus, type Reason } from "./core";
+import { execSees, reasonsFor, type CardStatus, type Reason } from "./core";
 import type { StepinCard } from "./run";
 
 // Reading and working the shared step-in cards (the /stepins page, the Overview section and the assistant's tools).
@@ -30,12 +30,14 @@ export const stepinKey = (clientId: string) => `stepin:${clientId}`;
 type Result = { ok: true; message?: string } | { ok: false; error: string };
 
 /** The cards this exec sees (a fire: every exec; otherwise their focus lines), worst first, with each card's thread */
-export async function loadStepins(db: SupabaseClient, me: Staff, opts: { status?: "open" | "all" } = {}): Promise<Stepin[]> {
+export async function loadStepins(db: SupabaseClient, me: Staff, opts: { status?: "open" | "all"; /** The owner's "All lines": every card, every reason */ allLines?: boolean } = {}): Promise<Stepin[]> {
   if (!me.isExec) return [];
   const { loadExecFocus } = await import("@/lib/exec-focus/server");
   let q = db.from("exec_stepins").select("id, client_id, status, reasons, card, fire, severity, handler_id, due_on, handled_at, handled_note, opened_at, reopened_at, handler:profiles!exec_stepins_handler_id_fkey(full_name, role), closer:profiles!exec_stepins_handled_by_fkey(full_name)").order("severity", { ascending: false }).limit(200);
   q = opts.status === "all" ? q.neq("status", "recovered") : q.eq("status", "open");
-  const [{ data }, focus] = await Promise.all([q, loadExecFocus(db, me.id).catch(() => [])]);
+  const [{ data }, own] = await Promise.all([q, loadExecFocus(db, me.id).catch(() => [])]);
+  // The owner can see every line ("All lines" in the deck); everyone else sees their own
+  const focus = opts.allLines && me.canViewAs ? [] : own;
   const rows = ((data ?? []) as unknown as { id: string; client_id: string; status: CardStatus; reasons: Reason[]; card: StepinCard; fire: boolean; severity: number; handler_id: string | null; due_on: string | null; handled_at: string | null; handled_note: string | null; opened_at: string; reopened_at: string | null; handler: { full_name: string; role: string } | null; closer: { full_name: string } | null }[]).filter((r) => execSees(r.reasons, focus));
   const { roleLabel } = await import("@/lib/roles");
   const keys = rows.map((r) => stepinKey(r.client_id));
@@ -46,7 +48,8 @@ export async function loadStepins(db: SupabaseClient, me: Staff, opts: { status?
     id: r.id,
     clientId: r.client_id,
     status: r.status,
-    reasons: r.reasons ?? [],
+    // Their lines' reasons and the fires; another exec's line stays off the card
+    reasons: reasonsFor(r.reasons ?? [], focus),
     card: r.card,
     fire: r.fire,
     severity: r.severity,

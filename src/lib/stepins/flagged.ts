@@ -60,7 +60,7 @@ export async function loadFlagged(admin: SupabaseClient, me: Staff): Promise<Fla
   for (const r of (reviews ?? []) as unknown as { id: string; client_id: string; line: ReviewLine; risk: number; status: string; review: Review; assignee_id: string | null; due_on: string | null; clients: { name: string; slug: string } }[]) {
     const step = stepBy.get(r.client_id);
     // Their lines, or a client on fire (every exec)
-    if (!execHears(r.line, focus) && !step?.fire) continue;
+    if (!(r.line ? execHears(r.line, focus) : !focus.length) && !step?.fire) continue;
     const holes = flagHoles(r.review ?? {});
     if (!holes.length && !step) continue;
     const items = ((ladder ?? []) as unknown as { client_id: string; line: string | null; what: string; since: string; exec_at: string | null; owner: { full_name: string; role: string } | null }[])

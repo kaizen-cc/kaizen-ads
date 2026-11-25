@@ -1,6 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { CLIENT_REPLY_ROLE, CLIENT_REPLY_WAIT, leadFor, LINE_OF_ROLE, nudgeDraft, nudgeKey, waitedOut, type Wait } from "@/lib/escalation-ladder-core";
+import { CLIENT_REPLY_ROLE, CLIENT_REPLY_WAIT, leadFor, LINE_OF_ROLE, nudgeDraft, nudgeKey, stuckLine, waitedOut, type Wait } from "@/lib/escalation-ladder-core";
 
 // The one escalation ladder every line routes through (rules in ./escalation-ladder-core.ts): owed replies, things
 // said yes to, creative stuck past its turnaround, briefs waiting on an approval. The owner hears first (each source
@@ -32,12 +32,14 @@ export async function climbLadder(admin: SupabaseClient, items: LadderItem[], no
   const due = items.filter((i) => waitedOut(i.since, i.wait, now));
   if (!due.length) return { nudged: 0 };
   const { pausedKeys } = await import("@/lib/item-comments");
-  const [paused, { data: people }, { data: have }] = await Promise.all([
+  const clientIds = [...new Set(due.map((i) => i.clientId).filter((x): x is string => Boolean(x)))];
+  const [paused, { data: people }, { data: have }, linesOf] = await Promise.all([
     pausedKeys(admin, due.map((i) => i.key)),
-    admin.from("profiles").select("id, full_name, role").eq("is_active", true),
+    admin.from("profiles").select("id, full_name, role, exec_focus").eq("is_active", true),
     admin.from("ladder_nudges").select("key").in("key", due.map((i) => nudgeKey(i.key))),
+    import("@/lib/exec-focus/server").then(({ linesByClient }) => linesByClient(admin, clientIds)).catch(() => new Map<string, string[]>()),
   ]);
-  const active = ((people ?? []) as { id: string; full_name: string; role: string }[]).map((p) => ({ id: p.id, role: String(p.role), name: p.full_name }));
+  const active = ((people ?? []) as { id: string; full_name: string; role: string; exec_focus: string[] | null }[]).map((p) => ({ id: p.id, role: String(p.role), name: p.full_name, focus: p.exec_focus ?? [] }));
   const byId = new Map(active.map((p) => [p.id, p]));
   const done = new Set((have ?? []).map((h) => h.key as string));
   let nudged = 0;
@@ -53,7 +55,7 @@ export async function climbLadder(admin: SupabaseClient, items: LadderItem[], no
     const draft = nudgeDraft({ teammate: owner.name, what: i.what, client: i.client ?? null, hours, kind: rung ? "client_reply" : i.kind });
     const { data: row, error } = await admin
       .from("ladder_nudges")
-      .insert({ key: nudgeKey(i.key), item_key: i.key, kind: i.kind, line: LINE_OF_ROLE[owner.role] ?? null, client_id: i.clientId, owner_id: owner.id, lead_id: lead.id, what: i.what.slice(0, 300), client_name: i.client ?? null, href: i.href ?? null, since: i.since, draft })
+      .insert({ key: nudgeKey(i.key), item_key: i.key, kind: i.kind, line: stuckLine({ ownerRole: owner.role, ownerFocus: owner.focus, clientLines: i.clientId ? (linesOf.get(i.clientId) ?? []) : [], leadRole: lead.role }), client_id: i.clientId, owner_id: owner.id, lead_id: lead.id, what: i.what.slice(0, 300), client_name: i.client ?? null, href: i.href ?? null, since: i.since, draft })
       .select("id")
       .single();
     if (error || !row) continue;

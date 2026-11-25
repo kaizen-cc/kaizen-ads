@@ -40,7 +40,7 @@ function useAct() {
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" });
 const TREND: Record<string, { t: string; c: string }> = { better: { t: "↗ improving", c: "#5be3a5" }, worse: { t: "↘ getting worse", c: "#ff6b78" }, flat: { t: "→ flat", c: "" } };
 
-export function StepinsHero({ cards, compact = false, people, canRefresh = false, flagged = [] }: { cards: Stepin[]; compact?: boolean; people: Person[]; canRefresh?: boolean; flagged?: Flagged[] }) {
+export function StepinsHero({ cards, compact = false, people, canRefresh = false, flagged = [], allLines = null }: { cards: Stepin[]; compact?: boolean; people: Person[]; canRefresh?: boolean; flagged?: Flagged[]; /** The owner only: every line's step-ins, or their own (?lines=all) */ allLines?: boolean | null }) {
   const story = useParam("story") === "stepins";
   const open = cards.filter((c) => c.status === "open");
   const fires = open.filter((c) => c.fire).length;
@@ -79,6 +79,12 @@ export function StepinsHero({ cards, compact = false, people, canRefresh = false
           {compact && (
             <button type="button" onClick={toggle} aria-expanded="true" className="inline-flex h-11 items-center gap-2 rounded-full border border-ink/15 px-4 text-[14px] text-fg hover:border-ink/30">
               Fold <span aria-hidden className="-rotate-90">→</span>
+            </button>
+          )}
+          {/* The owner's "All lines": every exec's step-ins, or just theirs (in the address, so Back returns) */}
+          {allLines !== null && (
+            <button type="button" onClick={() => pushParams({ lines: allLines ? null : "all" })} aria-pressed={allLines} className={`inline-flex h-11 items-center rounded-full px-4 text-[14px] ${allLines ? "bg-fg text-bg" : "border border-ink/15 text-fg hover:border-ink/30"}`}>
+              {allLines ? "All lines ✓" : "All lines"}
             </button>
           )}
           {open.length > 0 && (

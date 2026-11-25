@@ -117,3 +117,20 @@ export const nudgeKey = (itemKey: string) => `nudge:${itemKey}`.slice(0, 200);
 
 /** Whether a role is a lead on the ladder (a teammate's stuck work climbs to them) */
 export const isLadderLead = (role: string | null | undefined): boolean => Object.values(LADDER).some((rungs) => rungs.includes(String(role ?? "")));
+
+/**
+ * Which service line a stuck item belongs to, so it reaches only the execs on that line (owner, Nov 25 2026: the email
+ * exec saw Meta step-ins): the owner's role decides (a buyer, a designer, an email strategist); an item an exec or a
+ * coordinator owns belongs to the line of the owner's own focus that the client buys (an exec's reply to a Meta client
+ * is Meta), else their first focus line, else the lead's role. Null only when nothing says (it then reaches nobody but
+ * the owner's "All lines").
+ */
+export function stuckLine(o: { ownerRole?: string | null; ownerFocus?: readonly string[] | null; clientLines?: readonly string[] | null; leadRole?: string | null }): string | null {
+  const byRole = o.ownerRole ? LINE_OF_ROLE[o.ownerRole] : undefined;
+  if (byRole) return byRole;
+  const focus = (o.ownerFocus ?? []).filter((f) => f !== "creative_performance");
+  const buys = new Set(o.clientLines ?? []);
+  const fromFocus = focus.find((f) => buys.has(f)) ?? focus[0];
+  if (fromFocus) return fromFocus;
+  return (o.leadRole ? LINE_OF_ROLE[o.leadRole] : undefined) ?? null;
+}

@@ -15,9 +15,9 @@ export async function stepinPeople(db: SupabaseClient) {
   return [...rows.filter((r) => r.is_exec), ...rows.filter((r) => !r.is_exec && lead(r.role))].map((r) => ({ id: r.id, name: r.full_name }));
 }
 
-export async function StepinsSection({ db, me }: { db: SupabaseClient; me: Staff }) {
+export async function StepinsSection({ db, me, allLines = false }: { db: SupabaseClient; me: Staff; allLines?: boolean }) {
   if (!me.isExec) return null;
   const { loadFlagged } = await import("@/lib/stepins/flagged");
-  const [cards, people, flagged] = await Promise.all([loadStepins(db, me).catch(() => []), stepinPeople(db).catch(() => []), adminConfigured() ? loadFlagged(createAdminClient(), me).catch(() => []) : Promise.resolve([])]);
-  return <StepinsHero cards={cards} people={people} flagged={flagged} compact />;
+  const [cards, people, flagged] = await Promise.all([loadStepins(db, me, { allLines }).catch(() => []), stepinPeople(db).catch(() => []), adminConfigured() ? loadFlagged(createAdminClient(), me).catch(() => []) : Promise.resolve([])]);
+  return <StepinsHero cards={cards} people={people} flagged={flagged} compact allLines={me.canViewAs ? allLines : null} />;
 }

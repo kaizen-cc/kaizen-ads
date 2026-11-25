@@ -43,7 +43,7 @@ async function ConnectOverviewItem({ me }: { me: Staff }) {
 }
 
 /** An exec's Overview: the recap's cards in their tabs, opening on the most critical */
-async function ExecOverview({ db, me, base }: { db: SupabaseClient; me: Staff; base: { greeting: string; firstName: string; today: string } }) {
+async function ExecOverview({ db, me, base, allLines = false }: { db: SupabaseClient; me: Staff; base: { greeting: string; firstName: string; today: string }; /** The owner's "All lines" in the step-ins deck (?lines=all) */ allLines?: boolean }) {
   const [{ ExecBlocks }, core, snap] = await Promise.all([import("./views/exec-home"), import("@/lib/exec-overview-core"), todaySnapshot(db, me)]);
   const tabs = Object.fromEntries(core.EXEC_TABS.map((t) => [t, [] as import("@/lib/exec-overview-core").ExecCard[]])) as Record<import("@/lib/exec-overview-core").ExecTab, import("@/lib/exec-overview-core").ExecCard[]>;
   for (const i of snap.today.items) if (i.exec && i.exec.tab in tabs) tabs[i.exec.tab].push(i.exec);
@@ -66,7 +66,7 @@ async function ExecOverview({ db, me, base }: { db: SupabaseClient; me: Staff; b
       </Suspense>
       {/* This week's step-ins: the accounts where an exec steps in (src/lib/stepins) */}
       <Suspense fallback={null}>
-        <StepinsSection db={db} me={me} />
+        <StepinsSection db={db} me={me} allLines={allLines} />
       </Suspense>
       <ExecBlocks tabs={tabs} owner={owner} dayCards={snap.today.items.map(itemCard)} />
       {/* Their own widgets under the blocks, and "Add widget" (src/app/(team)/pipeline/views/widgets.tsx) */}
@@ -104,7 +104,7 @@ export default async function Home({ searchParams }: PageProps<"/pipeline">) {
   const [me, db, sp] = await Promise.all([requireStaff(), createClient(), searchParams]);
   const now = new Date();
   const base = { greeting: greetingFor(now), firstName: me.fullName.split(" ")[0], today: todayLabel(now) };
-  if (me.isExec) return <ExecOverview db={db} me={me} base={base} />;
+  if (me.isExec) return <ExecOverview db={db} me={me} base={base} allLines={sp.lines === "all"} />;
 
   const { isLadderLead } = await import("@/lib/escalation-ladder-core");
   const lead = isLadderLead(me.role) || me.isLead;

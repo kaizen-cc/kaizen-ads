@@ -29,9 +29,19 @@ export function severityOf(reasons: readonly Reason[]): number {
   return ranks[0] + Math.min(20, (ranks.length - 1) * 5);
 }
 
-/** Whether this exec sees the card: a fire is everyone's; otherwise a reason on one of their focus lines (no focus: all) */
+/**
+ * Whether this exec sees the card: a fire is everyone's; otherwise a reason on one of their focus lines (no focus set:
+ * all). A reason with no line reaches nobody but an exec with no focus (owner, Nov 25 2026: the email exec saw Meta
+ * step-ins through a reason that had no line); the owner sees everything with "All lines".
+ */
 export function execSees(reasons: readonly Pick<Reason, "kind" | "line">[], focus: readonly string[]): boolean {
-  return reasons.some((r) => r.kind === "fire" || !r.line || execHears(r.line, focus));
+  return reasons.some((r) => r.kind === "fire" || (r.line ? execHears(r.line, focus) : !focus.length));
+}
+
+/** The reasons an exec is shown on a card they see: theirs and the fires (another line's reasons stay off it) */
+export function reasonsFor<T extends Pick<Reason, "kind" | "line">>(reasons: readonly T[], focus: readonly string[]): T[] {
+  if (!focus.length) return [...reasons];
+  return reasons.filter((r) => r.kind === "fire" || (r.line ? execHears(r.line, focus) : false));
 }
 
 /** The suggested step-in, from the worst reason first */
