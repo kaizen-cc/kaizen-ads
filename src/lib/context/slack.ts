@@ -1,5 +1,6 @@
 import "server-only";
 import { isBareSlackLink, slackLink, workspaceBase } from "@/lib/slack-link";
+import { isNew, messageText, profileName, THREAD_LOOKBACK_DAYS, threadsWithNewReplies, type RawMessage } from "./slack-read-core";
 import type { Tracker } from "@/lib/progress";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { compact, getCursor, saveItems, setCursor, trimBody, type CollectResult, type ContextItem } from "./shared";
@@ -216,33 +217,89 @@ export async function fixStoredSlackLinks(admin: SupabaseClient): Promise<number
 }
 
 export async function readChannel(channel: string, since: Date, clientId: string, source: ContextItem["source"]) {
-  const oldest = (since.getTime() / 1000).toFixed(6);
+  const after = since.getTime() / 1000;
   const items: ContextItem[] = [];
-  const { messages } = await slack<{ messages: SlackMessage[] }>("conversations.history", { channel, oldest, limit: "200" });
-  const add = async (m: SlackMessage) => {
-    if (!m.text?.trim() || m.subtype === "channel_join" || m.subtype === "channel_leave") return;
+  const add = async (m: SlackMessage & RawMessage) => {
+    const text = messageText(m);
+    if (!text) return;
     items.push({
       client_id: clientId,
       source,
       external_id: `${channel}:${m.ts}`,
       thread_id: m.thread_ts ? `${channel}:${m.thread_ts}` : null,
       occurred_at: new Date(Number(m.ts) * 1000).toISOString(),
-      author: m.bot_id ? "bot" : await personName(m.user),
+      // Someone from the client's own workspace (Slack Connect) is named from the message, not our directory
+      author: m.bot_id ? "bot" : (profileName(m) ?? (await personName(m.user))),
       title: null,
-      body: trimBody(m.text),
+      body: trimBody(text),
       url: permalink(channel, m.ts, m.thread_ts),
       meta: {},
     });
   };
-  for (const m of messages) {
-    await add(m);
-    // Threads can get new replies long after the parent message
-    if (m.reply_count && m.latest_reply && Number(m.latest_reply) > Number(oldest)) {
-      const { messages: replies } = await slack<{ messages: SlackMessage[] }>("conversations.replies", { channel, ts: m.ts, oldest, limit: "200" });
-      for (const r of replies) if (r.ts !== m.ts) await add(r);
+  // Parents over the lookback window (a new reply in an older thread is found from its parent's latest_reply), every page
+  const oldest = (after - THREAD_LOOKBACK_DAYS * 86_400).toFixed(6);
+  const parents: (SlackMessage & RawMessage)[] = [];
+  let cursor = "";
+  for (let page = 0; page < 10; page++) {
+    const r = await slack<{ messages: (SlackMessage & RawMessage)[]; has_more?: boolean; response_metadata?: { next_cursor?: string } }>("conversations.history", { channel, oldest, limit: "200", ...(cursor ? { cursor } : {}) });
+    parents.push(...r.messages);
+    cursor = r.response_metadata?.next_cursor ?? "";
+    if (!r.has_more || !cursor) break;
+  }
+  for (const m of parents) if (isNew(m.ts, after)) await add(m);
+  // Only threads with a reply newer than our last read are read in full (IO light); every page of them
+  for (const ts of threadsWithNewReplies(parents, after)) {
+    let next = "";
+    for (let page = 0; page < 10; page++) {
+      const r = await slack<{ messages: (SlackMessage & RawMessage)[]; has_more?: boolean; response_metadata?: { next_cursor?: string } }>("conversations.replies", { channel, ts, oldest: after.toFixed(6), limit: "200", ...(next ? { cursor: next } : {}) });
+      for (const reply of r.messages) if (reply.ts !== ts && isNew(reply.ts, after)) await add(reply);
+      next = r.response_metadata?.next_cursor ?? "";
+      if (!r.has_more || !next) break;
     }
   }
   return items;
+}
+
+/**
+ * Once (the owner, Nov 25 2026): every client's shared and internal channel read again over the last 14 days, so the
+ * thread replies the old reader missed are in. Picks up where it stopped (the channels done are kept in app_settings
+ * slack_thread_backfill) and stops itself near the time budget; runs with the Slack step until it's finished.
+ */
+export async function backfillSlackThreads(admin: SupabaseClient, days = 14, budgetMs = 200_000): Promise<{ done: boolean; channels: number; saved: number }> {
+  const { data: row } = await admin.from("app_settings").select("value").eq("key", "slack_thread_backfill").maybeSingle();
+  const state = (row?.value ?? {}) as { finished_at?: string; done?: string[] };
+  if (state.finished_at) return { done: true, channels: 0, saved: 0 };
+  const done = new Set(state.done ?? []);
+  const { data: clients } = await admin.from("clients").select("id, slack_channel_id, internal_slack_channel_id").is("archived_at", null).in("status", LIVE);
+  const deadline = Date.now() + budgetMs;
+  const since = new Date(Date.now() - days * 86_400_000);
+  let channels = 0;
+  let saved = 0;
+  let finished = true;
+  for (const c of clients ?? []) {
+    for (const [channel, src] of [
+      [c.internal_slack_channel_id, "slack_internal"],
+      [c.slack_channel_id, "slack_external"],
+    ] as const) {
+      if (!channel || done.has(channel)) continue;
+      if (Date.now() > deadline) {
+        finished = false;
+        break;
+      }
+      try {
+        const read = await readChannel(channel, since, c.id as string, src);
+        await saveItems(admin, read);
+        saved += read.length;
+      } catch (e) {
+        console.error("[slack backfill]", channel, e instanceof Error ? e.message : e); // not_in_channel: skipped, like the sync
+      }
+      done.add(channel);
+      channels++;
+    }
+    if (!finished) break;
+  }
+  await admin.from("app_settings").upsert({ key: "slack_thread_backfill", value: finished ? { finished_at: new Date().toISOString(), channels: done.size } : { done: [...done] } }, { onConflict: "key" });
+  return { done: finished, channels, saved };
 }
 
 /** Loom links in Slack messages, queued for the agents' knowledge (about the channel's client when there is one) */
