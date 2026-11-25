@@ -1,4 +1,5 @@
 import "server-only";
+import { linksIn, withLinks } from "@/lib/item-facts";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { decide, type Candidate, type Existing, type RealityState } from "@/lib/reality-check-core";
 
@@ -60,9 +61,16 @@ export async function realityOf(admin: Admin, c: Candidate): Promise<{ state: Re
  * Creates an OS item only when it's new. In motion: the existing item gets a short note with where this came up (once)
  * and nothing is created; done: nothing is created. Returns what happened so the caller can report it.
  */
+/** Its sheet's facts: what the maker gave, plus every link in its words (the Slack message, Asana task, Gmail thread) */
+function factsFor(row: { detail?: string | null; facts?: import("@/lib/item-facts").ItemFacts | null }) {
+  const links = linksIn(row.detail);
+  if (!row.facts && !links.length) return null;
+  return withLinks(row.facts ?? {}, links);
+}
+
 export async function createItemIfNew(
   admin: Admin,
-  row: { kind?: "task" | "reminder"; owner_id: string; asked_by?: string | null; client_id: string | null; title: string; detail?: string | null; due_on?: string | null; source_ref?: string | null; urgent?: boolean; checklist?: unknown[] },
+  row: { kind?: "task" | "reminder"; owner_id: string; asked_by?: string | null; client_id: string | null; title: string; detail?: string | null; due_on?: string | null; source_ref?: string | null; urgent?: boolean; checklist?: unknown[]; facts?: import("@/lib/item-facts").ItemFacts | null },
   found?: Existing[],
 ): Promise<{ state: RealityState; id: string | null; match: Existing | null; blocked?: true }> {
   // People matters never become an item (owner, Nov 24 2026): nothing is made, nothing is noted anywhere
@@ -83,7 +91,7 @@ export async function createItemIfNew(
   if (d.state !== "new") return { state: d.state, id: null, match: d.match };
   const { data, error } = await admin
     .from("agent_asks")
-    .insert({ kind: row.kind ?? "task", owner_id: row.owner_id, asked_by: row.asked_by ?? row.owner_id, client_id: row.client_id, title: row.title.slice(0, 300), detail: row.detail?.slice(0, 4000) ?? null, due_on: row.due_on ?? null, source_ref: row.source_ref ?? null, urgent: Boolean(row.urgent), ...(row.checklist ? { checklist: row.checklist } : {}) })
+    .insert({ kind: row.kind ?? "task", owner_id: row.owner_id, asked_by: row.asked_by ?? row.owner_id, client_id: row.client_id, title: row.title.slice(0, 300), detail: row.detail?.slice(0, 4000) ?? null, due_on: row.due_on ?? null, source_ref: row.source_ref ?? null, urgent: Boolean(row.urgent), ...(row.checklist ? { checklist: row.checklist } : {}), facts: factsFor(row) })
     .select("id")
     .single();
   if (error || !data) return { state: "new", id: null, match: null };

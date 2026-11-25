@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson, clientContext, contextBlock } from "@/lib/ai";
-import { itemHref, nyClock, plainTitle, type RecapDraft, type RecapLine, type RoutineReport } from "@/lib/routines-core";
+import { itemHref, nyClock, plainTitle, ROUTINES, type RecapDraft, type RecapLine, type RoutineReport } from "@/lib/routines-core";
 import { tagged } from "@/lib/routine-sweeps-core";
 import { isPeopleMatter, PEOPLE_RULE } from "@/lib/people-matters";
 
@@ -46,6 +46,7 @@ const PLAN = {
     decision: { type: "string", enum: ["execute", "question", "cant"] },
     reason: { type: "string", description: "cant: what needs them personally (a call, a pricing/fee/scope/hiring/churn decision, platform access, any change in Meta/Google/Klaviyo/Shopify); question: why it's blocked" },
     question: { type: ["string", "null"], description: "question: the one or two facts only they have, as one specific question" },
+    options: { type: ["array", "null"], items: { type: "string" }, description: "question: 2-4 likely answers they can tap, when the answer is a choice (else null)" },
     deliverable: { type: ["object", "null"], properties: { title: { type: "string" }, markdown: { type: "string", description: "## sections, short paragraphs and bullets; generous, never cramped" } }, required: ["title", "markdown"], additionalProperties: false },
     message: {
       type: ["object", "null"],
@@ -56,10 +57,10 @@ const PLAN = {
     staged: { type: "array", items: { type: "object", properties: { person: { type: "string" }, scope: { type: "string" }, detail: { type: "string" }, done: { type: "string" } }, required: ["person", "scope", "detail", "done"], additionalProperties: false } },
     left_to_do: { type: "string", description: "Exactly what they still do, e.g. 'Send the draft in #internal-oceanbox + release 1 staged task'" },
   },
-  required: ["decision", "reason", "question", "deliverable", "message", "staged", "left_to_do"],
+  required: ["decision", "reason", "question", "options", "deliverable", "message", "staged", "left_to_do"],
   additionalProperties: false,
 };
-type Plan = { decision: "execute" | "question" | "cant"; reason: string; question: string | null; deliverable: { title: string; markdown: string } | null; message: { where: string; teammate: string | null; to: string | null; subject: string | null; text: string } | null; staged: { person: string; scope: string; detail: string; done: string }[]; left_to_do: string };
+type Plan = { decision: "execute" | "question" | "cant"; reason: string; question: string | null; options?: string[] | null; deliverable: { title: string; markdown: string } | null; message: { where: string; teammate: string | null; to: string | null; subject: string | null; text: string } | null; staged: { person: string; scope: string; detail: string; done: string }[]; left_to_do: string };
 
 /** Whether the person already sent the drafted message: their own message in that client's Slack after the draft, saying the same thing */
 async function sentSince(admin: Admin, me: Me, item: { client_id: string | null }, d: ItemDraft): Promise<{ at: string; link: string | null } | null> {
@@ -96,7 +97,7 @@ export async function nightly(admin: Admin, me: Me): Promise<RoutineReport> {
   const today = nyClock(new Date()).date;
   const { closed, waiting } = await closeSent(admin, me);
   const soon = new Date(Date.parse(today) + 3 * DAY).toISOString().slice(0, 10);
-  const { data: open } = await admin.from("agent_asks").select("id, title, detail, client_id, due_on, urgent, created_at, draft, clients(name, internal_slack_channel_id)").eq("owner_id", me.id).eq("status", "open").limit(200);
+  const { data: open } = await admin.from("agent_asks").select("id, title, detail, client_id, due_on, urgent, created_at, draft, facts, clients(name, internal_slack_channel_id)").eq("owner_id", me.id).eq("status", "open").limit(200);
   // Answers to last night's questions: their comments on the item since the question
   const asked = (open ?? []).filter((i) => (i.draft as ItemDraft | null)?.kind === "question");
   const { data: answers } = asked.length ? await admin.from("item_comments").select("key, body, created_at, author_id").in("key", asked.map((i) => `ask:${i.id}`)).eq("author_id", me.id) : { data: [] };
@@ -144,6 +145,7 @@ decision: execute (a brief, creative brief, summary or recap, research, an SOP o
 deliverable: for a substantive piece only (else null): a title and the document in markdown with ## sections.
 message: a drafted message (else null): internal_channel (the client's INTERNAL channel, tagging the audience by name), teammate (to one teammate, name them), or email (to, subject, a short body; long content goes in the deliverable). 1-3 lines of summary + what's needed + by when. Never client-facing Slack.
 staged: tasks for teammates, staged until they release them: person, verb-first scope, detail (the data behind it, the client), done (definition of done; kill/scale rules for any ad work). One per person.
+A question is only for a fact they have that you don't; never ask who should own, build or decide something (that's cant, with the reason), and never ask about work that's already done or already running. Already running in Kaizen OS for everyone (not open work): ${ROUTINES.map((r) => r.label.toLowerCase()).join(", ")}; owed replies and promises with drafts; the done-check; client message reading.
 Never state what Kaizen charges a client. Tag inferred claims [likely] or [guessing] inline. Never invent numbers, links or dates: use [brackets]. ${PEOPLE_RULE} An item that is itself a people matter is cant.`,
         schema: PLAN,
         prompt: [
@@ -162,7 +164,8 @@ Never state what Kaizen charges a client. Tag inferred claims [likely] or [guess
     const stamp = new Date().toISOString();
     if (plan.decision === "question" && plan.question) {
       questions.push(itemLine(it, { detail: plan.question, act: "answer", question: plan.question }));
-      await admin.from("agent_asks").update({ draft: { at: stamp, kind: "question", question: plan.question } satisfies ItemDraft }).eq("id", it.id);
+      // Its sheet: the question, the answers to tap, and the answer goes back as a comment the next run reads
+      await admin.from("agent_asks").update({ draft: { at: stamp, kind: "question", question: plan.question } satisfies ItemDraft, facts: { ...((it.facts as object | null) ?? {}), options: (plan.options ?? []).slice(0, 4) } }).eq("id", it.id);
       continue;
     }
     if (plan.decision === "cant") {
@@ -190,7 +193,7 @@ Never state what Kaizen charges a client. Tag inferred claims [likely] or [guess
     let staged = 0;
     for (const t of plan.staged.slice(0, 4)) {
       const who = matchPerson(t.person, team);
-      const r = await createItemIfNew(admin, { owner_id: me.id, asked_by: me.id, client_id: (it.client_id as string | null) ?? null, title: tagged("Agent", today, `Hand to ${who?.name ?? t.person} · ${t.scope}`), detail: `Ready to hand to ${who?.name ?? t.person}: Delegate it to them when you're happy with it.\n${t.detail}\nDone means: ${t.done}${pdf ? `\n${pdf}` : ""}\n(Drafted by Kaizen OS's nightly agent.)`, source_ref: `nightly:${it.id}:${t.scope.slice(0, 40)}` }, found);
+      const r = await createItemIfNew(admin, { facts: { handoff: { toId: who?.id ?? null, toName: who?.name ?? t.person, scope: t.scope, done: t.done, detail: t.detail }, links: pdf ? [{ label: "PDF", url: pdf }] : [] }, owner_id: me.id, asked_by: me.id, client_id: (it.client_id as string | null) ?? null, title: tagged("Agent", today, `Hand to ${who?.name ?? t.person} · ${t.scope}`), detail: `Ready to hand to ${who?.name ?? t.person}: Delegate it to them when you're happy with it.\n${t.detail}\nDone means: ${t.done}${pdf ? `\n${pdf}` : ""}\n(Drafted by Kaizen OS's nightly agent.)`, source_ref: `nightly:${it.id}:${t.scope.slice(0, 40)}` }, found);
       if (r.state === "new" && r.id) staged++;
     }
     const m = plan.message && !isPeopleMatter(plan.message.text) ? plan.message : null;
@@ -231,6 +234,12 @@ export async function cleanSweep(admin: Admin, me: Me): Promise<RoutineReport> {
   };
   const proven = (checked?.closed ?? []).map((c) => fromCheck(c, "certain"));
   const probably = (checked?.moving ?? []).slice(0, 6).map((c) => fromCheck(c, "likely"));
+  // Their sheet shows why: the words, where and when they were said, the link
+  for (const c of (checked?.moving ?? []).slice(0, 6) as { key: string; quote: string | null; where?: string | null; said?: string | null; link: string | null }[]) {
+    if (!c.key.startsWith("ask:")) continue;
+    const { data: cur } = await admin.from("agent_asks").select("facts").eq("id", c.key.slice(4)).maybeSingle();
+    await admin.from("agent_asks").update({ facts: { ...((cur?.facts as object | null) ?? {}), evidence: { state: "moving", quote: c.quote ?? null, source: c.where ?? null, url: c.link ?? null, at: c.said ?? null } } }).eq("id", c.key.slice(4));
+  }
   // Duplicates (recaps, the tracker and the nightly agent can each make one): the oldest keeps the details
   const { data: open } = await admin.from("agent_asks").select("id, title, detail, client_id, due_on, urgent, created_at, draft, status, staged_for, released_at, clients(name)").eq("owner_id", me.id).in("status", ["open", "staged"]).order("created_at").limit(300);
   const { sameWork } = await import("@/lib/reality-check-core");

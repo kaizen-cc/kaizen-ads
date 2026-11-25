@@ -255,6 +255,7 @@ async function recurringToday(admin: Admin): Promise<number> {
       client_id: s.client_id,
       title: `[Client ${clock.date.slice(5, 7)}/${clock.date.slice(8, 10)}] Send today's ${r.what}`.slice(0, 300),
       detail: `A recurring commitment (${r.cadence}${r.until ? ` until ${r.until}` : ""}): ${r.what}.\n(Created by Kaizen OS each day it's due.)`,
+      facts: { links: [] },
       due_on: clock.date,
       source_ref: ref,
     });
@@ -297,6 +298,7 @@ async function holdWatch(admin: Admin): Promise<number> {
         due_on: nyClock(new Date()).date,
         urgent: true,
         source_ref: ref,
+        facts: s.url ? { links: [{ label: "Gmail thread", url: s.url as string }] } : null,
       });
       if (!error) made++;
     }
