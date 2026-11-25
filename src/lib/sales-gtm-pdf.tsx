@@ -191,26 +191,31 @@ function Stats({ s, items }: { s: S; items: Stat[] }) {
 function T({ s, t, widths }: { s: S; t: Table; widths?: number[] }) {
   if (!t.rows.length) return null;
   const w = (i: number) => (widths?.[i] ? { flex: widths[i] } : {});
+  const row = (r: string[], ri: number) => (
+    <View key={ri} style={ri % 2 ? s.trAlt : s.tr} wrap={false}>
+      {r.map((c, ci) => (
+        <Text key={ci} style={[ci === 0 ? s.cellFirst : s.cell, w(ci)]}>
+          {c}
+        </Text>
+      ))}
+    </View>
+  );
   return (
     <View style={s.table}>
-      {t.head.length > 0 && (
-        <View style={s.th} fixed={false}>
-          {t.head.map((h, i) => (
-            <Text key={i} style={[s.thCell, w(i)]}>
-              {h}
-            </Text>
-          ))}
-        </View>
-      )}
-      {t.rows.map((r, ri) => (
-        <View key={ri} style={ri % 2 ? s.trAlt : s.tr} wrap={false}>
-          {r.map((c, ci) => (
-            <Text key={ci} style={[ci === 0 ? s.cellFirst : s.cell, w(ci)]}>
-              {c}
-            </Text>
-          ))}
-        </View>
-      ))}
+      {/* The header and the first row stay together, so a header is never left alone at the bottom of a page */}
+      <View wrap={false}>
+        {t.head.length > 0 && (
+          <View style={s.th}>
+            {t.head.map((h, i) => (
+              <Text key={i} style={[s.thCell, w(i)]}>
+                {h}
+              </Text>
+            ))}
+          </View>
+        )}
+        {row(t.rows[0], 0)}
+      </View>
+      {t.rows.slice(1).map((r, i) => row(r, i + 1))}
       {t.note ? <Text style={s.note}>{t.note}</Text> : null}
     </View>
   );
