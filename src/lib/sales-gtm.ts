@@ -71,11 +71,11 @@ export async function relationshipOf(admin: Admin, p: { relationship?: string | 
   return hit ? { relationship: "white_label", partner: hit, detected: true } : null;
 }
 
-export async function queueGtm(admin: Admin, o: { prospectId: string; profileId: string; partnerKey?: string | null; ask?: string | null; researched?: boolean; refresh?: boolean }): Promise<{ id: string; existing: boolean }> {
+export async function queueGtm(admin: Admin, o: { prospectId: string; profileId: string; partnerKey?: string | null; ask?: string | null; researched?: boolean; refresh?: boolean; assumed?: boolean }): Promise<{ id: string; existing: boolean }> {
   const { data: open } = await admin.from("prospect_gtms").select("id").eq("prospect_id", o.prospectId).in("status", ["queued", "running"]).limit(1).maybeSingle();
   if (open) return { id: open.id as string, existing: true };
   // Earlier versions stay (their rows and PDFs); the prospect shows the newest and lists the rest
-  const { data, error } = await admin.from("prospect_gtms").insert({ prospect_id: o.prospectId, profile_id: o.profileId, partner_key: o.partnerKey ?? null, ask: o.ask?.slice(0, 2000) ?? null, stage: o.researched ? "researched" : o.refresh ? "refresh" : null }).select("id").single();
+  const { data, error } = await admin.from("prospect_gtms").insert({ prospect_id: o.prospectId, profile_id: o.profileId, partner_key: o.partnerKey ?? null, ask: o.ask?.slice(0, 2000) ?? null, stage: o.researched ? "researched" : o.refresh ? "refresh" : null, assumed: Boolean(o.assumed) }).select("id").single();
   if (error || !data) throw new Error(error?.message ?? "The go-to-market strategy couldn't be started.");
   await kickGtm(data.id as string);
   return { id: data.id as string, existing: false };
@@ -97,10 +97,23 @@ export async function kickGtm(id: string) {
  * by itself, no "want it?" step. It follows the prospect's direct-or-white-label setting (stored, or detected from the
  * research); the only thing that can hold it is that one question when neither says, asked at research start.
  */
-export async function autoGtm(admin: Admin, o: { prospectId: string; profileId: string; ask?: string | null; refresh?: boolean }): Promise<{ queued: true; id: string; existing: boolean } | { queued: false; need: "relationship" | "kit"; say: string }> {
+export async function autoGtm(admin: Admin, o: { prospectId: string; profileId: string; ask?: string | null; refresh?: boolean; hint?: string | null; assumeDirect?: boolean }): Promise<{ queued: true; id: string; existing: boolean; assumed?: boolean } | { queued: false; need: "relationship" | "kit"; say: string }> {
   const { data: p } = await admin.from("prospects").select("id, relationship, partner_key, brief").eq("id", o.prospectId).maybeSingle();
   if (!p) return { queued: false, need: "relationship", say: "The prospect isn't there." };
-  const rel = await relationshipOf(admin, p as { id: string; relationship: string | null; partner_key: string | null; brief: unknown });
+  let rel = await relationshipOf(admin, p as { id: string; relationship: string | null; partner_key: string | null; brief: unknown });
+  // A sales call's invite: a partner's domain among the guests, or its name in the title or description
+  if (!rel && o.hint) {
+    const { data: partners } = await admin.from("sales_partners").select("key, name, prepared_by, brand, rules, show_fees, contact, website, kit_confirmed_at").eq("active", true);
+    const { partnerCredited } = await import("@/lib/sales-gtm-core");
+    const h = o.hint.toLowerCase();
+    const hit = ((partners ?? []) as Partner[]).find((x) => partnerCredited(h, x) || (x.name.length >= 4 && h.includes(x.name.toLowerCase())));
+    if (hit) rel = { relationship: "white_label", partner: hit, detected: true };
+  }
+  // Ahead of a sales call nothing waits on the question: Kaizen's branding, marked "Assumed Kaizen" with the switch
+  if (!rel && o.assumeDirect) {
+    const q = await queueGtm(admin, { prospectId: o.prospectId, profileId: o.profileId, ask: o.ask ?? null, researched: !o.refresh, refresh: o.refresh, assumed: true });
+    return { queued: true, ...q, assumed: true };
+  }
   if (!rel) return { queued: false, need: "relationship", say: `${RELATIONSHIP_QUESTION} The strategy builds as soon as that's set.` };
   if (rel.detected) await admin.from("prospects").update({ relationship: rel.relationship, partner_key: rel.partner?.key ?? null }).eq("id", o.prospectId);
   if (rel.partner && !rel.partner.kit_confirmed_at) return { queued: false, need: "kit", say: `${rel.partner.name}'s brand kit isn't confirmed yet (partner_kit); the strategy builds once it is.` };

@@ -10,7 +10,7 @@ import { gtmPdfAction, gtmStatusAction, setRelationshipAction, startGtmAction } 
 // then download the client-facing PDF and read the internal talking notes, which are never sent. Saving to Drive or
 // emailing it goes through the assistant (the Drive rule: the folder is said back for a yes first).
 
-export type GtmView = { id: string; status: string; stage: string | null; partner: string | null; documentId: string | null; notes: GtmNotes | null; error: string | null; createdAt: string };
+export type GtmView = { id: string; status: string; stage: string | null; partner: string | null; documentId: string | null; notes: GtmNotes | null; error: string | null; createdAt: string; assumed?: boolean };
 
 // One bar from research to the PDF: where each stage sits on it, and what it says
 const STAGE: Record<string, { label: string; at: number }> = {
@@ -65,7 +65,7 @@ export function GtmCard({ prospectId, gtm, earlier = [], partners, relationship,
       <div className="grid gap-1">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-[11px] font-medium uppercase tracking-[0.16em] text-faint">Go-to-market strategy</h2>
-          <ModeBadge relationship={relationship} partner={partnerName} />
+          {gtm?.assumed ? <span className="inline-flex w-fit items-center rounded-full bg-warn-soft px-2.5 py-1 text-[12px] font-medium text-warn">Assumed Kaizen: switch?</span> : <ModeBadge relationship={relationship} partner={partnerName} />}
         </div>
         <p className="text-[13.5px] leading-relaxed text-muted">A branded PDF for the prospect (the market, competitors, positioning and offer, channel plan, investment tiers, 90-day plan) and your internal talking notes. Separate from the proposal. It builds by itself whenever the research runs; you&apos;ll get one notification when the PDF is ready.</p>
       </div>
@@ -162,11 +162,12 @@ export function GtmCard({ prospectId, gtm, earlier = [], partners, relationship,
           </label>
           <input value={ask} onChange={(e) => setAsk(e.target.value)} placeholder="Anything to focus on? (channels, the creative package, who it's for)" className="h-11 min-w-0 rounded-[14px] border border-line bg-bg px-3.5 text-[16px] text-fg placeholder:text-faint md:text-[14px]" />
           <button type="submit" disabled={pending || !mode || Boolean(kitMissing)} className="inline-flex h-11 items-center justify-center rounded-full border border-line bg-surface px-5 text-[14px] font-medium text-fg hover:bg-surface-2 disabled:opacity-60">
-            {gtm ? "Rebuild" : "Build now"}
+            {gtm ? "Rebuild" : "Generate strategy"}
           </button>
         </form>
       )}
       {!live && !mode && <p className="text-[12.5px] text-warn">Is this a direct Kaizen deal or a white-label pitch for a partner agency? Set it and the strategy builds right away: the PDF, the notes and the proposal follow it.</p>}
+      {gtm?.assumed && !live && <p className="text-[12.5px] text-warn">Built ahead of the sales call in Kaizen&apos;s branding because nobody said otherwise. If it&apos;s a partner pitch, pick the partner above: it rebuilds in their branding.</p>}
       {kitMissing && <p className="text-[12.5px] text-warn">{partnerName}&apos;s brand kit isn&apos;t confirmed yet. Ask your assistant to set it up (it pulls the logo from their site for a yes).</p>}
       {error && <p className="text-[13px] text-bad">{error}</p>}
     </section>

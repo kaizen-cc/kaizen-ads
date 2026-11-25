@@ -209,6 +209,16 @@ const BRIEF_SCHEMA = {
   },
 };
 
+/** A call's GTM: none yet (or none in the last 3 weeks, or the last one failed) → one is queued, kicked at once */
+async function gtmBeforeCall(admin: Admin, row: BriefRow, prospectId: string) {
+  const { data: last } = await admin.from("prospect_gtms").select("status, created_at").eq("prospect_id", prospectId).order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (last && last.status !== "failed" && last.status !== "cancelled" && Date.now() - Date.parse(last.created_at as string) < STALE_RESEARCH_DAYS * 86_400_000) return;
+  const { data: p } = await admin.from("prospects").select("researched_at").eq("id", prospectId).maybeSingle();
+  const { autoGtm } = await import("@/lib/sales-gtm");
+  const hint = [row.title, row.organizer ?? "", ...row.attendees.map((a) => `${a.name ?? ""} ${a.email}`), (row.description ?? "").slice(0, 3000)].join("\n");
+  await autoGtm(admin, { prospectId, profileId: row.owner_id!, hint, assumeDirect: true, refresh: !p?.researched_at });
+}
+
 /** Writes one call's brief (research first when the prospect's is missing or stale) and delivers it */
 export async function makeBrief(admin: Admin, row: BriefRow, team: Team, now = new Date()): Promise<{ ok: true; business: string; prospectId: string } | { ok: false; error: string }> {
   const ev: BriefEvent = { id: row.event_id ?? row.event_key, summary: row.title, description: row.description, attendees: row.attendees.map((a) => ({ email: a.email, displayName: a.name })), organizer: row.organizer ? { email: row.organizer } : null, start: { dateTime: row.starts_at } };
@@ -221,12 +231,15 @@ export async function makeBrief(admin: Admin, row: BriefRow, team: Team, now = n
   let researchText = "";
   if (stale && row.owner_id) {
     const { researchProspect } = await import("@/lib/sales-agent");
-    const r = await researchProspect(admin, admin, { id: row.owner_id }, { prospectId: prospect.id, name: prospect.name, website: site, question: `Before a sales call: ${row.title}` }).catch((e) => ({ ok: false as const, error: e instanceof Error ? e.message : String(e) }));
+    const r = await researchProspect(admin, admin, { id: row.owner_id }, { prospectId: prospect.id, name: prospect.name, website: site, question: `Before a sales call: ${row.title}`, gtm: false }).catch((e) => ({ ok: false as const, error: e instanceof Error ? e.message : String(e) }));
     researchText = r.ok ? r.text : `(Research didn't finish: ${r.error})`;
   } else if (prospect.brief) {
     const { briefText, cleanBrief } = await import("@/lib/sales-core");
     researchText = briefText(prospect.name, cleanBrief(prospect.brief));
   }
+  // The go-to-market strategy, built ahead of the call (research first when there's none): the stored mode, a partner
+  // seen on the invite (a guest's domain, its name in the title), else Kaizen marked "Assumed Kaizen" (never blocks)
+  if (row.owner_id) await gtmBeforeCall(admin, row, prospect.id).catch((e) => console.error("[sales-briefs] gtm", e instanceof Error ? e.message : e));
   const booking = bookingAnswers(row.description);
   // Dedupe against reality: someone already preparing this call (an item about it) is said in the brief, never doubled
   const { loadReality } = await import("@/lib/reality-check");

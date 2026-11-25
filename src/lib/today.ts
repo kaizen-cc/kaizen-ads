@@ -1109,6 +1109,12 @@ async function withSalesBriefs(db: SupabaseClient, me: Staff, drafts: Draft[]): 
   const { briefTitle, whenLabel, callBriefText, cleanCallBrief } = await import("@/lib/sales-briefs-core");
   const { briefHref } = await import("@/lib/sales-core");
   const out = [...drafts];
+  // Each call's go-to-market strategy, attached to its item (the newest per prospect)
+  const pids = [...new Set(data.map((r) => r.prospect_id as string | null).filter((x): x is string => Boolean(x)))];
+  const { createAdminClient: adminOf } = await import("@/lib/supabase/admin");
+  const { data: gs } = pids.length ? await adminOf().from("prospect_gtms").select("id, prospect_id, status, stage, partner_key, assumed, document_id, created_at").in("prospect_id", pids).order("created_at", { ascending: false }) : { data: [] };
+  const gtmOf = new Map<string, { id: string; status: string; partner_key: string | null; assumed: boolean; document_id: string | null }>();
+  for (const g of (gs ?? []) as { id: string; prospect_id: string; status: string; partner_key: string | null; assumed: boolean; document_id: string | null }[]) if (!gtmOf.has(g.prospect_id)) gtmOf.set(g.prospect_id, g);
   for (const r of data as { id: string; title: string; starts_at: string; status: string; brief: { business?: string; they_want?: string; next_step?: string; fit?: { score: number | null } } | null; prospect_id: string | null }[]) {
     const business = r.brief?.business || r.title;
     const over = r.status === "done" || Date.parse(r.starts_at) < now;
@@ -1117,6 +1123,10 @@ async function withSalesBriefs(db: SupabaseClient, me: Staff, drafts: Draft[]): 
     const href = me.isExec ? (over && r.prospect_id ? `/sales/${r.prospect_id}?tab=drafts` : `/sales/briefs/${r.id}`) : briefHref(r.id, false).replace("salesbrief%3A", over ? "salesdebrief%3A" : "salesbrief%3A");
     const sections = !me.isExec && r.brief ? callBriefText(business, whenLabel(r.starts_at), cleanCallBrief(r.brief, { booking: (r.brief as { booking?: { q: string; a: string }[] }).booking, in_motion: (r.brief as { in_motion?: string | null }).in_motion ?? null })).split(/\n{2,}/) : [];
     const context = sections.map((text) => ({ from: "Sales agent", at: null, text, ours: true }));
+    const g = r.prospect_id ? gtmOf.get(r.prospect_id) : undefined;
+    const gtmLine = g ? (g.status === "done" ? `Go-to-market strategy ready (${g.partner_key ? `white label · ${g.partner_key}` : g.assumed ? "Assumed Kaizen: switch on the prospect if it's a partner pitch" : "Kaizen branding"}): download it from this item.` : g.status === "failed" ? "The go-to-market strategy didn't finish." : "The go-to-market strategy is being built for this call.") : null;
+    if (gtmLine && !over) context.push({ from: "Sales agent", at: null, text: gtmLine, ours: true });
+    const gtmAlt = g?.status === "done" && g.document_id && !over ? { label: "Strategy PDF", href: me.isExec && r.prospect_id ? `/sales/${r.prospect_id}#gtm` : `/api/sales/gtm-pdf?brief=${r.id}` } : null;
     const title = over ? `How did the call with ${business} go? Review it` : briefTitle(business, r.starts_at);
     const story = over ? (me.isExec ? "Paste the notes or the Gemini doc: the Sales agent reviews it, moves the deal on and suggests the proposal" : "Ask your assistant to review the call: paste the notes or give it the Gemini doc") : [r.brief?.they_want ? `They want: ${r.brief.they_want}` : null, r.brief?.next_step ? `Next step: ${r.brief.next_step}` : null].filter(Boolean).join(" · ").slice(0, 300) || "Who they are, what they want, fit, objections and the questions to ask";
     const soon = !over && Date.parse(r.starts_at) - now < 3 * 3_600_000;
@@ -1135,6 +1145,7 @@ async function withSalesBriefs(db: SupabaseClient, me: Staff, drafts: Draft[]): 
       why: over ? "The call happened: a quick review keeps the deal moving" : "A sales call you're running, briefed by the Sales agent",
       evidence: [],
       action,
+      ...(gtmAlt ? { alt: gtmAlt } : {}),
       due: r.starts_at,
       ...(context.length ? { context } : {}),
       ...(me.isExec ? { exec: card } : {}),

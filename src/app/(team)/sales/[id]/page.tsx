@@ -29,7 +29,7 @@ export default async function ProspectPage({ params }: PageProps<"/sales/[id]">)
   ]);
   // The latest go-to-market strategy, and the white-label partners to brand one for
   const [{ data: g }, { data: partners }] = await Promise.all([
-    db.from("prospect_gtms").select("id, status, stage, partner_key, document_id, notes, error, created_at").eq("prospect_id", p.id).order("created_at", { ascending: false }).limit(8),
+    db.from("prospect_gtms").select("id, status, stage, partner_key, document_id, notes, error, created_at, assumed").eq("prospect_id", p.id).order("created_at", { ascending: false }).limit(8),
     db.from("sales_partners").select("key, name, kit_confirmed_at").eq("active", true).order("name"),
   ]);
   // Its email flows and its competitors', from the swipe file
@@ -44,7 +44,7 @@ export default async function ProspectPage({ params }: PageProps<"/sales/[id]">)
   // Earlier versions stay downloadable (a re-run never replaces one)
   const earlier = gtms.slice(1).filter((x) => x.status === "done" && x.document_id).map((x) => ({ documentId: x.document_id as string, partner: partnerName(x.partner_key as string | null), createdAt: x.created_at as string }));
   const latest = gtms[0];
-  const gtm = latest ? { id: latest.id as string, status: latest.status as string, stage: (latest.stage as string | null) ?? null, partner: partnerName(latest.partner_key as string | null), documentId: (latest.document_id as string | null) ?? null, notes: latest.notes ? cleanNotes(latest.notes, partnerName(latest.partner_key as string | null)) : null, error: (latest.error as string | null) ?? null, createdAt: latest.created_at as string } : null;
+  const gtm = latest ? { id: latest.id as string, status: latest.status as string, stage: (latest.stage as string | null) ?? null, partner: partnerName(latest.partner_key as string | null), documentId: (latest.document_id as string | null) ?? null, notes: latest.notes ? cleanNotes(latest.notes, partnerName(latest.partner_key as string | null)) : null, error: (latest.error as string | null) ?? null, createdAt: latest.created_at as string, assumed: Boolean(latest.assumed) && !p.relationship } : null;
   const list: ProspectNote[] = (notes ?? []).map((n) =>
     n.kind === "pitch"
       ? { id: n.id as string, kind: "pitch", title: (n.title as string) ?? "Pitch drafts", at: n.created_at as string, pitch: cleanPitch(n.body) }
