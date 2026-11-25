@@ -89,6 +89,11 @@ export type RecapLine = {
   tag?: "certain" | "likely" | "guessing" | null;
   /** The agent_asks item behind the row, for its actions */
   itemId?: string | null;
+  /** The item's key on the Overview (ask:<id>, owed:<id>, said:<id>, callp:<id>): every finding is a real item */
+  key?: string | null;
+  /** The model's pointer to the open item a row is about (ask:…, owed:…, said:…, callp:…), and whether it's to do */
+  ref?: string | null;
+  todo?: boolean | null;
   client?: string | null;
   /** YYYY-MM-DD, or a short time ("3pm") */
   due?: string | null;

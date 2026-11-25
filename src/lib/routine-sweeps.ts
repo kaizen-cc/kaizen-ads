@@ -134,7 +134,8 @@ ${PEOPLE_RULE} Mark any such item personnel: true; it is never filed.`,
     { title: "New items for you", lines: created.filter((l) => !closedNow.has(l.itemId ?? "")) },
     { title: "Already done since the call", lines: created.filter((l) => closedNow.has(l.itemId ?? "")) },
     { title: "Already handled", lines: handled },
-    { title: "Coverage gaps", lines: gaps.map((g) => ({ text: `${g.title} (${new Date(g.start).toLocaleString("en-US", { timeZone: "America/New_York", weekday: "short", hour: "numeric", minute: "2-digit" })}): no notes from Gemini or Fireflies`, href: null, tag: null })) },
+    // Each one their item to close (add the notes, or say there were none): routines.ts materialize makes it
+    { title: "Coverage gaps", lines: gaps.map((g) => ({ text: `Add the notes for ${g.title}`, detail: `${new Date(g.start).toLocaleString("en-US", { timeZone: "America/New_York", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}: no notes from Gemini or Fireflies`, todo: true, href: null, tag: null })) },
   ].filter((s) => s.lines.length);
   const headline = urgent[0] ?? (fresh.length ? `${fresh.length} call${fresh.length === 1 ? "" : "s"} read: ${created.length} new item${created.length === 1 ? "" : "s"} for you${sales.length ? `, ${sales.length} sales call${sales.length === 1 ? "" : "s"} in Sales` : ""}.` : "No new client calls, sales calls or client comms since the last sweep.");
   return { headline, sections, urgent: urgent.length > 0, failedSources: meetings ? [] : ["Google Calendar (for the coverage check)"], processed: fresh.map((c) => c.id as string) };

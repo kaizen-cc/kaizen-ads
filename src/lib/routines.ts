@@ -71,7 +71,9 @@ export async function runRoutine(admin: Admin, profileId: string, kind: RoutineK
   const { data: me } = await admin.from("profiles").select("id, full_name, email, role, is_exec, is_lead").eq("id", profileId).maybeSingle();
   if (!me) return { id: claimed.id as string, report: null, error: "No such person" };
   try {
-    const report = await RUNNERS[kind](admin, me as Person);
+    // Every finding to act on is a real item the Overview opens (owner, Nov 25 2026): never only words in the report
+    const raw = await RUNNERS[kind](admin, me as Person);
+    const report = (await materialize(admin, me as Person, kind, raw).catch(() => null)) ?? raw;
     await admin.from("routine_runs").update({ status: "done", headline: report.headline.slice(0, 400), report, finished_at: new Date().toISOString() }).eq("id", claimed.id);
     // Nothing to say: nothing rings. Otherwise its top line in the bell, opening their day (the recap leads it)
     if (hasContent(report)) {
@@ -137,10 +139,10 @@ async function gather(admin: Admin, me: Person, from: string, to: string, ahead?
     upcoming: upcoming ?? [],
     calls: myCalls.map((c) => ({ title: c.title as string, at: c.occurred_at as string, client: (c.clients as unknown as { name: string } | null)?.name ?? null, link: (c.url as string | null) ?? null, summary: String(c.summary ?? c.notes ?? "").replace(/\s+/g, " ").slice(0, 1400) })),
     asana: (asanaMine ?? []).filter((t) => !t.completed || String(t.completed_at ?? "") >= from).map((t) => ({ title: t.name as string, due: (t.due_on as string | null) ?? null, project: (t.project as string | null) ?? null, done: Boolean(t.completed), link: (t.url as string | null) ?? null })),
-    items: (items ?? []).map((i) => ({ id: i.id as string, title: i.title as string, due: (i.due_on as string | null) ?? null, client: (i.clients as unknown as { name: string } | null)?.name ?? null, staged: i.status === "staged", draft: Boolean(i.draft), urgent: Boolean(i.urgent) })),
-    owed: (owedMod ?? []).filter((o) => o.targetId === me.id).map((o) => ({ from: o.from, gist: o.gist, since: o.askedAt, client: o.client, link: o.url })),
-    said: (saidMod ?? []).filter((p) => p.ownerId === me.id).map((p) => ({ what: p.what, due: p.dueAt, client: p.client, link: p.url })),
-    callPromises: (callsMod ?? []).map((c) => ({ what: c.what, due: c.dueAt, client: c.client })),
+    items: (items ?? []).map((i) => ({ ref: `ask:${i.id}`, id: i.id as string, title: i.title as string, due: (i.due_on as string | null) ?? null, client: (i.clients as unknown as { name: string } | null)?.name ?? null, staged: i.status === "staged", draft: Boolean(i.draft), urgent: Boolean(i.urgent) })),
+    owed: (owedMod ?? []).filter((o) => o.targetId === me.id).map((o) => ({ ref: `owed:${o.id}`, from: o.from, gist: o.gist, since: o.askedAt, client: o.client, link: o.url })),
+    said: (saidMod ?? []).filter((p) => p.ownerId === me.id).map((p) => ({ ref: `said:${p.id}`, what: p.what, due: p.dueAt, client: p.client, link: p.url })),
+    callPromises: (callsMod ?? []).map((c) => ({ ref: `callp:${c.id}`, what: c.what, due: c.dueAt, client: c.client })),
     comms: (comms ?? []).filter((c) => wide || (c.client_id && mine.has(c.client_id as string))).map((c) => ({ at: c.occurred_at as string, source: c.source as string, author: (c.author as string | null) ?? null, client: (c.clients as unknown as { name: string } | null)?.name ?? null, text: `${c.title ? `${c.title}: ` : ""}${String(c.body ?? "")}`.replace(/\s+/g, " ").slice(0, 300), link: (c.url as string | null) ?? null })),
   };
 }
@@ -156,7 +158,7 @@ const REPORT_SCHEMA = {
         type: "object",
         properties: {
           title: { type: "string" },
-          lines: { type: "array", items: { type: "object", properties: { text: { type: "string", description: "Verb-first, under 10 words (\"Send Acme the Q4 plan\")" }, client: { type: ["string", "null"], description: "The client's name, else null" }, due: { type: ["string", "null"], description: "YYYY-MM-DD, or a time today like 3pm, else null" }, detail: { type: ["string", "null"], description: "One short sentence more (the number, who, why), else null" }, href: { type: ["string", "null"] }, tag: { anyOf: [{ type: "string", enum: ["certain", "likely", "guessing"] }, { type: "null" }] } }, required: ["text", "client", "due", "detail", "href", "tag"], additionalProperties: false } },
+          lines: { type: "array", items: { type: "object", properties: { text: { type: "string", description: "Verb-first, under 10 words (\"Send Acme the Q4 plan\")" }, client: { type: ["string", "null"], description: "The client's name, else null" }, due: { type: ["string", "null"], description: "YYYY-MM-DD, or a time today like 3pm, else null" }, detail: { type: ["string", "null"], description: "One short sentence more (the number, who, why), else null" }, ref: { type: ["string", "null"], description: "The ref of the open item, reply or promise in the data this row is about, else null" }, todo: { type: "boolean", description: "True when it's something for them to do" }, href: { type: ["string", "null"] }, tag: { anyOf: [{ type: "string", enum: ["certain", "likely", "guessing"] }, { type: "null" }] } }, required: ["text", "client", "due", "detail", "ref", "todo", "href", "tag"], additionalProperties: false } },
         },
         required: ["title", "lines"],
         additionalProperties: false,
@@ -285,3 +287,43 @@ const RUNNERS: Record<RoutineKind, (admin: Admin, me: Person) => Promise<Routine
     return { headline: n ? `${n} call${n === 1 ? "" : "s"} prepped: the briefs are below.` : "No client or sales calls in the next hour and a half to prep.", sections: [] };
   },
 };
+
+/**
+ * Every row of a report that's something to do becomes a real item (owner, Nov 25 2026: findings go into Needs me as
+ * normal items, never only text inside the report): a row about an open item, reply or promise points at it (its key);
+ * any other to-do is made as the person's own item, through the dedupe against reality (in motion: the existing one).
+ */
+export async function materialize(admin: Admin, me: Person, kind: RoutineKind | string, report: RoutineReport): Promise<RoutineReport> {
+  if (!report.sections.some((s) => s.lines.some((l) => l.todo || l.ref || l.itemId))) return report;
+  const { itemHref, plainTitle } = await import("@/lib/routines-core");
+  const { loadReality, createItemIfNew } = await import("@/lib/reality-check");
+  const { data: clients } = await admin.from("clients").select("id, name").is("archived_at", null).limit(1000);
+  const clientOf = (name: string | null | undefined) => {
+    const n = String(name ?? "").trim().toLowerCase();
+    return n ? ((clients ?? []).find((c) => String(c.name).toLowerCase() === n)?.id as string | undefined) ?? null : null;
+  };
+  const found = await loadReality(admin, { clientIds: report.sections.flatMap((s) => s.lines.map((l) => clientOf(l.client))), ownerIds: [me.id] }).catch(() => []);
+  const today = nyClock(new Date()).date;
+  const key = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().slice(0, 60);
+  const sections = [];
+  for (const s of report.sections) {
+    const lines = [];
+    for (const l of s.lines) {
+      const ref = /^(ask|owed|said|callp):[0-9a-f-]{36}$/.test(String(l.ref ?? "")) ? String(l.ref) : null;
+      if (l.itemId) lines.push({ ...l, key: l.key ?? `ask:${l.itemId}` });
+      else if (ref) lines.push({ ...l, key: ref, itemId: ref.startsWith("ask:") ? ref.slice(4) : null, href: ref.startsWith("ask:") ? itemHref(ref.slice(4)) : (l.href ?? null), act: l.act ?? "open" });
+      else if (l.todo) {
+        const due = l.due && /^\d{4}-\d{2}-\d{2}$/.test(l.due) ? l.due : null;
+        const r = await createItemIfNew(
+          admin,
+          { owner_id: me.id, asked_by: me.id, client_id: clientOf(l.client), title: plainTitle(l.text).slice(0, 300), detail: `${l.detail ?? ""}${l.href ? `\n${l.href}` : ""}\n(From your ${routineOf(kind)?.label?.toLowerCase() ?? "recap"}, ${today}.)`.trim(), due_on: due, source_ref: `routine:${kind}:${today}:${key(l.text)}` },
+          found,
+        );
+        const id = r.id ?? (r.match?.source === "item" ? r.match.id : null);
+        lines.push(id ? { ...l, itemId: id, key: `ask:${id}`, href: itemHref(id), act: l.act ?? "open" } : l);
+      } else lines.push(l);
+    }
+    sections.push({ ...s, lines });
+  }
+  return { ...report, sections };
+}

@@ -22,7 +22,7 @@ const BRIEF = {
   type: "object",
   properties: {
     headline: { type: "string", description: "First sentence: the one thing to do or know before this call" },
-    sections: { type: "array", items: { type: "object", properties: { title: { type: "string" }, lines: { type: "array", items: { type: "object", properties: { text: { type: "string" }, href: { type: ["string", "null"] }, tag: { anyOf: [{ type: "string", enum: ["certain", "likely", "guessing"] }, { type: "null" }] } }, required: ["text", "href", "tag"], additionalProperties: false } } }, required: ["title", "lines"], additionalProperties: false } },
+    sections: { type: "array", items: { type: "object", properties: { title: { type: "string" }, lines: { type: "array", items: { type: "object", properties: { text: { type: "string" }, todo: { type: "boolean", description: "True for something to do or send before the call" }, href: { type: ["string", "null"] }, tag: { anyOf: [{ type: "string", enum: ["certain", "likely", "guessing"] }, { type: "null" }] } }, required: ["text", "todo", "href", "tag"], additionalProperties: false } } }, required: ["title", "lines"], additionalProperties: false } },
   },
   required: ["headline", "sections"],
   additionalProperties: false,
@@ -72,7 +72,9 @@ export async function prepUpcomingCalls(admin: Admin, me: Me, at?: string | null
         await admin.from("routine_runs").delete().eq("id", claimed.id);
         continue;
       }
-      const report = await clientBrief(admin, me, m, client);
+      // What to do before the call: real items on their day (src/lib/routines.ts materialize)
+      const brief = await clientBrief(admin, me, m, client);
+      const report = await (await import("@/lib/routines")).materialize(admin, me, "call_prep", { ...brief, sections: brief.sections.map((s) => ({ ...s, lines: s.lines.map((l) => ({ ...l, client: l.client ?? client.name })) })) }).catch(() => brief);
       await admin.from("routine_runs").update({ status: "done", headline: report.headline.slice(0, 400), report, finished_at: new Date().toISOString() }).eq("id", claimed.id);
       const at = new Date(m.start).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" });
       await admin.from("notifications").upsert({ profile_id: me.id, kind: "recap", key: `routine:${claimed.id}`, title: `Call prep · ${m.title} at ${at}: ${report.headline.split(/(?<=[.!?])\s/)[0]}`.slice(0, 200), body: (await import("@/lib/routines-core")).sectionCounts(report).slice(0, 1000), href: "/today", priority: "normal" }, { onConflict: "profile_id,key", ignoreDuplicates: true });
