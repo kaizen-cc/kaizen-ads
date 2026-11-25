@@ -17,6 +17,9 @@ type Admin = SupabaseClient;
 export const DONE_ELSEWHERE = 0.8;
 
 export async function runFloating(admin: Admin, opts: { budget?: number } = {}) {
+  // Everyone's own Asana tasks first, so what they made or finished there counts below (src/lib/asana-person.ts)
+  const { syncPersonAsana } = await import("@/lib/asana-person");
+  const asana = await syncPersonAsana(admin).catch((e) => ({ error: String(e) }));
   const reality = await realityPass(admin).catch((e) => ({ error: String(e), inMotion: 0, closedElsewhere: 0 }));
   const { runDoneChecks } = await import("@/lib/done-check");
   // What clients (and the team) said that changes the work: cancellations, dated asks, holds, recurring commitments
@@ -27,7 +30,7 @@ export async function runFloating(admin: Admin, opts: { budget?: number } = {}) 
   const { dedupeNew } = await import("@/lib/semantic-dedupe");
   const deduped = await dedupeNew(admin).catch((e) => ({ error: String(e) }));
   const checks = await runDoneChecks(admin, { budget: opts.budget ?? 50, staleHours: 6 }).catch(() => null);
-  return { ...reality, signals, deduped, checked: checks?.checked ?? 0, closed: checks?.closed ?? 0, moving: checks?.moving ?? 0 };
+  return { ...reality, asana, signals, deduped, checked: checks?.checked ?? 0, closed: checks?.closed ?? 0, moving: checks?.moving ?? 0 };
 }
 
 async function realityPass(admin: Admin) {

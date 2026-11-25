@@ -16,7 +16,7 @@ export async function loadReality(admin: Admin, o: { clientIds: (string | null)[
   const clients = [...new Set(o.clientIds.filter((x): x is string => Boolean(x)))];
   const owners = [...new Set((o.ownerIds ?? []).filter((x): x is string => Boolean(x)))];
   const none = Promise.resolve({ data: [] as Record<string, unknown>[] });
-  const [asksC, asksO, asana, calls, said, checks, board, people] = await Promise.all([
+  const [asksC, asksO, asana, calls, said, checks, board, people, mine] = await Promise.all([
     clients.length ? admin.from("agent_asks").select("id, title, client_id, owner_id, status, created_at, done_at").in("client_id", clients).gte("created_at", since).limit(1500) : none,
     owners.length ? admin.from("agent_asks").select("id, title, client_id, owner_id, status, created_at, done_at").in("owner_id", owners).is("client_id", null).gte("created_at", since).limit(800) : none,
     clients.length ? admin.from("asana_tasks").select("gid, name, client_id, profile_id, open, url, completed_at").in("client_id", clients).limit(1500) : none,
@@ -25,6 +25,8 @@ export async function loadReality(admin: Admin, o: { clientIds: (string | null)[
     clients.length ? admin.from("done_checks").select("key, title, client_id, owner_id, closed_at, reopened_at").in("client_id", clients).not("closed_at", "is", null).limit(800) : none,
     clients.length ? admin.from("board_requests").select("id, number, title, client_id, assignee_id, stage, created_at").in("client_id", clients).gte("created_at", since).limit(800) : none,
     admin.from("profiles").select("id, full_name").limit(500),
+    // Each connected person's own Asana tasks (src/lib/asana-person.ts): the ones an exec's own runs made, too
+    clients.length || owners.length ? admin.from("asana_person_tasks").select("gid, name, client_id, profile_id, completed, completed_at, url, asana_created_at").or([clients.length ? `client_id.in.(${clients.join(",")})` : "", owners.length ? `profile_id.in.(${owners.join(",")})` : ""].filter(Boolean).join(",")).limit(2000) : none,
   ]);
   const name = new Map(((people.data ?? []) as { id: string; full_name: string }[]).map((p) => [p.id, p.full_name]));
   const out: Existing[] = [];
@@ -32,6 +34,8 @@ export async function loadReality(admin: Admin, o: { clientIds: (string | null)[
     out.push({ source: "item", id: String(r.id), title: String(r.title ?? ""), clientId: (r.client_id as string | null) ?? null, ownerId: (r.owner_id as string | null) ?? null, owner: name.get(String(r.owner_id)) ?? null, open: r.status === "open", href: "/pipeline", at: (r.done_at as string | null) ?? (r.created_at as string) });
   for (const r of (asana.data ?? []) as Record<string, unknown>[])
     out.push({ source: "asana", id: String(r.gid), title: String(r.name ?? ""), clientId: (r.client_id as string | null) ?? null, ownerId: (r.profile_id as string | null) ?? null, owner: name.get(String(r.profile_id)) ?? null, open: Boolean(r.open), href: (r.url as string | null) ?? null, at: (r.completed_at as string | null) ?? null });
+  for (const r of (mine.data ?? []) as Record<string, unknown>[])
+    out.push({ source: "asana", id: String(r.gid), title: String(r.name ?? "").replace(/^\[[^\]]{1,24}\]\s*/, ""), clientId: (r.client_id as string | null) ?? null, ownerId: (r.profile_id as string | null) ?? null, owner: name.get(String(r.profile_id)) ?? null, open: !r.completed, href: (r.url as string | null) ?? null, at: (r.completed_at as string | null) ?? (r.asana_created_at as string | null) ?? null });
   for (const r of (calls.data ?? []) as Record<string, unknown>[]) {
     const to = ((r.routed_to as string[] | null) ?? [])[0] ?? null;
     out.push({ source: "call", id: String(r.id), title: String(r.what ?? ""), clientId: (r.client_id as string | null) ?? null, ownerId: to, owner: to ? (name.get(to) ?? null) : null, open: ["open", "briefed", "in_motion"].includes(String(r.status)), href: null, at: r.created_at as string });

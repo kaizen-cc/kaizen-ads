@@ -9,7 +9,7 @@ import { askJson } from "@/lib/ai";
 // item folded into a task; never across clients.
 
 type Admin = SupabaseClient;
-type It = { ref: string; id: string; kind: "ask" | "promise"; title: string; owner: string; ownerId: string; at: string; isNew: boolean };
+type It = { ref: string; id: string; kind: "ask" | "promise" | "asana"; done?: boolean; url?: string | null; title: string; owner: string; ownerId: string; at: string; isNew: boolean };
 
 const SCHEMA = {
   type: "object",
@@ -29,12 +29,15 @@ export async function dedupeNew(admin: Admin, opts: { hours?: number; clients?: 
   const nameOf = new Map((people ?? []).map((p) => [p.id as string, String(p.full_name ?? "")]));
   const tally = { clients: clients.length, folded: 0 };
   for (const clientId of clients) {
-    const [{ data: asks }, { data: promises }] = await Promise.all([
+    const [{ data: asks }, { data: promises }, { data: asanaRows }] = await Promise.all([
       admin.from("agent_asks").select("id, title, owner_id, created_at").eq("client_id", clientId).eq("status", "open").order("created_at").limit(60),
       admin.from("message_promises").select("id, what, owner_id, created_at, status").eq("client_id", clientId).in("status", ["open", "overdue", "escalated", "in_motion"]).order("created_at").limit(40),
+      // The people's own Asana tasks for this client (open, or done in the last three days): an exec's own runs make some
+      admin.from("asana_person_tasks").select("gid, name, profile_id, completed, completed_at, url, asana_created_at").eq("client_id", clientId).limit(60),
     ]);
     const items: It[] = [
       ...(asks ?? []).map((a, i) => ({ ref: `A${i + 1}`, id: a.id as string, kind: "ask" as const, title: String(a.title), ownerId: a.owner_id as string, owner: nameOf.get(a.owner_id as string) ?? "someone", at: a.created_at as string, isNew: String(a.created_at) >= since })),
+      ...(asanaRows ?? []).map((t, i) => ({ ref: `S${i + 1}`, id: t.gid as string, kind: "asana" as const, done: Boolean(t.completed), url: (t.url as string | null) ?? null, title: String(t.name).replace(/^\[[^\]]{1,24}\]\s*/, ""), ownerId: t.profile_id as string, owner: nameOf.get(t.profile_id as string) ?? "someone", at: String(t.asana_created_at ?? ""), isNew: false })),
       ...(promises ?? []).map((p, i) => ({ ref: `P${i + 1}`, id: p.id as string, kind: "promise" as const, title: String(p.what ?? ""), ownerId: p.owner_id as string, owner: nameOf.get(p.owner_id as string) ?? "someone", at: p.created_at as string, isNew: String(p.created_at) >= since && p.status === "open" })),
     ];
     if (items.length < 2 || !items.some((i) => i.isNew)) continue;
@@ -50,7 +53,7 @@ export async function dedupeNew(admin: Admin, opts: { hours?: number; clients?: 
         system:
           "You find duplicate work items for one client at an agency. Two items are the same when finishing one finishes the other: the same deliverable or check in different words (\"Verify Google Ads conversion tracking events\" and \"Confirm purchase and lead events fire in Google Ads\"), or the same task made for two people. Not the same: related but separate steps (write the copy vs launch the ads), different platforms, different dates or offers. For each NEW item that duplicates another, give item (its ref) and same_as (the OLDER one's ref). Only sure pairs.",
         schema: SCHEMA,
-        prompt: items.map((i) => `${i.ref}${i.isNew ? " (NEW)" : ""} [${i.at.slice(0, 10)} · ${i.owner}] ${i.title}`).join("\n"),
+        prompt: items.map((i) => `${i.ref}${i.isNew ? " (NEW)" : ""}${i.kind === "asana" ? ` (Asana${i.done ? ", done" : ""})` : ""} [${i.at.slice(0, 10)} · ${i.owner}] ${i.title}`).join("\n"),
       });
     } catch {
       continue;
@@ -60,12 +63,13 @@ export async function dedupeNew(admin: Admin, opts: { hours?: number; clients?: 
     for (const p of out.pairs ?? []) {
       const dup = byRef.get(p.item.trim().toUpperCase());
       const keep = byRef.get(p.same_as.trim().toUpperCase());
-      if (!dup || !keep || dup === keep || !dup.isNew || gone.has(dup.ref) || gone.has(keep.ref) || dup.at < keep.at) continue;
+      // An Asana task always keeps the work (it may be newer: both run side by side)
+      if (!dup || !keep || dup === keep || !dup.isNew || dup.kind === "asana" || gone.has(dup.ref) || gone.has(keep.ref) || (keep.kind !== "asana" && dup.at < keep.at)) continue;
       // A decision or approval never folds into someone else's task
       if (/\b(decide|approve|sign off|sign-off|pricing|fee|contract)\b/i.test(dup.title) !== /\b(decide|approve|sign off|sign-off|pricing|fee|contract)\b/i.test(keep.title)) continue;
-      const note = `Same work as ${keep.owner === dup.owner ? "" : `${keep.owner}'s `}"${keep.title}"`;
+      const note = keep.kind === "asana" ? `${keep.done ? "Done" : "Already"} in Asana${keep.owner === dup.owner ? "" : ` (${keep.owner})`}: "${keep.title}"${keep.url ? ` ${keep.url}` : ""}` : `Same work as ${keep.owner === dup.owner ? "" : `${keep.owner}'s `}"${keep.title}"`;
       if (dup.kind === "ask") {
-        await admin.from("agent_asks").update({ status: "dismissed", done_at: new Date().toISOString(), detail: `Duplicate: ${note}` }).eq("id", dup.id).eq("status", "open");
+        await admin.from("agent_asks").update({ status: keep.kind === "asana" && keep.done ? "done" : "dismissed", done_at: new Date().toISOString(), detail: `Duplicate: ${note}` }).eq("id", dup.id).eq("status", "open");
       } else {
         await admin.from("message_promises").update({ status: "in_motion", evidence: note.slice(0, 300), checked_at: new Date().toISOString() }).eq("id", dup.id);
       }

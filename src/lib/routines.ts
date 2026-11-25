@@ -124,6 +124,8 @@ async function gather(admin: Admin, me: Person, from: string, to: string, ahead?
     admin.from("context_items").select("source, occurred_at, author, title, body, url, client_id, clients(name)").in("source", ["gmail", "slack_external"]).gte("occurred_at", from).lte("occurred_at", to).order("occurred_at", { ascending: false }).limit(60),
     admin.from("client_assignments").select("client_id").eq("profile_id", me.id),
   ]);
+  // Their own Asana tasks (connected people: src/lib/asana-person.ts), so a recap covers what lives only in Asana
+  const { data: asanaMine } = await admin.from("asana_person_tasks").select("name, due_on, project, url, completed, completed_at").eq("profile_id", me.id).limit(150);
   if (meetings == null) failed.push("Google Calendar (not connected or no calendar access)");
   const mine = new Set((seats ?? []).map((s) => s.client_id as string));
   const wide = me.is_exec || me.is_lead || me.role.startsWith("head_of_");
@@ -134,6 +136,7 @@ async function gather(admin: Admin, me: Person, from: string, to: string, ahead?
     meetings: meetings ?? [],
     upcoming: upcoming ?? [],
     calls: myCalls.map((c) => ({ title: c.title as string, at: c.occurred_at as string, client: (c.clients as unknown as { name: string } | null)?.name ?? null, link: (c.url as string | null) ?? null, summary: String(c.summary ?? c.notes ?? "").replace(/\s+/g, " ").slice(0, 1400) })),
+    asana: (asanaMine ?? []).filter((t) => !t.completed || String(t.completed_at ?? "") >= from).map((t) => ({ title: t.name as string, due: (t.due_on as string | null) ?? null, project: (t.project as string | null) ?? null, done: Boolean(t.completed), link: (t.url as string | null) ?? null })),
     items: (items ?? []).map((i) => ({ id: i.id as string, title: i.title as string, due: (i.due_on as string | null) ?? null, client: (i.clients as unknown as { name: string } | null)?.name ?? null, staged: i.status === "staged", draft: Boolean(i.draft), urgent: Boolean(i.urgent) })),
     owed: (owedMod ?? []).filter((o) => o.targetId === me.id).map((o) => ({ from: o.from, gist: o.gist, since: o.askedAt, client: o.client, link: o.url })),
     said: (saidMod ?? []).filter((p) => p.ownerId === me.id).map((p) => ({ what: p.what, due: p.dueAt, client: p.client, link: p.url })),
