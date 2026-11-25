@@ -111,15 +111,27 @@ export function signatureText(html: string): string {
 }
 
 /**
+ * The body as the two forms an email carries: plain text (linked words as "words (address)", the signature as text)
+ * and, when it has links, bold or a signature, the HTML (real links, their Gmail signature where Gmail puts it). The
+ * one source for the REST draft (MIME) and the MCP draft, so both read the same in Gmail.
+ */
+export function emailBodies(body: string, signature?: string | null): { plain: string; html: string | null } {
+  const sig = signature?.trim() || "";
+  const sigText = sig ? signatureText(sig) : "";
+  const plain = plainBody(body) + (sigText ? `\n\n${sigText}` : "");
+  if (!sig && !hasMarkup(body)) return { plain, html: null };
+  return { plain, html: `<div dir="ltr">${htmlBody(body)}${sig ? `<br><br><div dir="ltr" class="gmail_signature" data-smartmail="gmail_signature">${sig}</div>` : ""}</div>` };
+}
+
+/**
  * The body as MIME: plain text alone when it's just words, else multipart/alternative with an HTML part (real links,
  * their Gmail signature where Gmail puts it) after the plain one. The HTML in base64, so long lines are safe.
  */
 function bodyPart(m: MailParts, boundary: string): string[] {
-  const sig = m.signature?.trim() || "";
-  const sigText = sig ? signatureText(sig) : "";
-  const plain = (plainBody(m.body) + (sigText ? `\n\n${sigText}` : "")).replace(/\r?\n/g, CRLF);
-  if (!sig && !hasMarkup(m.body)) return ['Content-Type: text/plain; charset="UTF-8"', "Content-Transfer-Encoding: 8bit", "", plain];
-  const html = `<div dir="ltr">${htmlBody(m.body)}${sig ? `<br><br><div dir="ltr" class="gmail_signature" data-smartmail="gmail_signature">${sig}</div>` : ""}</div>`;
+  const forms = emailBodies(m.body, m.signature);
+  const plain = forms.plain.replace(/\r?\n/g, CRLF);
+  if (!forms.html) return ['Content-Type: text/plain; charset="UTF-8"', "Content-Transfer-Encoding: 8bit", "", plain];
+  const html = forms.html;
   const b = `${boundary}_alt`;
   return [
     `Content-Type: multipart/alternative; boundary="${b}"`,

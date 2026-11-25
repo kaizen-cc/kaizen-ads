@@ -1,8 +1,8 @@
 import "server-only";
 import { withoutQuotes } from "@/lib/context/google";
 import { isViewAsMessage } from "@/lib/view-as-core";
-import { field, headerOf, listOf, workspaceMcpMode } from "./workspace-mcp-core";
-import { workspaceCall } from "./workspace-mcp";
+import { field, gmailDraftArgs, headerOf, listOf, workspaceMcpMode } from "./workspace-mcp-core";
+import { workspaceCall, workspaceToolInputs } from "./workspace-mcp";
 
 // The agent tools' Workspace actions through Google's Workspace MCP servers (search and read Gmail, make a Gmail draft,
 // read a Drive file), shaped like the REST answers they replace so the tools keep their names and what they return.
@@ -56,22 +56,20 @@ export const mcpThreadLines = (mailbox: string, threadId: string) =>
     );
   });
 
-/** A Gmail draft (create_draft; no attachments: Google's tool can't attach files, so those stay on REST) */
-export const mcpGmailDraft = (e: { mailbox: string; to: string; cc?: string | null; subject: string; body: string; threadId?: string | null }) =>
+/**
+ * A Gmail draft (create_draft). The body comes as its plain and HTML forms (lib/assistant/messages.ts emailBodies): a
+ * draft with links, bold or their signature goes through MCP only when Google's tool takes an HTML body, else null
+ * and the caller makes it on REST, so every draft reads the same in Gmail. Files and replies in a thread never get
+ * here (platform-drafts.ts draftViaMcp).
+ */
+export const mcpGmailDraft = (e: { mailbox: string; to: string; cc?: string | null; subject: string; plain: string; html: string | null }) =>
   attempt("gmail draft", async () => {
-    const got = await workspaceCall(
-      "gmail",
-      e.mailbox,
-      "create_draft",
-      {
-        to: { names: ["to", "recipients"], value: e.to },
-        cc: { names: ["cc"], value: e.cc ?? undefined },
-        subject: { names: ["subject"], value: e.subject },
-        body: { names: ["body", "plaintextBody", "text"], value: e.body },
-        thread: { names: ["threadId", "thread_id"], value: e.threadId ?? undefined },
-      },
-      { write: true },
-    );
+    const want = gmailDraftArgs(await workspaceToolInputs("gmail", e.mailbox, "create_draft"), e);
+    if (!want) {
+      console.warn("[workspace-mcp] gmail draft made on REST: Google's create_draft takes no HTML body (links or a signature)");
+      return null;
+    }
+    const got = await workspaceCall("gmail", e.mailbox, "create_draft", want, { write: true });
     const o = (got && typeof got === "object" ? got : {}) as Record<string, unknown>;
     const msg = (o.message && typeof o.message === "object" ? o.message : {}) as Record<string, unknown>;
     return { draftId: field(o, "id", "draftId") || "draft", messageId: field(msg, "id") || field(o, "messageId") || null };

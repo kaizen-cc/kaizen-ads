@@ -176,6 +176,22 @@ export async function workspaceToolList(
 
 const LISTS = new Map<string, { at: number; tools: Promise<{ name: string; inputSchema?: unknown }[]> }>();
 
+/** A tool's entry in the server's list (kept ten minutes per server); undefined when the list couldn't be read */
+async function toolSchema(server: WorkspaceServer, subject: string, tool: string) {
+  let hit = LISTS.get(server);
+  if (!hit || Date.now() - hit.at > SESSION_TTL_MS) {
+    hit = { at: Date.now(), tools: workspaceToolList(server, subject).catch(() => []) };
+    LISTS.set(server, hit);
+  }
+  return (await hit.tools).find((t) => t.name === tool || t.name.endsWith(`.${tool}`));
+}
+
+/** The input property names a tool takes (null: its schema couldn't be read) */
+export async function workspaceToolInputs(server: WorkspaceServer, subject: string, tool: string): Promise<string[] | null> {
+  const props = ((await toolSchema(server, subject, tool))?.inputSchema as { properties?: Record<string, unknown> } | undefined)?.properties;
+  return props && typeof props === "object" ? Object.keys(props) : null;
+}
+
 /** A tool run with our arguments put under the names its schema uses (the tool list kept ten minutes per server) */
 export async function workspaceCall(
   server: WorkspaceServer,
@@ -184,14 +200,6 @@ export async function workspaceCall(
   want: Record<string, { names: string[]; value: unknown }>,
   opts: { write?: boolean } = {},
 ): Promise<unknown> {
-  let hit = LISTS.get(server);
-  if (!hit || Date.now() - hit.at > SESSION_TTL_MS) {
-    hit = {
-      at: Date.now(),
-      tools: workspaceToolList(server, subject).catch(() => []),
-    };
-    LISTS.set(server, hit);
-  }
-  const schema = (await hit.tools).find((t) => t.name === tool || t.name.endsWith(`.${tool}`));
+  const schema = await toolSchema(server, subject, tool);
   return workspaceTool(server, subject, schema?.name ?? tool, argsFor(schema?.inputSchema, want), opts);
 }

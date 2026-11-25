@@ -62,7 +62,8 @@ Every Workspace call uses the Workspace service account (`GOOGLE_SERVICE_ACCOUNT
 |---|---|---|---|
 | `search_my_email` | lib/assistant/lookup-tools.ts | Gmail REST messages.list/get | Gmail MCP `search_threads` |
 | `read_my_email_thread` | lib/assistant/lookup-tools.ts | Gmail REST threads.get | Gmail MCP `get_thread` |
-| `save_draft` and every agent-made Gmail draft | lib/assistant/platform-drafts.ts | Gmail REST drafts.create | Gmail MCP `create_draft` (REST when the draft has files) |
+| `save_draft` and every agent-made Gmail draft | lib/assistant/platform-drafts.ts | Gmail REST drafts.create | Gmail MCP `create_draft`, with the same plain and HTML bodies as REST (`emailBodies`: real links, their Gmail signature). REST when the draft has files, is a reply in a thread, or needs HTML that Google's `create_draft` doesn't take. |
+| `edit_google_doc` (Kaizen AI and the assistant) | lib/docs-edit.ts, lib/docs-edit-core.ts | (new) | Docs MCP `read_doc` / `update_doc` with batchUpdate requests, as the person. REST when the MCP answers without the doc's structure. Each edit is shown first and runs only on their yes. |
 | `read_google_file` (Kaizen AI, assistant) and the SOW reader | lib/assistant/read-file.ts | Drive REST files.get/export | Drive MCP `get_file_metadata` and `read_file_content` |
 | `search_my_gmail` / `read_gmail_thread` (Kaizen AI) | lib/kaizen-ai/workspace-tools.ts | Gmail REST | Gmail MCP `search_threads` / `get_thread` |
 | `search_my_drive` (Kaizen AI) | lib/kaizen-ai/workspace-tools.ts | Drive REST files.list | Drive MCP `search_files` |

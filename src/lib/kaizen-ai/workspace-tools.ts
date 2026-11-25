@@ -142,6 +142,67 @@ export function workspaceTools(ctx: ToolCtx): ChatTool[] {
       },
     },
 
+    // ─── Google Docs, editing ──────────────────────────────────────────────
+    {
+      name: "edit_google_doc",
+      description: [
+        "Edits a Google Doc the person can edit, as them: replace_text (exact words → new words, every place they appear), insert_under_heading (text added at the end of that heading's section), append (text at the end), add_section (a new heading and its text at the end). Use it whenever they want something changed in a doc: never say you can't edit a Google Doc. doc is its link (find it with search_my_drive when they don't give one; read it first with read_google_file when you need its words).",
+        "Never writes on the first call: call it without confirmed to check the edit (it says what will change and lists the doc's headings), tell them which doc and exactly what changes, and ask; call again with the same input and confirmed: true only after their yes.",
+      ].join(" "),
+      input_schema: {
+        type: "object",
+        properties: {
+          doc: { type: "string", description: "The Google Doc's link" },
+          action: { type: "string", enum: ["replace_text", "insert_under_heading", "append", "add_section"] },
+          find: { type: "string", description: "replace_text: the exact words in the doc to change (same capitals)" },
+          replace_with: { type: "string", description: "replace_text: the new words (empty removes them)" },
+          heading: { type: "string", description: "insert_under_heading: the heading's words; add_section: the new heading" },
+          text: { type: "string", description: "The text to add (new lines start new paragraphs)" },
+          level: { type: "integer", minimum: 1, maximum: 6, description: "add_section: the heading level (default 2)" },
+          confirmed: { type: "boolean", description: "true only on the second call, after the person said yes to this exact edit" },
+        },
+        required: ["doc", "action"],
+        additionalProperties: false,
+      },
+      status: (input) => (input.confirmed ? "Editing the Google Doc…" : "Checking the Google Doc…"),
+      run: async (input) => {
+        if (viewingAs(ctx)) return { error: PRIVATE_WHILE_VIEWING };
+        const { docIdOf, DOC_ACTIONS, paragraphsOf, planDocEdit } = await import("@/lib/docs-edit-core");
+        const docId = docIdOf(String(input.doc ?? ""));
+        if (!docId) return { error: "That isn't a Google Doc link: ask for the doc's link (docs.google.com/document/d/…)." };
+        const action = String(input.action) as (typeof DOC_ACTIONS)[number];
+        if (!DOC_ACTIONS.includes(action)) return { error: `action is one of ${DOC_ACTIONS.join(", ")}.` };
+        const { googleConfigured } = await import("@/lib/context/google");
+        if (!googleConfigured()) return { error: "Google isn't connected to Kaizen OS yet." };
+        const { docsError, readDocAs, updateDocAs } = await import("@/lib/docs-edit");
+        const edit = { action, find: typeof input.find === "string" ? input.find : undefined, replace_with: typeof input.replace_with === "string" ? input.replace_with : undefined, heading: typeof input.heading === "string" ? input.heading : undefined, text: typeof input.text === "string" ? input.text.slice(0, 20_000) : undefined, level: typeof input.level === "number" ? input.level : undefined };
+        const link = `https://docs.google.com/document/d/${docId}/edit`;
+        try {
+          const doc = await readDocAs(ctx.me.email, docId);
+          const plan = planDocEdit(doc, edit);
+          if (!plan.ok) return { error: plan.error };
+          const { saidYes } = await import("@/lib/assistant/core");
+          if (input.confirmed !== true || !saidYes(ctx.said ?? "")) {
+            return {
+              needs_their_yes: true,
+              doc: doc.title ?? "the doc",
+              link,
+              change: plan.summary,
+              headings: paragraphsOf(doc).filter((p) => p.level !== null).map((p) => p.text).slice(0, 30),
+              note: "Nothing has changed yet. Tell them the doc's name and exactly what this changes, and ask 'shall I?'. Call again with the same input and confirmed: true only after their yes.",
+            };
+          }
+          await updateDocAs(ctx.me.email, docId, plan.requests);
+          return { done: true, doc: doc.title ?? "the doc", link, changed: plan.summary, note: "Say it's done in a line, with the doc's link." };
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          const { isViewAsMessage } = await import("@/lib/view-as-core");
+          if (isViewAsMessage(msg)) return { error: msg };
+          return { error: docsError(msg, ctx.me.email) };
+        }
+      },
+    },
+
     // ─── Klaviyo, hands-on ─────────────────────────────────────────────────
     {
       name: "klaviyo_account",

@@ -188,3 +188,26 @@ export function argsFor(schema: unknown, want: Record<string, { names: string[];
   }
   return out;
 }
+
+/** The names Google's create_draft may take an HTML body under */
+export const HTML_BODY_NAMES = ["htmlBody", "html_body", "bodyHtml", "html"];
+
+/**
+ * create_draft's arguments for a draft with these bodies, given the tool's input properties (null: not read yet). A
+ * draft that needs HTML (links, bold, their signature) goes through only when the tool takes an HTML body; otherwise
+ * null, and the draft is made on REST so it reads the same as every other draft.
+ */
+export function gmailDraftArgs(
+  props: string[] | null,
+  e: { to: string; cc?: string | null; subject: string; plain: string; html: string | null },
+): Record<string, { names: string[]; value: unknown }> | null {
+  const htmlName = props ? HTML_BODY_NAMES.find((n) => props.includes(n)) : undefined;
+  if (e.html && !htmlName) return null;
+  return {
+    to: { names: ["to", "recipients"], value: e.to },
+    cc: { names: ["cc"], value: e.cc ?? undefined },
+    subject: { names: ["subject"], value: e.subject },
+    body: { names: ["body", "plaintextBody", "text"], value: e.plain },
+    ...(e.html && htmlName ? { html: { names: [htmlName], value: e.html } } : {}),
+  };
+}
