@@ -24,6 +24,7 @@ import { ReadyCallout } from "./views/ready-callout";
 import { OverviewWidgets } from "./views/widgets";
 import { NudgeCallout } from "@/components/nudge-callout";
 import { isCreativeLead } from "@/lib/lead-creative-core";
+import { itemCard } from "./views/exec-blocks";
 
 
 // The strategist runs in the background after "Look again" (and a brief from Next for me is written), within this
@@ -67,7 +68,7 @@ async function ExecOverview({ db, me, base }: { db: SupabaseClient; me: Staff; b
       <Suspense fallback={null}>
         <StepinsSection db={db} me={me} />
       </Suspense>
-      <ExecBlocks tabs={tabs} owner={owner} />
+      <ExecBlocks tabs={tabs} owner={owner} dayCards={snap.today.items.map(itemCard)} />
       {/* Their own widgets under the blocks, and "Add widget" (src/app/(team)/pipeline/views/widgets.tsx) */}
       <Suspense fallback={null}>
         <OverviewWidgets me={me} />

@@ -2,6 +2,7 @@
 // build the blocks (role-overview) and the client blocks (exec-home) share them. Never "use client": a server page
 // can't call a function from a client file (Nov 23 2026: "Attempted to call itemChips() from the server").
 import type { ExecCard, ExecTab } from "@/lib/exec-overview-core";
+import type { TodayItem } from "@/lib/today";
 import { asanaSummary } from "@/lib/asana-due";
 
 export const BLURB: Record<ExecTab, string> = {
@@ -99,4 +100,42 @@ export function asanaLabel(id: string, cards: ExecCard[]): { bigLabel?: string; 
   if (setup) return { bigLabel: setup.action.href ? "Connect" : "Soon" };
   const s = asanaSummary(cards.filter((c) => c.kind === "asana"));
   return { count: s.big, blurb: s.label, ...(s.big === 0 ? { bigLabel: "0" } : {}), ...(s.all ? { allChip: `${s.all} open in all` } : {}) };
+}
+
+/** A recap item as a block card (an exec's and a lead's own linked items carry their card already) */
+export function itemCard(i: TodayItem): ExecCard {
+  if (i.exec) return i.exec;
+  const kind: ExecCard["kind"] = i.key.startsWith("lead:") ? "stuck" : /^owed/.test(i.key) ? "owed" : /^said/.test(i.key) ? "said" : i.key.startsWith("draft:") ? "draft" : i.key.startsWith("todo:") ? "todo" : "mine";
+  // A saved recap from before an update can carry an item without its action: never let one item break the page
+  const act = (i as Partial<TodayItem>).action;
+  const href = act?.href ?? (i.clientSlug ? `/clients/${i.clientSlug}` : null);
+  return {
+    key: i.key,
+    tab: i.topic as ExecTab,
+    kind,
+    client: i.client === "Team" ? null : i.client,
+    clientId: i.clientId,
+    clientSlug: i.clientSlug || null,
+    title: i.title,
+    detail: i.story,
+    severity: i.tier === "critical" ? "critical" : i.tier === "high" ? "high" : "normal",
+    due: i.due ?? null,
+    action: { label: act?.label ?? "Open", href },
+    // The email drafted for it (its main action) and the conversation behind it
+    emailDraft: i.emailDraft ?? null,
+    context: i.context ?? null,
+    subs: i.subs ?? null,
+    subsTitle: i.subsTitle ?? null,
+    source: i.source ?? null,
+  };
+}
+
+/**
+ * The card an item sheet (?item=<key>) opens on (issue #153: a task clicked in the Overview's list opened nothing for
+ * every role but an exec, and nothing for an item outside the blocks): the blocks' own card first, else the same item
+ * anywhere on the person's day.
+ */
+export function sheetCardFor(key: string | null, blockCards: readonly ExecCard[], dayCards: readonly ExecCard[] = []): ExecCard | undefined {
+  if (!key) return undefined;
+  return blockCards.find((c) => c.key === key) ?? dayCards.find((c) => c.key === key);
 }

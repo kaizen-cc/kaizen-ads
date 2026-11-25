@@ -7,7 +7,7 @@ import { ItemQuickActions } from "@/components/item-quick-actions";
 import { capTab, primaryHref, subsLeft, TAB_LABEL, type ExecCard, type ExecTab } from "@/lib/exec-overview-core";
 import { TranscriptButton } from "@/components/assistant-call-parts";
 import { useVisualViewport } from "@/lib/use-visual-viewport";
-import { asanaLabel, BLURB, TONE, chips, type Tone } from "./exec-blocks";
+import { asanaLabel, BLURB, TONE, chips, sheetCardFor, type Tone } from "./exec-blocks";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { applyFilters, filterChoices, KIND_LABEL, type Filters } from "@/lib/item-filters";
 import { nudgeLead, takeItOver } from "../../exec-actions";
@@ -82,7 +82,7 @@ const subscribeHash = (on: () => void) => {
   return () => window.removeEventListener("hashchange", on);
 };
 
-export function Blocks({ blocks }: { blocks: BlockDef[] }) {
+export function Blocks({ blocks, dayCards = [] }: { blocks: BlockDef[]; /** Every item on the person's day, so an item outside the blocks still opens in its sheet */ dayCards?: ExecCard[] }) {
   const asked = useParam("block");
   const tab = useParam("tab");
   // The address's anchor, read the same on the server (none) and in the browser, so nothing jumps on load
@@ -107,7 +107,7 @@ export function Blocks({ blocks }: { blocks: BlockDef[] }) {
   };
   // An item opened on its own (?item=<key>): its sheet, whichever block or "more" it's in
   const itemKey = useParam("item");
-  const sheetCard = itemKey && !closed.has(itemKey) ? blocks.flatMap((b) => b.cards ?? []).find((c) => c.key === itemKey) : undefined;
+  const sheetCard = itemKey && !closed.has(itemKey) ? sheetCardFor(itemKey, blocks.flatMap((b) => b.cards ?? []), dayCards) : undefined;
   const sheetView = sheetCard ? subsLeft(sheetCard, closed) : null;
   return (
     <div className="grid gap-3 md:grid-cols-2">
@@ -197,10 +197,11 @@ export function Blocks({ blocks }: { blocks: BlockDef[] }) {
 }
 
 /** An exec's blocks: Needs me, Escalated, Accounts, Next for me in Asana, Pulse and (the owner) System */
-export function ExecBlocks({ tabs, owner }: { tabs: Record<ExecTab, ExecCard[]>; owner: boolean }) {
+export function ExecBlocks({ tabs, owner, dayCards = [] }: { tabs: Record<ExecTab, ExecCard[]>; owner: boolean; dayCards?: ExecCard[] }) {
   const order: ExecTab[] = owner ? ["needs", "escalated", "accounts", "asana", "pulse", "system"] : ["needs", "escalated", "accounts", "asana", "pulse"];
   return (
     <Blocks
+      dayCards={dayCards}
       blocks={order.map((t) => ({
         id: t,
         label: TAB_LABEL[t],

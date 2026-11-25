@@ -4,9 +4,8 @@ import type { Staff } from "@/lib/auth";
 import { TOPICS, type TodayItem, type TopicKey } from "@/lib/today";
 import { BLOCK_ORDER } from "@/lib/today-counts";
 import { todaySnapshot } from "@/lib/today-snapshot";
-import type { ExecCard, ExecTab } from "@/lib/exec-overview-core";
 import { Blocks, type BlockDef } from "./exec-home";
-import { asanaLabel, BLOCK_TONE, itemChips } from "./exec-blocks";
+import { asanaLabel, BLOCK_TONE, itemCard, itemChips } from "./exec-blocks";
 import { HiddenLog } from "./hidden-log";
 import { PageHeader } from "./shared";
 import { TodayHero, TodayHeroSkeleton } from "./today-hero";
@@ -37,34 +36,6 @@ const EMPTY: Partial<Record<TopicKey, { title: string; line: string }>> = {
   pulse: { title: "Quiet", line: "Nothing to report for your line." },
 };
 
-/** A recap item as a block card (an exec's and a lead's own linked items carry their card already) */
-function cardOf(i: TodayItem): ExecCard {
-  if (i.exec) return i.exec;
-  const kind: ExecCard["kind"] = i.key.startsWith("lead:") ? "stuck" : /^owed/.test(i.key) ? "owed" : /^said/.test(i.key) ? "said" : i.key.startsWith("draft:") ? "draft" : i.key.startsWith("todo:") ? "todo" : "mine";
-  // A saved recap from before an update can carry an item without its action: never let one item break the page
-  const act = (i as Partial<TodayItem>).action;
-  const href = act?.href ?? (i.clientSlug ? `/clients/${i.clientSlug}` : null);
-  return {
-    key: i.key,
-    tab: i.topic as ExecTab,
-    kind,
-    client: i.client === "Team" ? null : i.client,
-    clientId: i.clientId,
-    clientSlug: i.clientSlug || null,
-    title: i.title,
-    detail: i.story,
-    severity: i.tier === "critical" ? "critical" : i.tier === "high" ? "high" : "normal",
-    due: i.due ?? null,
-    action: { label: act?.label ?? "Open", href },
-    // The email drafted for it (its main action) and the conversation behind it
-    emailDraft: i.emailDraft ?? null,
-    context: i.context ?? null,
-    subs: i.subs ?? null,
-    subsTitle: i.subsTitle ?? null,
-    source: i.source ?? null,
-  };
-}
-
 /** At most this many blocks for anyone (owner, Nov 23 2026): everything else folds into them */
 const MAX_BLOCKS = 6;
 
@@ -79,7 +50,7 @@ export async function RoleOverview({ db, me, kind, base, subtitle, folded = {}, 
   const shown = [...SETS[kind], ...extra.slice(0, room)].sort((a, b) => BLOCK_ORDER.indexOf(a) - BLOCK_ORDER.indexOf(b));
   const spill = extra.slice(room).flatMap((t) => byTopic.get(t) ?? []);
   const blocks: BlockDef[] = shown.map((t) => {
-    const cards = [...(byTopic.get(t) ?? []), ...(t === "needs" ? spill : [])].map(cardOf);
+    const cards = [...(byTopic.get(t) ?? []), ...(t === "needs" ? spill : [])].map(itemCard);
     return {
       id: t,
       label: LABEL[t] ?? TOPICS[t]?.label ?? t,
@@ -104,7 +75,8 @@ export async function RoleOverview({ db, me, kind, base, subtitle, folded = {}, 
       <Suspense fallback={<TodayHeroSkeleton />}>
         <TodayHero db={db} me={me} />
       </Suspense>
-      <Blocks blocks={blocks} />
+      {/* Any item on their day opens in its sheet (?item=), in a block or not (issue #153) */}
+      <Blocks blocks={blocks} dayCards={snap.today.items.map(itemCard)} />
       {/* Their own widgets under the blocks, and "Add widget" (./widgets.tsx) */}
       <Suspense fallback={null}>
         <OverviewWidgets me={me} />

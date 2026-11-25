@@ -2,6 +2,8 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { itemSheetHref, pointsAtOverview, primaryHref, rowOpens } from "@/lib/exec-overview-core";
+import { itemCard, sheetCardFor } from "@/app/(team)/pipeline/views/exec-blocks";
+import type { TodayItem } from "@/lib/today";
 
 // Owner, Nov 24 2026: an ask's "Open it" showed "Opening..." and landed back on the Overview. No item's main action may
 // point back at the Overview it's on: it goes to its real destination, else opens the item's own sheet (?item=).
@@ -43,5 +45,24 @@ describe("an item's main action never lands back on the Overview", () => {
     for (const h of ["/pipeline", "/today?topic=mine", "#", null]) expect(rowOpens(h), String(h)).toBe("sheet");
     expect(rowOpens("https://app.asana.com/0/1/2")).toBe("external");
     for (const h of ["/board?t=12", "/clients/acme?tab=plan", "/pipeline?block=needs&item=ask%3A1"]) expect(rowOpens(h), h).toBe("page");
+  });
+});
+
+// Issue #153 (the rest): ?item= opened a sheet only for an exec's items inside a block. Every role's Overview finds the
+// item anywhere on the person's day, with or without an exec card.
+
+describe("a task clicked in the Overview's list opens its sheet, for every role", () => {
+  const item = { key: "mine:ticket:42", topic: "work", tier: "high", score: 70, client: "Acme", clientSlug: "acme", clientId: "c1", stat: { value: "2d", label: "late" }, title: "Finish the hero image", story: "Due yesterday", why: "Yours", evidence: [], action: { label: "Open", href: "/pipeline" }, state: "new", carried: false } as unknown as TodayItem;
+  it("a non-exec's item (no exec card) becomes a card that opens in the sheet", () => {
+    const card = itemCard(item);
+    expect(card).toMatchObject({ key: "mine:ticket:42", tab: "work", title: "Finish the hero image", client: "Acme", severity: "high" });
+    expect(rowOpens(item.action.href)).toBe("sheet");
+  });
+  it("found in the blocks first, else anywhere on the day; nothing for a key that isn't there", () => {
+    const inBlock = { ...itemCard(item), title: "From the block" };
+    expect(sheetCardFor("mine:ticket:42", [inBlock], [itemCard(item)])?.title).toBe("From the block");
+    expect(sheetCardFor("mine:ticket:42", [], [itemCard(item)])?.title).toBe("Finish the hero image");
+    expect(sheetCardFor("mine:ticket:99", [], [itemCard(item)])).toBeUndefined();
+    expect(sheetCardFor(null, [inBlock])).toBeUndefined();
   });
 });
