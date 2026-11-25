@@ -11,6 +11,15 @@ export function gmailDraftLink(mailbox: string, messageId?: string | null): stri
   return messageId ? `${base}?compose=${encodeURIComponent(messageId)}` : base;
 }
 
+/**
+ * Whether a Gmail draft can go through Google's MCP create_draft: only a new email with no files. A reply stays on REST,
+ * the only path that sets the threadId with In-Reply-To and References (the MCP tool can't take those headers, and drops
+ * a threadId its schema doesn't name), so Gmail files the draft inside the thread instead of as a loose draft.
+ */
+export function draftViaMcp(e: { threadId?: string | null; inReplyTo?: string | null; references?: string | null }, files: number): boolean {
+  return !files && !e.threadId?.trim() && !e.inReplyTo?.trim() && !e.references?.trim();
+}
+
 /** The service account's OAuth client ID (what the Admin console's domain-wide delegation asks for), never the key */
 export function serviceAccountClientId(json: string | undefined | null): string | null {
   if (!json) return null;

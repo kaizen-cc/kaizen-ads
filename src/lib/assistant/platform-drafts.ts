@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Draft } from "./handoff-server";
 import { rawEmail } from "./messages";
-import { draftError, gmailDraftLink, serviceAccountClientId, slackMessageLink, slackSelfText } from "./platform-drafts-core";
+import { draftError, draftViaMcp, gmailDraftLink, serviceAccountClientId, slackMessageLink, slackSelfText } from "./platform-drafts-core";
 
 // Every assistant and agent puts a drafted message where the person edits and sends it: a real draft in their own
 // Gmail (in the thread for a reply, with the PDFs attached), or a message to themselves in Slack labeled with where it
@@ -34,10 +34,11 @@ export async function saveGmailDraft(admin: SupabaseClient, e: EmailToDraft): Pr
     if (missing.length) throw new Error(`files missing: ${missing.join(", ")}`);
     const signature = await gmailSignature(e.mailbox);
     // Through Google's Gmail MCP server when WORKSPACE_MCP is on (plain text, their signature as text under it); a
-    // draft with files stays on REST: Google's create_draft can't attach files
-    if (!attached.length) {
+    // draft with files, or a reply in a thread, stays on REST: Google's create_draft can't attach files or set the
+    // In-Reply-To and References headers Gmail needs to keep a draft in its thread
+    if (draftViaMcp(e, attached.length)) {
       const sig = signature ? signatureText(signature) : "";
-      const viaMcp = await (await import("@/lib/workspace-agent")).mcpGmailDraft({ mailbox: e.mailbox, to: e.to, cc: e.cc ?? null, subject: e.subject, body: sig ? `${e.body}\n\n${sig}` : e.body, threadId: e.threadId ?? null });
+      const viaMcp = await (await import("@/lib/workspace-agent")).mcpGmailDraft({ mailbox: e.mailbox, to: e.to, cc: e.cc ?? null, subject: e.subject, body: sig ? `${e.body}\n\n${sig}` : e.body });
       if (viaMcp) return { ok: true, draftId: viaMcp.draftId, messageId: viaMcp.messageId, href: gmailDraftLink(e.mailbox, viaMcp.messageId) };
     }
     const raw = rawEmail({ from: `${e.fromName} <${e.mailbox}>`, to: e.to, cc: e.cc ?? null, subject: e.subject, body: e.body, inReplyTo: e.inReplyTo ?? null, references: e.references ?? null, attachments: attached, signature });
