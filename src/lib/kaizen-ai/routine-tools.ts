@@ -39,6 +39,24 @@ export function routineTools(ctx: ToolCtx): ChatTool[] {
       },
     },
     {
+      name: "read_client_messages",
+      description:
+        "Reads a client's recent messages (shared Slack and email, last three days) right now for what changes the work: a cancellation closes the related reminders and promises and makes the follow-up, a client ask with a date becomes a task for the line owner, a hold, a recurring report. Normally every half hour on its own; use for 'did we catch what Natalia said', 'read La Jetée's messages now'. Returns what it read and made.",
+      input_schema: { type: "object", properties: { client: { type: "string", description: "The client's name" } }, required: ["client"], additionalProperties: false },
+      status: () => "Reading their messages…",
+      run: async (input) => {
+        if (ctx.me.viewAs) return { error: "Not while viewing as someone." };
+        const name = String(input.client ?? "").trim();
+        const { data: hits } = await ctx.db.from("clients").select("id, name").is("archived_at", null).ilike("name", `%${name.replace(/[%_]/g, "")}%`).limit(3);
+        const c = (hits ?? []).sort((x, y) => String(x.name).length - String(y.name).length)[0];
+        if (!c) return { error: `No client called ${name} that they can see.` };
+        const { runClientSignals } = await import("@/lib/client-signals");
+        const r = await runClientSignals(ctx.admin, { clientIds: [c.id as string], budgetMs: 200_000 });
+        const { data: made } = await ctx.admin.from("client_signals").select("kind, signals, outcome").eq("client_id", c.id).neq("kind", "none").gte("created_at", new Date(Date.now() - 10 * 60_000).toISOString()).limit(20);
+        return { client: c.name, read: r.read, signals: (made ?? []).map((m) => ({ kind: m.kind, quote: (m.signals as { quote?: string }[])[0]?.quote ?? null, made: (m.outcome as { made?: string[] } | null)?.made?.length ?? 0, closed: (m.outcome as { killed?: string[] } | null)?.killed?.length ?? 0 })) };
+      },
+    },
+    {
       name: "set_routine",
       description: "Changes the person's own routine times (their time zone, 24h like 09:00; the debrief takes several) or turns one off or back on. Use for 'send my recap at 9 instead', 'stop the nightly agent', 'move my end-of-day to 5:30'. Saved quietly; say what changed.",
       input_schema: { type: "object", properties: { kind: { type: "string", enum: KINDS }, enabled: { type: "boolean" }, times: { type: "array", items: { type: "string" } } }, required: ["kind"], additionalProperties: false },

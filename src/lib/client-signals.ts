@@ -80,11 +80,14 @@ const SCHEMA = {
 };
 
 /** Reads the new messages and acts on them; then the day's recurring items and the hold watch */
-export async function runClientSignals(admin: Admin, opts: { clients?: number } = {}) {
+export async function runClientSignals(admin: Admin, opts: { clientIds?: string[]; budgetMs?: number } = {}) {
+  const started = Date.now();
   const tally = { read: 0, signals: 0, killed: 0, made: 0, recurring: 0, holdSends: 0 };
   const since = new Date(Date.now() - WINDOW_H * 3_600_000).toISOString();
   const [{ data: msgs }, { data: people }] = await Promise.all([
-    admin.from("context_items").select("id, client_id, source, occurred_at, author, title, body, url").in("source", ["slack_external", "gmail"]).not("client_id", "is", null).gte("occurred_at", since).order("occurred_at", { ascending: false }).limit(1500),
+    (opts.clientIds?.length
+      ? admin.from("context_items").select("id, client_id, source, occurred_at, author, title, body, url").in("source", ["slack_external", "gmail"]).in("client_id", opts.clientIds).gte("occurred_at", since).order("occurred_at", { ascending: false }).limit(1500)
+      : admin.from("context_items").select("id, client_id, source, occurred_at, author, title, body, url").in("source", ["slack_external", "gmail"]).not("client_id", "is", null).gte("occurred_at", since).order("occurred_at", { ascending: false }).limit(3000)),
     admin.from("profiles").select("id, full_name, display_name, is_active").eq("is_active", true),
   ]);
   const team = (people ?? []).flatMap((p) => [p.full_name, p.display_name].filter((x): x is string => Boolean(x)));
@@ -98,27 +101,41 @@ export async function runClientSignals(admin: Admin, opts: { clients?: number } 
   const todo = ((msgs ?? []) as Msg[]).filter((m) => !seen.has(m.id) && String(m.body ?? "").trim().length > 15).reverse();
   const byClient = new Map<string, Msg[]>();
   for (const m of todo) byClient.set(m.client_id, [...(byClient.get(m.client_id) ?? []), m]);
+  // Every message of the client in the window, read or not (oldest first): what was said around a batch
+  const allOf = new Map<string, Msg[]>();
+  for (const m of [...((msgs ?? []) as Msg[])].reverse()) allOf.set(m.client_id, [...(allOf.get(m.client_id) ?? []), m]);
   const today = nyClock(new Date()).date;
   const newest = (l: Msg[]) => l[l.length - 1]?.occurred_at ?? "";
-  for (const [clientId, list] of [...byClient].sort((a, b) => newest(b[1]).localeCompare(newest(a[1]))).slice(0, opts.clients ?? 15)) {
-    // The oldest unread first (a backlog is read over the next runs, in order)
-    const batch = list.slice(0, 14);
-    const r = await readClient(admin, clientId, batch, team, today).catch((e) => {
-      console.error("[client-signals]", clientId, e instanceof Error ? e.message : e);
-      return null;
-    });
-    if (!r) continue;
-    tally.read += batch.length;
-    tally.signals += r.signals;
-    tally.killed += r.killed;
-    tally.made += r.made;
+  // Every client's whole backlog, oldest first, 14 at a time, until the run's time is spent (Nov 25 2026: a fixed 15
+  // clients x 14 messages per run left a busy week's Tuesday messages unread for hours)
+  const budget = opts.budgetMs ?? 300_000;
+  outer: for (const [clientId, list] of [...byClient].sort((a, b) => newest(b[1]).localeCompare(newest(a[1])))) {
+    const all = allOf.get(clientId) ?? [];
+    for (let i = 0; i < list.length; i += 14) {
+      if (Date.now() - started > budget) break outer;
+      const batch = list.slice(i, i + 14);
+      // Read with what was said just before and after it (a later "we are doing cyber, sorry for the confusion"
+      // undoes an earlier cancellation)
+      const first = all.findIndex((m) => m.id === batch[0].id);
+      const last = all.findIndex((m) => m.id === batch[batch.length - 1].id);
+      const around = { before: first > 0 ? all.slice(Math.max(0, first - 8), first) : [], after: last >= 0 ? all.slice(last + 1, last + 11) : [] };
+      const r = await readClient(admin, clientId, batch, team, today, around).catch((e) => {
+        console.error("[client-signals]", clientId, e instanceof Error ? e.message : e);
+        return null;
+      });
+      if (!r) continue;
+      tally.read += batch.length;
+      tally.signals += r.signals;
+      tally.killed += r.killed;
+      tally.made += r.made;
+    }
   }
   tally.recurring = await recurringToday(admin).catch(() => 0);
   tally.holdSends = await holdWatch(admin).catch(() => 0);
   return tally;
 }
 
-async function readClient(admin: Admin, clientId: string, batch: Msg[], team: string[], today: string) {
+async function readClient(admin: Admin, clientId: string, batch: Msg[], team: string[], today: string, around: { before: Msg[]; after: Msg[] } = { before: [], after: [] }) {
   const { clientTeam } = await import("@/lib/assistant/routing-server");
   const [ct, { data: asks }, { data: promises }] = await Promise.all([
     clientTeam(admin, clientId),
@@ -141,14 +158,19 @@ dated_request: the CLIENT asks for work with a date or deadline (go live by, tak
 hold: the CLIENT AS A WHOLE is on hold, paused, in a dispute or crisis, or nothing should go to them until something is approved (one product, ad, offer or campaign held back is NOT a hold: that's a cancel or a dated_request): kill reminders and promises that would contact them, and one task for the account's owner to pause every automated send to the client (reports, check-ins, review emails, sequences) until it's lifted.
 resume: a hold is lifted.
 recurring: only a message marked (Kaizen team) where a TEAMMATE commits to a repeating report or deliverable they'll send (a standing rule like "always use unique codes" is not recurring) ("I'll send registrations and cost per registration daily until 12/5"): owner (that teammate), what, cadence, weekday for weekly (0 Sunday), until (YYYY-MM-DD or null).
+Messages said before and after the new ones are context only (no signals for them), but they decide: a later message that reverses an earlier one wins (a cancellation taken back is no cancellation), and when two of the client's people say opposite things, make no cancellation: one task, for the line's owner, to confirm with both before anything is sent or unscheduled.
 Owners are names from the client's team: ${seats || "none listed"}. Never state what Kaizen charges the client. ${PEOPLE_RULE} Today is ${today}.`,
     schema: SCHEMA,
     prompt: [
       `Client: ${ct.name}`,
       `Open items:\n${askRows.map((a, i) => `A${i + 1}. ${a.title}${a.profiles?.full_name ? ` (${a.profiles.full_name})` : ""}`).join("\n") || "none"}`,
       `Open promises:\n${promiseRows.map((p, i) => `P${i + 1}. ${p.what ?? ""}`).join("\n") || "none"}`,
+      around.before.length ? `Said before (context):\n${around.before.map((m: Msg) => `[${m.occurred_at.slice(0, 16)} · ${m.source === "gmail" ? "email" : "shared Slack"} · ${m.author ?? "someone"}${isTeamAuthor(m.author, team) ? " (Kaizen team)" : " (client)"}] ${String(m.body ?? "").replace(/\s+/g, " ").slice(0, 500)}`).join("\n")}` : "",
       `New messages:\n${batch.map((m, i) => `${i + 1}. [${m.occurred_at.slice(0, 16)} · ${m.source === "gmail" ? "email" : "shared Slack"} · ${m.author ?? "someone"}${isTeamAuthor(m.author, team) ? " (Kaizen team)" : " (client)"}] ${m.title ? `${m.title}: ` : ""}${String(m.body ?? "").replace(/\s+/g, " ").slice(0, 900)}`).join("\n")}`,
-    ].join("\n\n"),
+      around.after.length ? `Said after (context, decides what still stands):\n${around.after.map((m: Msg) => `[${m.occurred_at.slice(0, 16)} · ${m.source === "gmail" ? "email" : "shared Slack"} · ${m.author ?? "someone"}${isTeamAuthor(m.author, team) ? " (Kaizen team)" : " (client)"}] ${String(m.body ?? "").replace(/\s+/g, " ").slice(0, 500)}`).join("\n")}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
   });
   const { createItemIfNew } = await import("@/lib/reality-check");
   const { blockedForPeople } = await import("@/lib/people-matters");
