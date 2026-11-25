@@ -7,7 +7,6 @@ import { todaySnapshot } from "@/lib/today-snapshot";
 import { TodayLive } from "./today-live";
 import { TodayLoading } from "./today-loading";
 import { HoverCard } from "@/components/hover-card";
-import { RecapCard } from "@/components/recap-card";
 import { LayoutSwitch } from "./layout-switch";
 import { TodayList } from "./today-list";
 
@@ -107,7 +106,7 @@ export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
   const rows = groups.flatMap((g) => g.buckets.map((b) => ({ ...b, topic: g.topic })));
   const first = rows.reduce<(typeof rows)[number] | null>((a, b) => (!a || b.items[0].score > a.items[0].score ? b : a), null);
   const top = first?.items[0];
-  // The latest routine report (the clean sweep, a recap): its card right here, each row acting in place
+  // The latest routine report (the clean sweep, a recap): one line here, its items in Needs me
   const recap = t.items.find((i) => i.recap)?.recap ?? null;
   // The button says what it opens, with the day's own number, never a different one (owner, Nov 24 2026: "Review 61 new
   // notifications" beside a 6-thing day: the 61 were Asana tasks not due yet, never opened in the recap)
@@ -211,10 +210,15 @@ export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
         </div>
       </div>
 
+      {/* The latest routine in one line (owner, Nov 25 2026: never its own card here); what it found is in Needs me */}
       {recap && (
-        <div className="relative">
-          <RecapCard report={recap.report} label={recap.label} at={recap.at} compact />
-        </div>
+        <Link href="/pipeline?block=needs" className="relative inline-flex min-h-11 items-center gap-2 justify-self-start text-[13px] text-ink/70 hover:text-fg sm:min-h-0">
+          <span className="rounded-full bg-ink/[0.07] px-2 py-0.5 text-[11px] text-ink/60">
+            {recap.label} · {recap.at}
+          </span>
+          <span className="underline decoration-ink/20 underline-offset-4">{recap.report.headline.split(/(?<=[.!?])\s/)[0]}</span>
+          <span aria-hidden>→</span>
+        </Link>
       )}
 
       <div className="relative flex flex-wrap items-center justify-between gap-2">

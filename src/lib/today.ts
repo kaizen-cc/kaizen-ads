@@ -77,6 +77,8 @@ export type TodayItem = {
   context?: import("@/lib/exec-overview-core").ItemContextLine[] | null;
   /** A group's own items, each reviewed on its own (src/lib/exec-overview-core.ts SubItem) */
   subs?: import("@/lib/exec-overview-core").SubItem[] | null;
+  /** Found by a routine: its row, for Send, Answer or Hand off on the item (src/lib/routines-core.ts RecapLine) */
+  routine?: import("@/lib/routines-core").RecapLine | null;
   /** Where it came from (src/lib/exec-overview-core.ts ExecCard source) */
   source?: import("@/lib/exec-overview-core").ExecCard["source"];
   /** How the group's title counts what's left (src/lib/exec-overview-core.ts subsLeft) */
@@ -992,6 +994,25 @@ async function withProspectSearches(db: SupabaseClient, me: Staff, drafts: Draft
  * The latest recap the OS wrote for this person today (morning, afternoon, end of day, the clean sweep, the Friday or
  * Sunday one: src/lib/routines.ts) leads their day: its first line is the one thing to do first, the rest in its story.
  */
+/**
+ * A routine's report on someone's day (owner, Nov 25 2026): what it found lives as normal items in Needs me, never as its
+ * own card. Only-you-can-do, just-hit-send (with the draft), answer-the-agent, hand-offs and probably-done each become
+ * an item (or move up and carry the routine's row when they're already there), in the routine's order; what it only
+ * reports (cleaned up, closed, calls read) adds nothing. The report itself stays as a quiet "Everything else" item, so
+ * the recap deck can show its short summary and the Your day hero its one-line headline.
+ */
+const ROUTINE_SECTIONS: Record<string, number> = {
+  "Only you can do": 90,
+  "Just hit send": 86,
+  "Still waiting on you to send": 86,
+  "Answer the agent": 84,
+  "Drafts ready to review": 82,
+  "Hand off": 78,
+  "New items for you": 74,
+  Created: 74,
+  "Probably done, confirm": 66,
+};
+
 async function withRecap(db: SupabaseClient, me: Staff, drafts: Draft[]): Promise<Draft[]> {
   const { data } = await db
     .from("routine_runs")
@@ -1006,29 +1027,70 @@ async function withRecap(db: SupabaseClient, me: Staff, drafts: Draft[]): Promis
   const r = data as { id: string; kind: string; headline: string | null; report: import("@/lib/routines-core").RoutineReport | null; finished_at: string } | null;
   const sections = (r?.report?.sections ?? []).filter((s) => s.lines?.length);
   if (!r || !r.headline || !sections.length) return drafts;
-  const { routineOf, sectionCounts } = await import("@/lib/routines-core");
+  const [{ routineOf, sectionCounts, plainTitle }, { subsLeft }] = await Promise.all([import("@/lib/routines-core"), import("@/lib/exec-overview-core")]);
   const label = routineOf(r.kind)?.label ?? "Your recap";
   const at = new Date(r.finished_at).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" });
-  const firstLink = sections.flatMap((s) => s.lines).find((l) => l.href)?.href ?? null;
+  let out = [...drafts];
+  const at0 = () => new Map(out.map((d, i) => [d.key, i]));
+  const pulled = new Set<string>();
+  let n = 0;
+  for (const s of sections) {
+    const score = ROUTINE_SECTIONS[s.title];
+    if (!score) continue;
+    for (const l of s.lines) {
+      n++;
+      const key = l.itemId ? `ask:${l.itemId}` : `routine:${r.id}:${n}`;
+      const where = at0();
+      const had = where.get(key);
+      // Already its own item on the day: it moves up and carries the routine's row (no second copy)
+      if (had != null) {
+        const d = out[had];
+        out[had] = { ...d, topic: "needs", score: Math.max(d.score, score), routine: l, ...(d.exec ? { exec: { ...d.exec, tab: "needs", routine: l } } : {}) };
+        continue;
+      }
+      // An item the routine found is open only while it's still on the day (a closed one isn't brought back)
+      if (l.itemId && !out.some((d) => d.subs?.some((x) => x.key === key || x.key.startsWith(`${key}#`)))) continue;
+      if (l.itemId) pulled.add(key);
+      // A reminder's own lines come with it, each still ticked on its own
+      const lines = out.flatMap((d) => (d.subs ?? []).filter((x) => x.key.startsWith(`${key}#`)));
+      const title = plainTitle(l.text);
+      const story = [l.detail, `${s.title} (${label}, ${at})`].filter(Boolean).join(" · ");
+      const due = l.due && /^\d{4}-\d{2}-\d{2}$/.test(l.due) ? `${l.due}T21:00:00Z` : null;
+      const href = l.href ?? null;
+      const subs = lines.length ? { subs: lines.map((x) => ({ ...x, group: null })), subsTitle: { one: "follow-up left", many: "follow-ups left" } } : {};
+      const card = { key, tab: "needs" as const, kind: "mine" as const, client: l.client ?? null, clientId: null, title, detail: story, severity: (score >= 84 ? "critical" : "high") as "critical" | "high", due, action: { label: "Open it", href }, routine: l, ...subs };
+      out.push({ key, topic: "needs", score, client: l.client ?? "Team", clientSlug: "", clientId: null, stat: { value: s.title, label }, title, story, why: `${label} found it: ${s.title.toLowerCase()}`, evidence: [], action: { label: "Open it", href: href ?? undefined }, due, routine: l, ...subs, ...(me.isExec ? { exec: card } : {}) });
+    }
+  }
+  // Pulled out of the card of their own saved reminders: that card counts what's left
+  if (pulled.size)
+    out = out.flatMap((d) => {
+      if (!d.subs?.length) return [d];
+      const closed = { has: (k: string) => pulled.has(k) || pulled.has(k.split("#")[0]) };
+      const next = subsLeft(d, closed);
+      if (!next) return [];
+      return [{ ...next, ...(d.exec ? { exec: subsLeft(d.exec, closed) ?? d.exec } : {}) }];
+    });
   return [
     {
       key: `recap:${r.id}`,
-      topic: "mine",
-      score: 95,
+      // Everything else: never a block or a count on the Overview; the recap deck shows its short summary
+      topic: "elsewhere",
+      score: 40,
       client: label,
       clientSlug: "",
       clientId: null,
       stat: { value: at, label },
       title: r.headline,
-      // Short (the card draws the rest): each section and its count
       story: sectionCounts({ sections }),
       recap: { label, at, report: { headline: r.headline, sections, failedSources: r.report?.failedSources ?? [] } },
       why: "Your recap, written by Kaizen OS from your calendar, calls, messages and items",
       evidence: [],
-      action: firstLink ? { label: "Open the first one", href: firstLink } : { label: "Open your Overview", href: "/pipeline" },
+      // Into the first thing it found (its sheet), else its own sheet: never just the Overview
+      action: { label: "Open the first one", href: sections.flatMap((x) => x.lines).find((l) => l.href)?.href ?? `/pipeline?block=needs&item=${encodeURIComponent(`recap:${r.id}`)}` },
       dismiss: "Read it",
     },
-    ...drafts,
+    ...out,
   ];
 }
 

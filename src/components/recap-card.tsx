@@ -186,7 +186,7 @@ function SendPanel({ l, t, onDone }: { l: RecapLine; t: Tone; onDone: (s: string
   const [copied, setCopied] = useState(false);
   const [pending, start] = useTransition();
   const gmail = d.kind === "email" ? `https://mail.google.com/mail/?view=cm&fs=1${d.to ? `&to=${encodeURIComponent(d.to)}` : ""}${d.subject ? `&su=${encodeURIComponent(d.subject)}` : ""}&body=${encodeURIComponent(text)}` : null;
-  const box = `w-full rounded-xl border p-3 text-[13px] leading-relaxed outline-none ${c(t, "border-white/15 bg-black/30 text-white focus:border-white/40", "border-ink/15 bg-bg text-fg focus:border-ink/40")}`;
+  const box = `w-full rounded-xl border p-3 text-[16px] leading-relaxed outline-none md:text-[13px] ${c(t, "border-white/15 bg-black/30 text-white focus:border-white/40", "border-ink/15 bg-bg text-fg focus:border-ink/40")}`;
   const btn = `inline-flex h-10 items-center rounded-full px-3.5 text-[12.5px] md:h-8 ${c(t, "border border-white/20 text-white/85 hover:bg-white/10", "border border-ink/15 text-ink/80 hover:bg-ink/[0.05]")}`;
   const primary = `inline-flex h-10 items-center rounded-full px-3.5 text-[12.5px] font-medium disabled:opacity-50 md:h-8 ${c(t, "bg-white text-black hover:bg-white/90", "bg-fg text-bg hover:opacity-90")}`;
   return (
@@ -258,7 +258,7 @@ function AnswerPanel({ id, question, t, onDone }: { id: string; question: string
           onChange={(e) => setText(e.target.value)}
           placeholder="Your answer"
           aria-label="Your answer"
-          className={`h-11 min-w-0 flex-1 rounded-full border px-4 text-[13.5px] outline-none md:h-9 ${c(t, "border-white/15 bg-black/30 text-white placeholder:text-white/35 focus:border-white/40", "border-ink/15 bg-bg text-fg placeholder:text-ink/35 focus:border-ink/40")}`}
+          className={`h-11 min-w-0 flex-1 rounded-full border px-4 text-[16px] outline-none md:h-9 md:text-[13.5px] ${c(t, "border-white/15 bg-black/30 text-white placeholder:text-white/35 focus:border-white/40", "border-ink/15 bg-bg text-fg placeholder:text-ink/35 focus:border-ink/40")}`}
         />
         <button type="submit" disabled={pending || !text.trim()} className={`h-11 shrink-0 rounded-full px-4 text-[13px] font-medium disabled:opacity-50 md:h-9 ${c(t, "bg-white text-black", "bg-fg text-bg")}`}>
           {pending ? "…" : "Answer"}
@@ -266,5 +266,45 @@ function AnswerPanel({ id, question, t, onDone }: { id: string; question: string
       </div>
       {err && <p className="text-[12px] text-[#ff4d5e]">{err}</p>}
     </form>
+  );
+}
+
+/**
+ * A routine's row acting on its Needs me item (owner, Nov 25 2026: what a routine finds lives as a normal item in the
+ * blocks, never its own card): Send the drafted message, Answer the agent's question, Hand off the staged task. Open,
+ * Done, Later and the rest are the item's own actions.
+ */
+export function RoutineActions({ l, dark = false }: { l: RecapLine; dark?: boolean }) {
+  const t = { dark };
+  const [panel, setPanel] = useState<"send" | "answer" | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const act = l.act ?? null;
+  const primary = `inline-flex min-h-11 items-center rounded-full px-4 text-[13px] font-medium sm:min-h-8 sm:text-[12px] ${c(t, "bg-white text-black hover:bg-white/90", "bg-brand text-white hover:bg-brand/90")}`;
+  if (done) return <p className={`w-full text-[12.5px] ${c(t, "text-[#5be3a5]", "text-ok")}`}>{done}</p>;
+  if (!(act === "send" && l.draft) && !(act === "answer" && l.itemId) && !(act === "handoff" && l.href)) return null;
+  return (
+    <>
+      {act === "send" && l.draft && (
+        <button type="button" onClick={() => setPanel(panel === "send" ? null : "send")} className={primary} aria-expanded={panel === "send"}>
+          {panel === "send" ? "Close" : "Send"}
+        </button>
+      )}
+      {act === "answer" && l.itemId && (
+        <button type="button" onClick={() => setPanel(panel === "answer" ? null : "answer")} className={primary} aria-expanded={panel === "answer"}>
+          {panel === "answer" ? "Close" : "Answer"}
+        </button>
+      )}
+      {act === "handoff" && l.href && (
+        <Go href={l.href} className={primary}>
+          Hand off
+        </Go>
+      )}
+      {panel && (
+        <div className="order-last w-full basis-full">
+          {panel === "send" && l.draft && <SendPanel l={l} t={t} onDone={setDone} />}
+          {panel === "answer" && l.itemId && <AnswerPanel id={l.itemId} question={l.question ?? null} t={t} onDone={setDone} />}
+        </div>
+      )}
+    </>
   );
 }

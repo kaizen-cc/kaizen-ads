@@ -17,6 +17,7 @@ import { openAsanaTask } from "@/components/asana-task-sheet";
 import { DraftActions } from "./emails-ready";
 import { ItemContext } from "@/components/item-context";
 import { SubItems } from "@/components/sub-items";
+import { RoutineActions } from "@/components/recap-card";
 import { AsanaItemActions } from "@/components/asana-item-actions";
 import { asanaSummary, orderAsana } from "@/lib/asana-due";
 import { closeLocally, useClosed } from "@/lib/closed-items";
@@ -419,6 +420,8 @@ function Card({ card, sheet = false }: { card: ExecCard; sheet?: boolean }) {
         </div>
       ) : !readOnly && (
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
+          {/* Found by a routine: Send its draft, Answer the agent, Hand off (src/components/recap-card.tsx) */}
+          {card.routine && <RoutineActions l={card.routine} />}
           {card.emailDraft ? (
             <DraftActions d={card.emailDraft} />
           ) : card.kind === "asana" ? (

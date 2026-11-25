@@ -1,6 +1,6 @@
 "use client";
 
-import { RecapCard } from "@/components/recap-card";
+import { RecapCard, RoutineActions } from "@/components/recap-card";
 import { DraftReply } from "@/components/draft-reply";
 import { LinePauseControl } from "@/components/line-pause";
 import Link from "next/link";
@@ -874,6 +874,11 @@ function ItemBody({ i: item, status, big = false, onChoose, onAct, onNext }: { i
         </div>
       )}
       <p className="relative text-xs text-white/45">Why it&apos;s here: {i.why}</p>
+      {i.routine && (
+        <div className="relative flex flex-wrap items-center gap-2">
+          <RoutineActions l={i.routine} dark />
+        </div>
+      )}
       {/^asana:\d+$/.test(i.key) ? (
         // An Asana task: Asana's own actions and context, written back to Asana (src/components/asana-item-actions.tsx)
         <div className="relative grid gap-2">

@@ -127,6 +127,7 @@ export function itemCard(i: TodayItem): ExecCard {
     subs: i.subs ?? null,
     subsTitle: i.subsTitle ?? null,
     source: i.source ?? null,
+    routine: i.routine ?? null,
   };
 }
 

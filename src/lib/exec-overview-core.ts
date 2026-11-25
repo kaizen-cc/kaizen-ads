@@ -56,6 +56,8 @@ export type ExecCard = {
   source?: { label: string; href?: string | null; transcriptCallId?: string | null } | null;
   /** The recommended move, said plainly (Escalated: what Nudge does and to whom) */
   hint?: string | null;
+  /** Found by a routine (the clean sweep, the nightly agent): its row, for Send, Answer or Hand off right on the item */
+  routine?: import("@/lib/routines-core").RecapLine | null;
   /** Escalated with one item: the item itself (its key on the owner's day), for Reassign */
   itemKey?: string | null;
 };
