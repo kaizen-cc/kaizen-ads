@@ -1,4 +1,5 @@
 import { noDash } from "@/lib/direction-core";
+import { roleLabel, ROLES, type TeamRole } from "@/lib/roles";
 
 // Delegating an item on someone's Overview ("Brief ready", a launch promised on a call) to a teammate: who can be
 // picked (by the delegator's role, the client's seat holders first), what the teammate's task says, and how the
@@ -6,32 +7,23 @@ import { noDash } from "@/lib/direction-core";
 
 export type Candidate = { id: string; name: string; role: string };
 
-/** The roles a person's work is naturally handed to; an exec can pick anyone */
-const DOWN: Record<string, readonly string[]> = {
-  head_of_creative: ["lead_graphic_designer", "lead_video_editor", "graphic_designer", "video_editor", "copywriter"],
-  lead_graphic_designer: ["graphic_designer", "video_editor", "copywriter"],
-  lead_video_editor: ["video_editor", "graphic_designer", "copywriter"],
-  head_of_meta: ["media_buyer", "tiktok_buyer", "google_buyer", "copywriter"],
-  head_of_google: ["google_buyer", "media_buyer"],
-  head_of_email: ["email_strategist", "email_designer", "email_builder", "copywriter"],
-  head_of_social: ["social_media_manager", "graphic_designer", "video_editor"],
-  media_buyer: ["media_buyer", "tiktok_buyer", "google_buyer", "head_of_meta"],
-  google_buyer: ["google_buyer", "media_buyer", "head_of_google"],
-};
-
 /**
- * Who the picker offers: the roles under the delegator's own (a head of creative offers designers and video editors),
- * everyone for an exec, never the delegator. People holding a seat on the client come first.
+ * Who the picker offers (Transfer owner, Hand off, Reassign): every active teammate, execs and the owner included, never
+ * the person picking (team feedback, Nov 25 2026: a head of email couldn't hand anything to the owner). By role, in the
+ * team's own role order, then by name; the client's seat holders are marked.
  */
-export function delegateCandidates(me: { id: string; role: string; isExec: boolean }, team: readonly Candidate[], clientSeatIds: readonly string[] = []): (Candidate & { onClient: boolean })[] {
-  // An executive by role counts as an exec even without the is_exec flag (as line-actions and chat-permissions do): the
-  // flag alone left execs with only designers, editors, copywriters and buyers, missing teammates like account managers
-  const allowed = me.isExec || me.role === "executive" ? null : new Set(DOWN[me.role] ?? ["graphic_designer", "video_editor", "copywriter", "media_buyer", "google_buyer"]);
+export function delegateCandidates(me: { id: string; role: string; isExec: boolean }, team: readonly Candidate[], clientSeatIds: readonly string[] = []): (Candidate & { onClient: boolean; roleLabel: string })[] {
   const seat = new Set(clientSeatIds);
   return team
-    .filter((p) => p.id !== me.id && (!allowed || allowed.has(p.role)))
-    .map((p) => ({ ...p, onClient: seat.has(p.id) }))
-    .sort((a, b) => Number(b.onClient) - Number(a.onClient) || a.name.localeCompare(b.name));
+    .filter((p) => p.id !== me.id)
+    .map((p) => ({ ...p, onClient: seat.has(p.id), roleLabel: roleLabel(p.role as TeamRole) }))
+    .sort((a, b) => roleRank(a.role) - roleRank(b.role) || a.name.localeCompare(b.name));
+}
+
+/** A role's place in the team's own order (unknown roles last) */
+export function roleRank(role: string): number {
+  const i = ROLES.findIndex((r) => r.value === role);
+  return i < 0 ? ROLES.length : i;
 }
 
 /** Whether this person may be picked by the delegator (the server checks it again) */

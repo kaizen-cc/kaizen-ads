@@ -7,7 +7,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { delegateItem, loadDelegates } from "@/lib/delegate";
 
 /** The people the picker offers for an item's client (by the person's own role) */
-export async function delegateOptions(clientId: string | null): Promise<{ id: string; name: string; role: string; onClient: boolean }[]> {
+export async function delegateOptions(clientId: string | null): Promise<{ id: string; name: string; role: string; roleLabel: string; onClient: boolean }[]> {
   const me = await requireStaff();
   return loadDelegates(createAdminClient(), { id: me.id, fullName: me.fullName, role: me.role, isExec: me.isExec }, clientId);
 }

@@ -6,6 +6,7 @@ import { delegateOptions } from "@/app/(team)/delegate-actions";
 import { delegateQuickItem, doneQuickItem, dueQuickItem, snoozeQuickItem, takeOverQuickItem, transferQuickItem, type QuickSnap } from "@/app/(team)/item-actions";
 import { CommentButton } from "./item-comments";
 import { deferClear } from "@/lib/undo";
+import { TeammatePicker } from "@/components/teammate-picker";
 
 // The quick actions on every Overview and Today item, kept simple (Nov 22 2026: too many choices per item): only Done and
 // Later show; everything else (Hand off, Comment, and whatever the item adds, like the client page or "Not for me") sits
@@ -133,18 +134,7 @@ function DelegatePicker({ item, open, setOpen, clear, tone = "auto" }: { item: Q
       </button>
       {open && (
         <div ref={form} className="order-last mt-1 grid w-full basis-full scroll-my-4 gap-2 rounded-2xl border border-ink/15 bg-deep p-3 sm:max-w-sm">
-          <label className="grid gap-1 text-[12px] text-ink/60">
-            Who
-            <select value={to} onChange={(e) => setTo(e.target.value)} className={field}>
-              <option value="">{people ? "Pick a teammate" : "Loading..."}</option>
-              {(people ?? []).map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                  {p.onClient ? " (on this client)" : ""}
-                </option>
-              ))}
-            </select>
-          </label>
+          <TeammatePicker people={people} value={to} onChange={setTo} label="Who" tone={tone === "dark" ? "dark" : "auto"} />
           <label className="grid gap-1 text-[12px] text-ink/60">
             Note (optional)
             <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} className={field} />
@@ -213,18 +203,7 @@ function TaskControls({ item, tone = "auto", clear }: { item: QuickItem; tone?: 
       {open && (
         <div className="order-last mt-1 grid w-full basis-full gap-2 rounded-2xl border border-ink/15 bg-deep p-3 sm:max-w-sm">
           {open === "transfer" ? (
-            <label className="grid gap-1 text-[12px] text-ink/60">
-              New owner (it leaves your day and shows on theirs)
-              <select value={to} onChange={(e) => setTo(e.target.value)} className={field}>
-                <option value="">{people ? "Pick a teammate" : "Loading..."}</option>
-                {(people ?? []).map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                    {p.onClient ? " (on this client)" : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <TeammatePicker people={people} value={to} onChange={setTo} label="New owner (it leaves your day and shows on theirs)" tone={tone === "dark" ? "dark" : "auto"} />
           ) : (
             <label className="grid gap-1 text-[12px] text-ink/60">
               Due (escalation counts from this date)

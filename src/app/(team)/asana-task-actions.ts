@@ -113,5 +113,10 @@ export async function subtaskAsanaTask(gid: string, op: { add?: string; tick?: {
 export async function asanaAssignees(): Promise<{ name: string; email: string; role: string }[]> {
   await requireStaff();
   const { data } = await createAdminClient().from("profiles").select("full_name, email, role").eq("is_active", true).not("email", "is", null).order("full_name").limit(300);
-  return ((data ?? []) as { full_name: string | null; email: string | null; role: string | null }[]).filter((p) => p.full_name && p.email).map((p) => ({ name: p.full_name as string, email: p.email as string, role: p.role ?? "" }));
+  // Everyone active, execs and the owner included, by role then name; role is its label for the picker
+  const [{ roleRank }, { roleLabel }] = await Promise.all([import("@/lib/delegate-core"), import("@/lib/roles")]);
+  return ((data ?? []) as { full_name: string | null; email: string | null; role: string | null }[])
+    .filter((p) => p.full_name && p.email)
+    .sort((a, b) => roleRank(a.role ?? "") - roleRank(b.role ?? "") || String(a.full_name).localeCompare(String(b.full_name)))
+    .map((p) => ({ name: p.full_name as string, email: p.email as string, role: p.role ? roleLabel(p.role as Parameters<typeof roleLabel>[0]) : "" }));
 }

@@ -8,6 +8,7 @@ import { asanaAssignees, asanaTask, commentAsanaTask, saveAsanaTask, subtaskAsan
 import { quickDue, type TaskDetail } from "@/lib/asana-live-core";
 import { describe } from "@/lib/asana-due";
 import { deferClear } from "@/lib/undo";
+import { TeammatePicker } from "@/components/teammate-picker";
 
 // An Asana task on the Overview, the recap and its sheet (owner, Nov 24 2026: the generic Done / Later / Hand off didn't
 // fit an Asana task). Its own context (project and section, the description, subtasks to tick, who assigned it, the
@@ -237,17 +238,7 @@ export function AsanaItemActions({ itemKey, gid, url, title, clientSlug = null, 
       )}
       {panel === "reassign" && (
         <div className={`grid gap-2 rounded-2xl border p-3 sm:max-w-sm ${c.box}`}>
-          <label className={`grid gap-1 text-[12px] ${c.muted}`}>
-            Assign it in Asana to
-            <select value={to} onChange={(e) => setTo(e.target.value)} className={field}>
-              <option value="">{people ? "Pick a teammate" : "Loading..."}</option>
-              {(people ?? []).map((p) => (
-                <option key={p.email} value={p.email}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <TeammatePicker people={people ? people.map((p) => ({ id: p.email, name: p.name, roleLabel: p.role })) : null} value={to} onChange={setTo} label="Assign it in Asana to" tone={dark ? "dark" : "auto"} />
           <button type="button" disabled={!to} onClick={reassign} className={`${pill} justify-center font-medium ${c.done}`}>
             Reassign
           </button>

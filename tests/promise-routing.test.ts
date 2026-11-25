@@ -132,16 +132,18 @@ describe("delegating an item", () => {
     { id: "v1", name: "Vic Editor", role: "video_editor" },
     { id: "b1", name: "Bo Buyer", role: "media_buyer" },
   ];
-  it("offers the roles under the delegator, the client's seats first, never themselves", () => {
+  it("offers every active teammate but the person picking, by role then name, client seats marked", () => {
     const c = delegateCandidates({ id: "hoc", role: "head_of_creative", isExec: false }, team, ["v1"]);
-    expect(c.map((p) => p.id)).toEqual(["v1", "d1", "d2"]);
-    expect(c[0].onClient).toBe(true);
-    expect(delegateCandidates({ id: "x", role: "executive", isExec: true }, team).length).toBe(5);
+    expect(c.map((p) => p.id)).toEqual(["b1", "d1", "d2", "v1"]);
+    expect(c.find((p) => p.id === "v1")?.onClient).toBe(true);
+    expect(c.every((p) => p.roleLabel)).toBe(true);
   });
-  it("offers an executive by role everyone, even without the exec flag", () => {
-    const all = [...team, { id: "cs", name: "Fabiola", role: "customer_success" }, { id: "em", name: "Mali", role: "email_strategist" }];
-    expect(delegateCandidates({ id: "x", role: "executive", isExec: false }, all).map((p) => p.id)).toEqual(expect.arrayContaining(["cs", "em"]));
-    expect(delegateCandidates({ id: "x", role: "executive", isExec: false }, all).length).toBe(7);
+  it("execs and the owner are pickable by anyone (a head of email can hand work to the owner)", () => {
+    const all = [...team, { id: "owner", name: "Owner Person", role: "executive" }, { id: "em", name: "Mali", role: "email_strategist" }];
+    const c = delegateCandidates({ id: "hoe", role: "head_of_email", isExec: false }, all);
+    expect(c[0].id).toBe("owner");
+    expect(c.map((p) => p.id)).toEqual(expect.arrayContaining(["owner", "em", "hoc", "b1"]));
+    expect(delegateCandidates({ id: "owner", role: "executive", isExec: true }, all).some((p) => p.id === "owner")).toBe(false);
   });
   it("credits the delegator and keeps no dashes", () => {
     expect(delegatedTitle("Dana", "Brief ready: Sierra Dreams BFCM close (1 video, 5 images)")).toBe("Dana: Brief: Sierra Dreams BFCM close (1 video, 5 images)");

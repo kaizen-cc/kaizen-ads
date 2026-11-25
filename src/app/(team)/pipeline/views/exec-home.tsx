@@ -21,6 +21,7 @@ import { AsanaItemActions } from "@/components/asana-item-actions";
 import { asanaSummary, orderAsana } from "@/lib/asana-due";
 import { closeLocally, useClosed } from "@/lib/closed-items";
 import { deferClear } from "@/lib/undo";
+import { TeammatePicker } from "@/components/teammate-picker";
 
 // The executive Overview's blocks (owner, Nov 23 2026), under the Wrapped hero: Needs me, Escalated, Accounts, Pulse
 // and (the owner) System, each a designed block with its own color, a big number, one line and its sub-chips. A tap
@@ -532,18 +533,7 @@ function Reassign({ card, pill }: { card: ExecCard; pill: string }) {
       </button>
       {open && (
         <div className="order-last mt-1 grid w-full basis-full gap-2 rounded-2xl border border-ink/15 bg-deep p-3 sm:max-w-sm">
-          <label className="grid gap-1 text-[12px] text-ink/60">
-            Give it to (it leaves their day and starts fresh with the new owner)
-            <select value={to} onChange={(e) => setTo(e.target.value)} className="h-11 rounded-brand border border-ink/15 bg-transparent px-2 text-[16px] text-fg sm:h-9 sm:text-[13px]">
-              <option value="">{people ? "Pick a teammate" : "Loading..."}</option>
-              {(people ?? []).map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                  {p.onClient ? " (on this client)" : ""}
-                </option>
-              ))}
-            </select>
-          </label>
+          <TeammatePicker people={people} value={to} onChange={setTo} label="Give it to (it leaves their day and starts fresh with the new owner)" />
           <button type="button" disabled={!to} onClick={go} className="h-11 rounded-full bg-fg px-4 text-[13px] font-medium text-bg disabled:opacity-50 sm:h-9">
             Reassign
           </button>

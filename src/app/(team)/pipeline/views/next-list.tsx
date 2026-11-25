@@ -17,6 +17,7 @@ import { SuggestBriefsButton } from "@/components/allotment-brief-actions";
 import { SaveIdeaStar } from "@/components/save-idea-star";
 import { CommentButton } from "@/components/item-comments";
 import { bucketKey } from "@/lib/today-counts";
+import { TeammatePicker } from "@/components/teammate-picker";
 
 // Next for me, drawn to sit under the recap hero: a lit header with today's numbers in one strip, then each group as
 // its own card with a colored accent, and rows that lead with the client. The accents are the hero's colors, set as
@@ -854,18 +855,7 @@ function DelegatePicker({ clientId, label, send: sendTo, onSent, small = false }
       </button>
       {open && (
         <div className="z-20 mt-2 grid w-full gap-2 rounded-2xl border border-ink/15 bg-deep p-3 shadow-xl sm:absolute sm:right-0 sm:top-full sm:w-72">
-          <label className="grid gap-1 text-[12px] text-ink/60">
-            Who
-            <select value={to} onChange={(e) => setTo(e.target.value)} className="h-11 rounded-brand border border-ink/15 bg-transparent px-2 text-[14px] text-fg sm:h-9">
-              <option value="">{people ? "Pick a teammate" : "Loading..."}</option>
-              {(people ?? []).map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                  {p.onClient ? " (on this client)" : ""}
-                </option>
-              ))}
-            </select>
-          </label>
+          <TeammatePicker people={people} value={to} onChange={setTo} label="Who" />
           <label className="grid gap-1 text-[12px] text-ink/60">
             Note (optional)
             <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} className="h-11 rounded-brand border border-ink/15 bg-transparent px-2 text-[14px] text-fg sm:h-9" />
