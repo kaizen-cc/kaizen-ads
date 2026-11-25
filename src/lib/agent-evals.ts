@@ -22,6 +22,13 @@ export type Proposal = {
   labels?: string[];
   /** How many samples to replay (up to 10) */
   samples?: number;
+  /** A queued test waits until this many matching real calls are sampled (default 6), for up to 10 days */
+  minSamples?: number;
+  /**
+   * A queued model or effort change (cost, docs/API-COST.md): applied to the agent in Settings › AI agents when the
+   * proposed one isn't worse (at most one sample judged worse, none failing to run beyond two). The owner is told either way.
+   */
+  apply?: boolean;
 };
 export type EvalResult = { sampleId: string; agent: string; label: string; moment: string; current: string; proposed: string; verdict: "better" | "same" | "worse" | "error"; why: string; reused: boolean };
 export type EvalRow = { id: string; agentKey: string | null; roleKey: string | null; kind: "change" | "drift"; target: string; status: "queued" | "running" | "done" | "failed"; results: EvalResult[]; better: number; same: number; worse: number; summary: string | null; error: string | null; createdAt: string; finishedAt: string | null; appliedAt: string | null; by: string | null };
@@ -246,18 +253,68 @@ export async function driftCheck(admin: SupabaseClient) {
   return { agents: keys, lines };
 }
 
+/** Samples matching a test's agent and places (labels) */
+async function matching(admin: SupabaseClient, agentKey: string | null, proposal: Proposal) {
+  if (!agentKey) return 0;
+  const { data } = await admin.from("agent_samples").select("label").eq("agent_key", agentKey).limit(300);
+  const labels = proposal.labels?.length ? proposal.labels : null;
+  return (data ?? []).filter((s) => !labels || labels.some((l) => s.label === l || (s.label as string).startsWith(l))).length;
+}
+
 /**
  * Tests queued without anyone waiting on the page (a model or effort change being weighed for cost, docs/API-COST.md):
- * a scheduled step runs the oldest, one or two a run, the same way as a test started from Settings.
+ * a scheduled step runs the oldest whose real calls have been sampled, one or two a run, the same way as a test started
+ * from Settings. A test marked apply moves the agent when the proposed model or effort isn't worse; the owner is told.
  */
 export async function runQueuedEvals(admin: SupabaseClient, max = 2) {
-  const { data } = await admin.from("agent_evals").select("id, target").eq("status", "queued").order("created_at").limit(max);
+  const { data } = await admin.from("agent_evals").select("id, target, agent_key, proposal, created_at").eq("status", "queued").order("created_at").limit(20);
   const out: Record<string, string> = {};
+  let ran = 0;
   for (const e of data ?? []) {
+    if (ran >= max) break;
+    const proposal = (e.proposal ?? {}) as Proposal;
+    const need = proposal.minSamples ?? 6;
+    const stale = Date.now() - Date.parse(e.created_at as string) > 10 * 86_400_000;
+    if (!stale && (await matching(admin, e.agent_key as string | null, proposal)) < need) {
+      out[e.target as string] = "waiting for samples";
+      continue;
+    }
+    ran++;
     await admin.from("agent_evals").update({ status: "running" }).eq("id", e.id);
     await runEval(admin, e.id as string);
-    const { data: done } = await admin.from("agent_evals").select("summary, error").eq("id", e.id).single();
-    out[e.target as string] = (done?.summary as string | null) ?? (done?.error as string | null) ?? "done";
+    const { data: done } = await admin.from("agent_evals").select("summary, error, status, results, worse").eq("id", e.id).single();
+    const results = ((done?.results ?? []) as EvalResult[]).filter((r) => r.verdict !== "error");
+    const errors = ((done?.results ?? []) as EvalResult[]).length - results.length;
+    const ok = done?.status === "done" && results.length >= Math.min(need, 6) && Number(done?.worse ?? 0) <= 1 && errors <= 2;
+    let applied = false;
+    if (proposal.apply && ok && e.agent_key && (proposal.model || proposal.effort)) {
+      const { error } = await admin
+        .from("ai_agents")
+        .update({ ...(proposal.model ? { model: proposal.model } : {}), ...(proposal.effort ? { effort: proposal.effort } : {}), updated_at: new Date().toISOString() })
+        .eq("key", e.agent_key);
+      if (!error) {
+        applied = true;
+        forgetAgent(e.agent_key as AgentKey);
+        await admin.from("agent_evals").update({ applied_at: new Date().toISOString() }).eq("id", e.id);
+      }
+    }
+    const summary = (done?.summary as string | null) ?? (done?.error as string | null) ?? "done";
+    out[e.target as string] = `${summary}${proposal.apply ? (applied ? " (applied)" : " (kept as it was)") : ""}`;
+    const { data: owners } = await admin.from("profiles").select("id").eq("can_view_as", true).eq("is_active", true);
+    const change = [proposal.model, proposal.effort].filter(Boolean).join(" at ");
+    if (owners?.length)
+      await admin.from("notifications").upsert(
+        owners.map((o) => ({
+          profile_id: o.id,
+          kind: "agent",
+          title: `Cost test, ${String(e.agent_key ?? "agent").replace(/_/g, " ")} on ${change}: ${proposal.apply ? (applied ? "switched" : "kept as it was") : "results in"}`,
+          body: `${proposal.labels?.length ? `${proposal.labels.join(", ")}: ` : ""}${summary}`.slice(0, 1000),
+          href: "/settings?tab=agents",
+          key: `eval:${e.id}`,
+          priority: "normal",
+        })),
+        { onConflict: "profile_id,key", ignoreDuplicates: true },
+      );
   }
   return out;
 }

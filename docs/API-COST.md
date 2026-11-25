@@ -154,13 +154,81 @@ Cache hit rate before: 60.5% (7 days), 57.8% (30 days). After: section 7.
 Real samples (`agent_samples`, now saving again) are replayed with the proposed model and effort and judged blind
 against what the agent wrote, by the same runner as Settings › AI agents tests (`runEval`). Tests can now be queued
 (`status = 'queued'`, with `proposal.labels` to pick the place in the app) and the `evals` step runs them every 30
-minutes. A move is applied only where the proposed model is not clearly worse.
+minutes. A queued test waits until enough matching real calls are sampled (`proposal.minSamples`, default 6; at most
+10 days), then replays up to 10. With `proposal.apply`, the agent is switched in Settings › AI agents only when the
+proposed model is not worse (at most one sample judged worse, no more than two that couldn't run); otherwise it stays.
+The owner gets a notification with the verdicts either way, and every test is listed in Settings › AI agents.
+
+Queued Nov 25 (the target agents hadn't run since the samples fix: Thanksgiving week, reports not due):
+
+| Agent / place | Proposed | Applied automatically if it holds | Why it's a candidate |
+|---|---|---|---|
+| report_qa (report QA, channel report QA) | sonnet/medium | yes | Checks numbers against the data; $88/week on Opus high |
+| reporter (weekly reports, revisions) | sonnet/medium | yes | Client-facing writing; $90/week |
+| google_reporter | sonnet/medium | yes | Same, Google; $25/week |
+| strategist: suggestion summary | sonnet/medium | no: a per-place change in code, decided from the result | $39/week; a short decision and summary |
+| strategist: drafted brief | sonnet/medium | no: same | $31/week; a full brief, creative strategy |
+| auditor: sprint check | sonnet/medium | no: the auditor stays on Opus for audits | $35/week; a follow-up read of what changed |
 
 Results: section 7.
 
 ## 6. Scheduled AI work: cadence and cost
 
-See section 7 (filled in with the frequency slice).
+Background runs (no one signed in), last 7 days before these changes, priced per month at that rate:
+
+| Work | Where it runs (vercel.json) | Cadence | Calls/day | $/month | What changed |
+|---|---|---|---:|---:|---|
+| Monthly shot list | creative_plan, hourly | should be once per client per billing cycle | 16.7 | 190 | **Bug: rewrote the same list every hour** (save failed). Fixed: ~$0 |
+| Suggestion summary (strategist) | suggest, hourly 12-22 weekdays, plus moments, patterns, tiring ads | when a client has a reason | 17 | 167 | Model test queued (section 5) |
+| Meta audit findings + plan | audits, hourly 6-21 | red accounts audit themselves, 3-day refresh if untouched (owner's decision) | 12.6 | 322 | Opus high → medium; plan reads the context from the cache |
+| Channel report QA + revisions | reports every 5 min, studio opens, before a send | when quoted figures move | 84 | 289 | Figure-only rewrites on Sonnet low; QA Opus high → medium |
+| Ads report QA | after each report | per report | 32 | 134 | Opus high → medium; Sonnet tested |
+| Drafted brief (strategist) | every working hour, weekdays | one per client at a time, when there's a reason | 13.7 | 131 | Kept on Opus pending the test |
+| Sprint checks (Meta + Google) | sprints, hourly | each sprint's own next check (1-7 days) | 44 | 152 | Opus high → medium |
+| Google revise report | studio, before a send | when quoted figures move | 16.7 | 66 | Figure-only rewrites on Sonnet low |
+| Draft owed reply | owed, every 15 min weekdays | on first notice and when the thread moves | 16 | 46 | Unchanged (Sonnet low already) |
+| Weekly reports (ads, email, social) | reports, Mondays and the 1st | weekly / monthly | 19 | 89 | Unchanged until the reporter test |
+| Client email drafts, read a doc/call, promises | calls / docs / gmail, every 30 min | new items only | 150+ | 90 | Unchanged (Sonnet low / Haiku, new input only) |
+| Read a market ad | market, 8:30 daily | after each Motion sync | 89 | 30 | Unchanged (84% cached) |
+| Done check | floating / done, hourly | every open item, new evidence only | 783 | 17 | Unchanged (Haiku) |
+| YouTube learning (Gemini, not Claude) | youtube, every 30 min | channels checked every 6 hours; each video read once | 92 | 103 | Unchanged: the cost is per new video, not per check, so a slower check only delays the same reads |
+| Call safety review | after each call | Haiku screen, then a check only on medium/high | | <5 | Already a cheap pre-screen |
+
+The scheduled jobs already skip people and clients with no new input (done checks, promises, calls, docs and owed
+replies read only what's new; each sprint sets its own next check). The waste was the shot list bug, Opus at high
+effort, and Opus on mechanical work, not cadence.
+
+**Not done here, proposed:**
+
+- **Batch API (50% off) for audits' automatic 3-day refreshes and the Monday report drafts** (about $80-120 a month
+  after this work). Each job is a multi-step pipeline (findings, then plan; write, then QA) run inside one cron call;
+  on the Batch API each step becomes submit-then-collect across cron runs (results can take up to 24 hours, and the
+  buyer reads the reports Monday morning). Worth doing as its own change with a resumable job table.
+- **Sprint checks that call everything a wrong move.** 235 of 361 checks last week said wrong_move (each re-checks the
+  next day); 55 of 67 no_action checks had no change and nothing ticked. A rule for repeat no-change checks (a plain
+  reminder without the AI) saves ~$20 a month; whether wrong_move is too eager is a question for the media buying lead.
+
+## 7. Results and commits
+
+| Commit | What | Expected saving a month (at the Nov 18-25 rate of ~$5,300) |
+|---|---|---|
+| `5d68c502` slice 1 | Opus capped at medium; launchers, review, scripts, creative review, verticals, email design, coach to Sonnet; new Kaizen AI chats on Sonnet, chats at medium at most; conversation caching in Kaizen AI chat and the assistant; agent material cached an hour and shared by every call site; tool loops cache each round and keep tools on the last round; shot list bug; samples fixed | **$1,600-2,300**: Kaizen AI chat ~$700-1,000 (caching the conversation + Sonnet for new chats), shot list $190, Opus high → medium ~$250 (a third less output on auditors and QA), cache writes shared across call sites ~$300-500, tool loops and the rest ~$150 |
+| `1dfcc119` slice 2 | Figure-only report rewrites on Sonnet low; allotment count on Sonnet low; audits read their context once | **$250-350**: report figure updates ~$150, audit plan from the cache ~$120, allotment count ~$20 |
+| `3b1016da` slice 3 | Daily AI spend for the owner, the 2x alert, `spend` in the assistant's usage tool | Guardrail (no direct saving) |
+
+### First hours after slice 1 (Nov 25, 16:13-19:26 UTC, a quiet pre-holiday afternoon)
+
+- No new failures from the new request shapes (1-hour marks, moving marks, `tool_choice: none`); the only errors were
+  the done check's `max_tokens`, as before.
+- Kaizen AI chat: cache hit 82% on strategist client chats (65% in the week before), 80% on Google auditor chats (69%);
+  the first chat turn after the deploy paid full price for 14 tokens, read 3.74M from the cache and wrote 757k.
+- The assistant: 94-95% hit on agent calls (89-90% before).
+- Shot lists: three due clients, one per hourly run, each saved once (no repeats).
+- Too early for a fair before/after on spend: compare the Daily AI spend block (Settings › Calls & usage) over the
+  next week with the $1,240 week measured above.
+
+If the queued tests switch report_qa and the reporters to Sonnet, that's another ~$400-500 a month; the strategist and
+sprint-check results are a decision for the owner (a code change per place).
 
 ## 7. Results and commits
 
