@@ -2,6 +2,7 @@ import "server-only";
 import type { Tracker } from "@/lib/progress";
 import { JWT } from "google-auth-library";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { attachmentsOf, base64FromUrl, imageType, planAttachments, type AttachmentPart, type EmailAttachment, type ToolImage } from "@/lib/email-attachments-core";
 import { compact, saveItems, trimBody, type CollectResult, type ContextItem } from "./shared";
 import { LIVE } from "@/lib/live";
 import { gmailLink, isCalendarEmail, isInternalOnly } from "@/lib/email-filters";
@@ -158,6 +159,28 @@ export function plainText(part: GmailPart): string | null {
     if (t) return t;
   }
   return null;
+}
+
+/**
+ * The files in an email thread, for the AI's Gmail reads: the pictures it can look at (screenshots, photos) downloaded
+ * for the model, and a line for every file saying whether it was seen. Gmail's MCP has no attachments, so this reads
+ * Gmail REST with the same read-only access. A file that won't download is listed as not read, never an error.
+ */
+export async function threadAttachments(token: string, messages: readonly { id: string; payload: AttachmentPart & { headers?: { name: string; value: string }[] } }[]) {
+  const all = messages.flatMap((m) => attachmentsOf(m.id, m.payload.headers?.find((h) => h.name.toLowerCase() === "from")?.value ?? "", m.payload));
+  const { look, listed } = planAttachments(all);
+  const got = new Map<EmailAttachment, ToolImage>();
+  await Promise.all(
+    look.map(async (a) => {
+      const data = a.data ?? (a.attachmentId ? (await google<{ data?: string }>(token, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${a.messageId}/attachments/${a.attachmentId}`).catch(() => null))?.data : null);
+      const mediaType = imageType(a.mime, a.name);
+      if (data && mediaType) got.set(a, { name: a.name, mediaType, data: base64FromUrl(data) });
+    }),
+  );
+  return {
+    attachments: listed.map((l) => ({ name: l.name, from: l.from, seen: got.has(l.attachment), ...(got.has(l.attachment) ? {} : { note: l.note ?? "It wouldn't download from Gmail." }) })),
+    images: look.flatMap((a) => (got.has(a) ? [got.get(a)!] : [])),
+  };
 }
 
 /** Drop quoted history so we store what was actually said in this email. */

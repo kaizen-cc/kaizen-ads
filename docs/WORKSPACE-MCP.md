@@ -61,11 +61,11 @@ Every Workspace call uses the Workspace service account (`GOOGLE_SERVICE_ACCOUNT
 | Tool (name unchanged) | Where | Before | Now |
 |---|---|---|---|
 | `search_my_email` | lib/assistant/lookup-tools.ts | Gmail REST messages.list/get | Gmail MCP `search_threads` |
-| `read_my_email_thread` | lib/assistant/lookup-tools.ts | Gmail REST threads.get | Gmail MCP `get_thread` |
+| `read_my_email_thread` | lib/assistant/lookup-tools.ts | Gmail REST threads.get | Gmail MCP `get_thread`. Attachments (pictures shown to the model, every file named) still REST: Gmail MCP has no attachments (lib/context/google.ts `threadAttachments`). |
 | `save_draft` and every agent-made Gmail draft | lib/assistant/platform-drafts.ts | Gmail REST drafts.create | Gmail MCP `create_draft`, with the same plain and HTML bodies as REST (`emailBodies`: real links, their Gmail signature). REST when the draft has files, is a reply in a thread, or needs HTML that Google's `create_draft` doesn't take. |
 | `edit_google_doc` (Kaizen AI and the assistant) | lib/docs-edit.ts, lib/docs-edit-core.ts | (new) | Docs MCP `read_doc` / `update_doc` with batchUpdate requests, as the person. REST when the MCP answers without the doc's structure. Each edit is shown first and runs only on their yes. |
 | `read_google_file` (Kaizen AI, assistant) and the SOW reader | lib/assistant/read-file.ts | Drive REST files.get/export | Drive MCP `get_file_metadata` and `read_file_content` |
-| `search_my_gmail` / `read_gmail_thread` (Kaizen AI) | lib/kaizen-ai/workspace-tools.ts | Gmail REST | Gmail MCP `search_threads` / `get_thread` |
+| `search_my_gmail` / `read_gmail_thread` (Kaizen AI) | lib/kaizen-ai/workspace-tools.ts | Gmail REST | Gmail MCP `search_threads` / `get_thread`; a thread's attachments still REST (no attachments in Gmail MCP) |
 | `search_my_drive` (Kaizen AI) | lib/kaizen-ai/workspace-tools.ts | Drive REST files.list | Drive MCP `search_files` |
 | `my_calendar` (Kaizen AI) | lib/kaizen-ai/workspace-tools.ts | Calendar REST events.list | Calendar MCP `list_events` |
 | `find_meeting_time`, `book_meeting`, `reschedule_meeting`, `cancel_meeting` | lib/assistant/calendar-tools.ts, calendar-server.ts | Calendar REST freeBusy + events | Still REST. Next slice: Calendar MCP `suggest_time`, `create_event`, `update_event`, `delete_event`. Free/busy across teammates may not map one to one, so check with the check route first. |
