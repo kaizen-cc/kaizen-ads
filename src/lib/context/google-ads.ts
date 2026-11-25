@@ -551,7 +551,7 @@ export async function suggestGeo(names: string[]) {
   const clean = [...new Set(names.map((n) => n.trim()).filter((n) => n.length >= 2 && n.length <= 80))].slice(0, 10);
   if (!clean.length) return [] as { geo: string; name: string }[];
   const token = await accessToken();
-  const res = await fetch(`https://googleads.googleapis.com/${VERSION}/geoTargetConstants:suggestGeoTargetConstants`, {
+  const res = await fetch(`https://googleads.googleapis.com/${VERSION}/geoTargetConstants:suggest`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,

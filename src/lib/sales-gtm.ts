@@ -155,7 +155,11 @@ export async function prospectKeywordData(admin: Admin, p: { website: string | n
       : [];
     const geoHit = geos.length ? { geo: geos[0].geo, name: geos.map((x) => x.name.split(",")[0]).join(", ") } : null;
     // Seeds: the kind of business and its service lines (phrases of two words or more, so "reviews" alone never seeds)
-    const seeds = [p.industry?.replace(/\(.*?\)/g, ""), ...brief.sells.split(/[,;:()·.]| and /)].map((x) => String(x ?? "").trim().toLowerCase()).filter((x) => x.split(/\s+/).length >= 2 && x.length <= 60 && !/\$|\d/.test(x) && !/\b(no|not|shown|mentioned|site|faq|page|prices?|pricing|may|differ|also)\b/.test(x)).slice(0, 10);
+    const seeds: string[] = [p.industry?.replace(/\(.*?\)/g, ""), ...brief.sells.split(/[,;:()·.]| and /)].map((x) => String(x ?? "").trim().toLowerCase()).filter((x) => x.split(/\s+/).length >= 2 && x.length <= 60 && !/\$|\d/.test(x) && !/\b(no|not|shown|mentioned|site|faq|page|prices?|pricing|may|differ|also)\b/.test(x)).slice(0, 10);
+    // And the searches the market research named ("sauna near me / cold plunge near me"), first
+    const themed = (brief.market?.trends ?? []).flatMap((t) => t.keyword.split("/")).map((x) => x.replace(/\(.*?\)|\+.*$/g, "").trim().toLowerCase()).filter((x) => x.length >= 3 && x.length <= 60);
+    seeds.unshift(...themed.filter((x) => !seeds.includes(x)));
+    seeds.splice(20);
     const url = p.website ? (/^https?:\/\//i.test(p.website) ? p.website : `https://${p.website}`) : null;
     const opts = { url, geo: geos.length ? geos.map((x) => x.geo) : undefined };
     const raw = await ga.keywordIdeas(planner, seeds, opts).catch((e) => {
