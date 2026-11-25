@@ -5,7 +5,7 @@ import { driveQuote, multipartBody } from "./drive-push-core";
 
 // Into the person's Google Drive, as them (the Workspace's delegated access, full Drive scope as for the Google Doc
 // exports): upload a file Kaizen OS made into the folder the destination rule settled on (src/lib/drive-destination.ts:
-// the folder they named, or the remembered one they confirmed; never a guess, never My Drive's root).
+// the folder they named, or the remembered one they confirmed; never a guess; My Drive's top level only when they ask for it).
 
 const DRIVE = "https://www.googleapis.com/drive/v3";
 const ALL = { supportsAllDrives: "true", includeItemsFromAllDrives: "true", corpora: "allDrives" };

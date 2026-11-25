@@ -147,7 +147,14 @@ export async function findDestination(email: string, named: string, below?: stri
   const token = await driveTokenAs(email);
   const rest = subPath(below);
   let starts: { item: Item; names: string[] }[] = [];
-  if ("id" in ref) {
+  if ("root" in ref) {
+    // Their own My Drive, top level (they asked for it); a subfolder under it as for any folder
+    const r = await folderById(token, "root");
+    if (!r) return { notFound: "I couldn't open your My Drive." };
+    const top: Item = { ...r, name: "My Drive", parents: [], webViewLink: "https://drive.google.com/drive/my-drive" };
+    if (!rest.length) return { dest: { id: r.id, path: ["My Drive"], link: top.webViewLink ?? null, root: true } };
+    starts = [{ item: top, names: rest }];
+  } else if ("id" in ref) {
     const f = await folderById(token, ref.id);
     if (!f || f.mimeType !== FOLDER) return { notFound: "That link isn't a Drive folder you can reach (check it's a folder link and shared with you)." };
     starts = [{ item: f, names: rest }];
@@ -232,10 +239,12 @@ export async function destinationForSave(admin: SupabaseClient, o: { email: stri
   const below = typeof o.subfolder === "string" ? o.subfolder.trim().slice(0, 200) : "";
   const remembered = named ? null : await recallDestination(admin, o.key);
   const step = nextStep({ named, remembered, confirmed: o.confirmed === true });
-  if (step.step === "ask_folder") return { reply: { saved: false, needs_folder: true, note: "Ask which Drive folder to save it in (its link, or its path like Shared drive/Folder). Never pick one yourself or save to My Drive's root." } };
+  if (step.step === "ask_folder") return { reply: { saved: false, needs_folder: true, note: "Ask which Drive folder to save it in (its link, or its path like Shared drive/Folder; \"my drive\" is the top level of their My Drive). Never pick one yourself, and never My Drive unless they ask for it." } };
   if (step.step === "confirm_remembered") return { reply: { saved: false, needs_yes: true, destination: { path: pathText(step.dest.path), link: step.dest.link }, say: confirmLine(step.dest), note: "Ask exactly that once; on their yes call again with confirmed: true (or with the folder they name instead)." } };
   if (step.step === "use_remembered") return { save: step.dest };
   const found = await findDestination(o.email, named, below, below ? "make" : "find");
+  // My Drive's top level, when they asked for it: confirmed once like a remembered folder
+  if ("dest" in found && found.dest.root && o.confirmed !== true) return { reply: { saved: false, needs_yes: true, destination: { path: pathText(found.dest.path), link: found.dest.link }, say: confirmLine(found.dest), note: "Ask exactly that once; on their yes call again with the same folder and confirmed: true." } };
   if ("dest" in found) return { save: found.dest };
   if ("ask" in found) return { reply: { saved: false, candidates: found.ask.map((d) => ({ path: pathText(d.path), link: d.link })), say: found.say, note: "Ask which one; call again with that folder's link." } };
   return { reply: { saved: false, folder_not_found: true, say: found.notFound } };

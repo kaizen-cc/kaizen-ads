@@ -2,12 +2,17 @@
 // link, or by its path as they'd say it ("00-Business Manifesto/08-Kaizen Content"), the first part a shared drive or a
 // folder anywhere they can reach. Pure parts: reading the folder they meant, and Drive's query quoting.
 
-export type FolderRef = { id: string } | { path: string[] };
+export type FolderRef = { id: string } | { path: string[] } | { root: true };
+
+/** The top level of their own My Drive, as people say it or link it (the owner, Nov 25 2026: a valid place when asked for) */
+const ROOT_WORDS = /^(?:the\s+)?(?:root(?:\s+of\s+(?:my\s+)?drive)?|(?:my|main)\s+drive(?:\s+(?:root|top(?:\s+level)?|home))?|top\s+level(?:\s+of\s+my\s+drive)?)$/i;
+const ROOT_LINK = /^https?:\/\/drive\.google\.com\/drive\/(?:u\/\d+\/)?(?:home|my-drive)\/?(?:[?#].*)?$/i;
 
 /** A Drive folder link (or a bare id) or a path of folder names */
 export function parseFolderRef(input: string): FolderRef | null {
   const s = String(input ?? "").trim();
   if (!s) return null;
+  if (ROOT_LINK.test(s) || ROOT_WORDS.test(s.replace(/[.!]+$/, "")) || s === "id:root") return { root: true };
   const link = s.match(/drive\.google\.com\/(?:drive\/(?:u\/\d+\/)?folders\/|open\?id=|folderview\?id=)([A-Za-z0-9_-]{10,})/);
   if (link) return { id: link[1] };
   // A folder or shared drive by its id, as code passes it ("id:0AFx…")

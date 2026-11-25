@@ -7,7 +7,7 @@ import type { TemplateKey } from "./templates";
 // Where a Kaizen document goes in Drive, under the Drive rule (src/lib/drive-destination.ts): the folder the person
 // named or linked in this conversation; else the one they confirmed last time for this client (or prospect) and kind
 // of document, said back for a quick yes; else Kaizen's default said back for a yes (a client's Headquarters ›
-// "Proposals & SOWs", a prospect's Kaizen Sales › Prospects › <name>); never a guess and never My Drive's root. Asked
+// "Proposals & SOWs", a prospect's Kaizen Sales › Prospects › <name>); never a guess, and My Drive's top level only when asked for. Asked
 // before the document is written, so the minute of writing isn't wasted on a folder they'd change.
 
 export const PROPOSALS_FOLDER = "Proposals & SOWs";
@@ -50,6 +50,8 @@ export async function docDestination(o: { admin: SupabaseClient; me: { id: strin
   const named = String(o.folder ?? "").trim();
   if (named) {
     const r = await found(named, null, "find");
+    // My Drive's top level, when they asked for it: confirmed once
+    if (isDest(r) && r.root && !o.confirmed) return { reply: { made: false, needs_yes: true, destination: { path: pathText(r.path), link: r.link, new_folder: false }, say: confirmLine(r), note: "Ask exactly that once; on their yes call make_document again with the same content, the same folder and confirmed: true." } };
     return isDest(r) ? { save: r, key } : r;
   }
   // 2. The one they confirmed last time, said back for a quick yes
@@ -59,7 +61,7 @@ export async function docDestination(o: { admin: SupabaseClient; me: { id: strin
   if (!proposed) {
     if (o.client) {
       const hq = await hqOf(o.admin, o.me.email, o.client.id);
-      if (!hq) return { reply: { made: false, needs_folder: true, say: `I couldn't find ${o.client.name}'s Headquarters folder in Drive. Which folder should it go in? Paste its link.`, note: "Ask for the folder; call again with its link in folder. Never save it to My Drive's root." } };
+      if (!hq) return { reply: { made: false, needs_folder: true, say: `I couldn't find ${o.client.name}'s Headquarters folder in Drive. Which folder should it go in? Paste its link.`, note: "Ask for the folder; call again with its link in folder. Never My Drive unless they ask for it." } };
       const r = await found(`id:${hq}`, PROPOSALS_FOLDER, "preview");
       if (!isDest(r)) return r;
       proposed = r;
@@ -67,7 +69,7 @@ export async function docDestination(o: { admin: SupabaseClient; me: { id: strin
       const r = await found(`id:${process.env.GOOGLE_SHARED_DRIVE_ID}`, `Kaizen Sales/Prospects/${o.prospect.replace(/[\\/:*?"<>|›]+/g, " ").trim().slice(0, 80)}`, "preview");
       if (!isDest(r)) return r;
       proposed = r;
-    } else return { reply: { made: false, needs_folder: true, say: "Which Drive folder should it go in? Paste its link or say its path.", note: "Ask for the folder; call again with it in folder. Never save it to My Drive's root." } };
+    } else return { reply: { made: false, needs_folder: true, say: "Which Drive folder should it go in? Paste its link or say its path.", note: "Ask for the folder; call again with it in folder. Never My Drive unless they ask for it." } };
   }
   if (!o.confirmed) return { reply: { made: false, needs_yes: true, destination: { path: pathText(proposed.path), link: proposed.link, new_folder: Boolean(proposed.willCreate) }, say: confirmLine(proposed), note: "Ask exactly that once, before writing anything; on their yes call make_document again with the same content and confirmed: true (or with the folder they name instead)." } };
   return { save: await ensureDestination(o.me.email, proposed), key };

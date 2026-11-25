@@ -8,12 +8,13 @@
 
 /** A folder in Drive with its whole path. willCreate: the last name of the path isn't there yet (a preview): it's made
  * under parentId only after the yes (ensureDestination), and the confirm says "(new folder)" */
-export type Destination = { id: string; path: string[]; link: string | null; made?: boolean; willCreate?: { parentId: string; name: string } };
+/** root: the top level of their own My Drive (allowed only when they ask for it, and always confirmed once) */
+export type Destination = { id: string; path: string[]; link: string | null; made?: boolean; willCreate?: { parentId: string; name: string }; root?: boolean };
 /** Remembered per person, client (or prospect, by name, before they're a client) and kind of document */
 export type DestinationKey = { profileId: string; clientId: string | null; prospect?: string | null; docType: string };
 
 /** "Shared drives › Kaizen HQ › Case Studies" */
-export const pathText = (path: readonly string[]) => path.filter(Boolean).join(" › ");
+export const pathText = (path: readonly string[]) => (path.length === 1 && path[0] === "My Drive" ? "My Drive (top level)" : path.filter(Boolean).join(" › "));
 
 /** The one quick confirm for a remembered (or proposed) folder */
 export const confirmLine = (d: Destination) => `Saving to ${pathText(d.path)}${d.willCreate ? " (new folder)" : ""}${d.link ? ` (${d.link})` : ""}, OK?`;

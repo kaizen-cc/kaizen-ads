@@ -58,3 +58,22 @@ describe("folder names written differently", () => {
     expect(sameFolderName("Kaizen Contents", "Kaizen Content")).toBe(false);
   });
 });
+
+describe("My Drive's top level, when they ask for it (Nov 25)", () => {
+  it("reads 'my drive', 'main drive', 'root' and the Drive home links as the top level", () => {
+    for (const s of ["my drive", "My Drive", "main drive", "root", "the root", "root of my drive", "my drive root", "top level", "https://drive.google.com/drive/u/0/home", "https://drive.google.com/drive/my-drive", "https://drive.google.com/drive/u/1/my-drive?usp=sharing"]) expect(parseFolderRef(s)).toEqual({ root: true });
+  });
+  it("still reads folders inside it, other links and paths as before", () => {
+    expect(parseFolderRef("My Drive/Clients")).toEqual({ path: ["Clients"] });
+    expect(parseFolderRef("https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStU")).toEqual({ id: "1AbCdEfGhIjKlMnOpQrStU" });
+    expect(parseFolderRef("Root Beer Campaign")).toEqual({ path: ["Root Beer Campaign"] });
+  });
+  it("is said plainly and confirmed like any folder", () => {
+    const top = { id: "0AAbc", path: ["My Drive"], link: "https://drive.google.com/drive/my-drive", root: true };
+    expect(confirmLine(top)).toBe("Saving to My Drive (top level) (https://drive.google.com/drive/my-drive), OK?");
+    expect(savedLine("https://docs.google.com/d/1", top)).toBe("Saved: https://docs.google.com/d/1 in My Drive (top level).");
+  });
+  it("is never the fallback: nothing named and nothing remembered still asks", () => {
+    expect(nextStep({ named: "", remembered: null, confirmed: true })).toEqual({ step: "ask_folder" });
+  });
+});

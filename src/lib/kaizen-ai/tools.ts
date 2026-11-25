@@ -225,7 +225,7 @@ const over = (f: CopyField) => f.limit != null && [...f.text].length > f.limit;
 
 /** The Drive rule, as the model reads it on every tool that saves into Drive */
 const DRIVE_RULE =
-  "Where it goes: folder is the Drive folder they named or linked in this conversation (its link, or its path like Shared drive/Folder); leave it out when they didn't, and it proposes the folder they confirmed last time for this client and kind of file (say its 'say' line and call again with confirmed: true on their yes) or tells you to ask. Never pick a folder yourself or save to My Drive's root. Several matches come back as candidates to ask about. After saving, give the file's link and the folder's path.";
+  "Where it goes: folder is the Drive folder they named or linked in this conversation (its link, or its path like Shared drive/Folder); leave it out when they didn't, and it proposes the folder they confirmed last time for this client and kind of file (say its 'say' line and call again with confirmed: true on their yes) or tells you to ask. Never pick a folder yourself; save to My Drive's top level only when they ask for it (folder: \"my drive\", confirmed once). Several matches come back as candidates to ask about. After saving, give the file's link and the folder's path.";
 const DRIVE_PLACE = {
   folder: { type: "string", description: "The Drive folder link or path they named in this conversation; leave out otherwise" },
   subfolder: { type: "string", description: "Folders inside it; only the last is made when missing" },
@@ -240,7 +240,7 @@ async function driveAs(email: string) {
   return (await new JWT({ email: key.client_email, key: key.private_key, scopes: ["https://www.googleapis.com/auth/drive"], subject: email }).getAccessToken()).token!;
 }
 
-/** A new Google file in the folder the Drive rule settled on (never My Drive's root), converted from the content given */
+/** A new Google file in the folder the Drive rule settled on (My Drive's top level only when they ask for it), converted from the content given */
 async function uploadAs(email: string, name: string, googleType: string, body: string, contentType: string, folderId: string) {
   const token = await driveAs(email).catch((e) => {
     throw new Error(`Google refused the export (${e instanceof Error ? e.message.slice(0, 120) : "unknown"}). Kaizen's service account needs Drive delegated in the Workspace admin.`);
