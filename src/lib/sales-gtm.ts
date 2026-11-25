@@ -146,10 +146,16 @@ export async function prospectKeywordData(admin: Admin, p: { website: string | n
     }
     // Its places as "City, ST" (addresses and zips trip Google's matcher), up to five
     const places = [...new Set([p.location ?? "", ...brief.locations].flatMap((t) => [...t.matchAll(/([A-Z][A-Za-z .'-]{2,40}),\s*([A-Z]{2})\b/g)].map((m) => `${m[1].replace(/^.*\d\s*/, "").trim()}, ${m[2]}`)))].slice(0, 5);
-    const geos = places.length ? (await ga.suggestGeo(places).catch(() => [])).slice(0, 5) : [];
+    // Each place as "City, ST" and as the city alone (Google's matcher takes either), the first match per place kept
+    const geos = places.length
+      ? (await ga.suggestGeo([...places, ...places.map((x) => x.split(",")[0])]).catch((e) => {
+          console.log("[gtm] keyword planner geo:", e instanceof Error ? e.message.slice(0, 300) : e);
+          return [];
+        })).filter((x, k, all) => all.findIndex((y) => y.geo === x.geo) === k).slice(0, 5)
+      : [];
     const geoHit = geos.length ? { geo: geos[0].geo, name: geos.map((x) => x.name.split(",")[0]).join(", ") } : null;
     // Seeds: the kind of business and its service lines (phrases of two words or more, so "reviews" alone never seeds)
-    const seeds = [p.industry?.replace(/\(.*?\)/g, ""), ...brief.sells.split(/[,;:()·.]| and /)].map((x) => String(x ?? "").trim().toLowerCase()).filter((x) => x.split(/\s+/).length >= 2 && x.length <= 60 && !/\$|\d/.test(x) && !/(no|not|shown|mentioned|site|faq|page|prices?|pricing|may|differ|also)/.test(x)).slice(0, 10);
+    const seeds = [p.industry?.replace(/\(.*?\)/g, ""), ...brief.sells.split(/[,;:()·.]| and /)].map((x) => String(x ?? "").trim().toLowerCase()).filter((x) => x.split(/\s+/).length >= 2 && x.length <= 60 && !/\$|\d/.test(x) && !/\b(no|not|shown|mentioned|site|faq|page|prices?|pricing|may|differ|also)\b/.test(x)).slice(0, 10);
     const url = p.website ? (/^https?:\/\//i.test(p.website) ? p.website : `https://${p.website}`) : null;
     const opts = { url, geo: geos.length ? geos.map((x) => x.geo) : undefined };
     const raw = await ga.keywordIdeas(planner, seeds, opts).catch((e) => {
@@ -220,7 +226,8 @@ export async function runGtm(admin: Admin, id: string): Promise<{ ran: boolean; 
     // 2. The strategy
     await set({ stage: "writing" });
     const fees = partner ? (partner.show_fees ? "Show management fees from the pricing reference." : "AD SPEND ONLY: never show management or creative fees anywhere; the partner sets its own fees.") : "Lead each tier with ad spend and projections, then the management and creative fees from the pricing reference (exact).";
-    const gtmRaw = await askJson<Record<string, unknown>>({
+    // Once more when it fails (a long answer now and then comes back cut or malformed)
+    const strategyCall = () => askJson<Record<string, unknown>>({
       agent: "sales_gtm",
       label: "gtm strategy",
       schema: GTM_SCHEMA,
@@ -241,6 +248,10 @@ Structure (every section is filled; tables are {head, rows, note}, rows as array
 Search numbers (the trends table, the services table's CPC column, CPC assumptions and the calendar's click-price months): when <keyword_data> has rows, use them exactly (CPC as the top-of-page bid range, e.g. "$4.10-$12.80"; volume as average monthly searches, summed per theme), say in the table note "Google Keyword Planner, <area>, read <month year>", and name the busiest and quietest months from its 12-month searches. When it's unavailable, give a reasoned range for every cell (published benchmarks for the category, or the closest category) and mark each "[estimated]"; never leave a cell blank or write "not sourced", with a note that says plainly they're estimates from <source> and that Keyword Planner numbers for the area replace them in week 1. Never write "pulled in week 1" in a cell, and never say anything is "confirmed" that isn't in the data.
 Rules: every number comes from the research or is clearly an estimate; never invent a statistic, review count or quote; never name a competitor; no case studies (the proposal carries those); the vertical's advertising rules apply (licensing boards, health or financial claims, Meta special ad categories).`,
       prompt: `${material}\n\n<pricing_reference note="${partner && !partner.show_fees ? "for your understanding only: do NOT show fees" : "exact fees"}">\n${rates}\n</pricing_reference>`,
+    });
+    const gtmRaw = await strategyCall().catch((e) => {
+      console.error("[gtm] strategy, trying once more:", e instanceof Error ? e.message : e);
+      return strategyCall();
     });
     let content: GtmContent = cleanGtm(gtmRaw);
     if (!content.cover.date) content.cover.date = today();
