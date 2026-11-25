@@ -15,6 +15,7 @@ import { projectContext, threadProjectId, visibleProject } from "./projects-serv
 import { connectorTurn } from "./connectors";
 import { channelBrief, channelMaySeeClient, chatTools, clientBrief } from "./tools";
 import { AGENT_LABEL, type AiModel, type Attachment, type Card, type ChatAgent, type ChatEvent, type ToolRun } from "./types";
+import { toolResultContent } from "@/lib/email-attachments-core";
 
 // One turn of Kaizen AI: the person's message (with files) goes to the agent it's about, with the agent's core, skills
 // and playbook, the matching knowledge and team learnings, and (when the thread is pinned to a client) the client's
@@ -487,7 +488,7 @@ export async function runTurn(input: TurnInput): Promise<void> {
             emit({ t: "tool", run: { ...run } });
             for (const k of cards.slice(before)) emit({ t: "card", card: k });
             const s = typeof out === "string" ? out : JSON.stringify(out);
-            return { type: "tool_result" as const, tool_use_id: c.id, content: s.length > 60_000 ? `${s.slice(0, 60_000)}\n…(cut: ask for a narrower range or level)` : s };
+            return { type: "tool_result" as const, tool_use_id: c.id, content: toolResultContent(out, s.length > 60_000 ? `${s.slice(0, 60_000)}\n…(cut: ask for a narrower range or level)` : s) };
           } catch (e) {
             run.ok = false;
             run.ms = Date.now() - t0;

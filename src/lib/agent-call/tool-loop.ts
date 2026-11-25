@@ -2,6 +2,8 @@
 // them (the model asks for a tool, it runs, the result goes back, until it answers). Plain helpers with no keys or
 // network of their own, so the loop is tested with a stand-in model.
 
+import { toolResultContent } from "@/lib/email-attachments-core";
+
 /** A tool the loop can run: the same shape as Kaizen AI's chat tools */
 export type LoopTool = {
   name: string;
@@ -311,7 +313,7 @@ export async function runToolLoop(opts: {
           if (!tool) throw new Error(`No tool called ${c.name}.`);
           const out = await tool.run(c.input);
           runs.push({ name: c.name, input: c.input, ok: true, ms: Date.now() - t0 });
-          return { type: "tool_result", tool_use_id: c.id, content: resultText(out, opts.maxResultChars) };
+          return { type: "tool_result", tool_use_id: c.id, content: toolResultContent(out, resultText(out, opts.maxResultChars)) };
         } catch (e) {
           const error = (e instanceof Error ? e.message : String(e)).slice(0, 400);
           runs.push({ name: c.name, input: c.input, ok: false, ms: Date.now() - t0, error });

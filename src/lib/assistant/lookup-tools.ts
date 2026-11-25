@@ -2,6 +2,7 @@ import "server-only";
 import type { LoopTool } from "@/lib/agent-call/tool-loop";
 import { textAnswer } from "@/lib/kaizen-ai/my-tools";
 import type { GmailMessage } from "@/lib/context/google";
+import { attachmentFields, withImages } from "@/lib/email-attachments-core";
 import { uploadText, type CallUpload } from "./uploads";
 import type { AssistantCtx } from "./tools";
 import type { NeedsConnection } from "@/lib/personal-connections-core";
@@ -139,21 +140,34 @@ export function lookupTools(ctx: AssistantCtx): LoopTool[] {
     },
     {
       name: "read_my_email_thread",
-      description: "Reads one of the person's own email threads whole (thread_id from search_my_email): each email's sender, date and text, quoted history left out.",
+      description: "Reads one of the person's own email threads whole (thread_id from search_my_email): each email's sender, date and text, quoted history left out, and its attachments: every file named, and the pictures in it (screenshots, photos) shown to you to look at.",
       input_schema: { type: "object", properties: { thread_id: { type: "string" }, part: { type: "integer", minimum: 1 }, search: { type: "string" } }, required: ["thread_id"], additionalProperties: false },
       run: async (input) => {
         const id = String(input.thread_id ?? "");
         if (!/^[0-9a-f]{8,24}$/i.test(id)) return { error: "That isn't a thread id from search_my_email." };
-        const { gmailToken, google, plainText, withoutQuotes } = await import("@/lib/context/google");
+        const { gmailToken, google, plainText, threadAttachments, withoutQuotes } = await import("@/lib/context/google");
+        const url = `https://gmail.googleapis.com/gmail/v1/users/me/threads/${id}`;
+        // The thread's files: pictures shown to the model, every file named (Gmail's MCP has no attachments: REST)
+        const files = async (token: string, t: { messages: GmailMessage[] }) => {
+          const got = await threadAttachments(token, t.messages ?? []).catch(() => null);
+          return { fields: attachmentFields(got), images: got?.images ?? [] };
+        };
         try {
           const viaMcp = await (await import("@/lib/workspace-agent")).mcpThreadLines(ctx.me.email, id);
-          if (viaMcp) return { emails: viaMcp.length, ...textAnswer(viaMcp.join("\n\n---\n\n"), input) };
-          const t = await google<{ messages: GmailMessage[] }>(await gmailToken(ctx.me.email), `https://gmail.googleapis.com/gmail/v1/users/me/threads/${id}`, { format: "full" });
+          if (viaMcp) {
+            const token = await gmailToken(ctx.me.email).catch(() => null);
+            const t = token ? await google<{ messages: GmailMessage[] }>(token, url, { format: "full" }).catch(() => null) : null;
+            const f = token && t ? await files(token, t) : { fields: {}, images: [] };
+            return withImages({ emails: viaMcp.length, ...textAnswer(viaMcp.join("\n\n---\n\n"), input), ...f.fields }, f.images);
+          }
+          const token = await gmailToken(ctx.me.email);
+          const t = await google<{ messages: GmailMessage[] }>(token, url, { format: "full" });
           const lines = t.messages.map((m) => {
             const h = (n: string) => m.payload.headers.find((x) => x.name.toLowerCase() === n)?.value ?? "";
             return `From ${h("from")} to ${h("to")} (${new Date(Number(m.internalDate)).toISOString().slice(0, 16).replace("T", " ")})\nSubject: ${h("subject")}\n${withoutQuotes(plainText(m.payload) ?? m.snippet ?? "").trim()}`;
           });
-          return { emails: lines.length, ...textAnswer(lines.join("\n\n---\n\n"), input) };
+          const f = await files(token, t);
+          return withImages({ emails: lines.length, ...textAnswer(lines.join("\n\n---\n\n"), input), ...f.fields }, f.images);
         } catch (e) {
           return { error: `Gmail couldn't open it (${(e instanceof Error ? e.message : String(e)).slice(0, 120)}).` };
         }

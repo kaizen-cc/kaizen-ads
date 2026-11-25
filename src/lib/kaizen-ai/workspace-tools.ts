@@ -2,6 +2,7 @@ import "server-only";
 import type { ChatTool, ToolCtx } from "./tools";
 import { seesAccountNumbers } from "@/lib/ai-access-core";
 import { PRIVATE_WHILE_VIEWING, textAnswer, viewingAs } from "./my-tools";
+import { attachmentFields, withImages } from "@/lib/email-attachments-core";
 import { beforeAfter, describeWrite, driveQuery, eventRow, gmailRow, klaviyoPathOk, scopeHelp, short, type KlaviyoMethod } from "./workspace-core";
 
 // Kaizen AI working where the team works (owner, Nov 19 2026), for everyone and in every chat (the assistant gets every
@@ -55,25 +56,37 @@ export function workspaceTools(ctx: ToolCtx): ChatTool[] {
     },
     {
       name: "read_gmail_thread",
-      description: "Reads one email thread from the person's own Gmail whole (each message: who, when, the text without quoted replies), a part at a time or the passages matching a search. thread_id comes from search_my_gmail.",
+      description: "Reads one email thread from the person's own Gmail whole (each message: who, when, the text without quoted replies), a part at a time or the passages matching a search, and its attachments: every file named, and the pictures in it (screenshots, photos) shown to you to look at. thread_id comes from search_my_gmail.",
       input_schema: { type: "object", properties: { thread_id: { type: "string" }, part: { type: "integer", minimum: 1 }, search: { type: "string" } }, required: ["thread_id"], additionalProperties: false },
       status: () => "Reading the email thread…",
       run: async (input) => {
         if (viewingAs(ctx)) return { error: PRIVATE_WHILE_VIEWING };
         const id = String(input.thread_id ?? "").replace(/[^A-Za-z0-9]/g, "");
         if (!id) return { error: "Which thread? Give a thread_id from search_my_gmail." };
-        const { gmailToken, google, plainText, withoutQuotes } = await import("@/lib/context/google");
+        const { gmailToken, google, plainText, threadAttachments, withoutQuotes } = await import("@/lib/context/google");
+        type Thread = { messages?: { id: string; internalDate?: string; payload: Parameters<typeof plainText>[0] & { headers?: { name: string; value: string }[] } }[] };
+        // The thread's files: pictures shown to the model, every file named (Gmail's MCP has no attachments: REST)
+        const files = async (token: string, t: Thread) => {
+          const got = await threadAttachments(token, t.messages ?? []).catch(() => null);
+          return { fields: attachmentFields(got), images: got?.images ?? [] };
+        };
         return googleOrHelp(async () => {
           const link = `https://mail.google.com/mail/?authuser=${encodeURIComponent(ctx.me.email)}#all/${id}`;
           const viaMcp = await (await import("@/lib/workspace-agent")).mcpThreadLines(ctx.me.email, id);
-          if (viaMcp) return { messages: viaMcp.length, link, ...textAnswer(viaMcp.join("\n\n---\n\n") || "(empty)", input) };
+          if (viaMcp) {
+            const token = await gmailToken(ctx.me.email).catch(() => null);
+            const t = token ? await google<Thread>(token, `${GMAIL}/threads/${id}`, { format: "full" }).catch(() => null) : null;
+            const f = token && t ? await files(token, t) : { fields: {}, images: [] };
+            return withImages({ messages: viaMcp.length, link, ...textAnswer(viaMcp.join("\n\n---\n\n") || "(empty)", input), ...f.fields }, f.images);
+          }
           const token = await gmailToken(ctx.me.email);
-          const t = await google<{ messages?: { id: string; internalDate?: string; payload: Parameters<typeof plainText>[0] & { headers?: { name: string; value: string }[] } }[] }>(token, `${GMAIL}/threads/${id}`, { format: "full" });
+          const t = await google<Thread>(token, `${GMAIL}/threads/${id}`, { format: "full" });
           const msgs = (t.messages ?? []).map((m) => {
             const h = (n: string) => m.payload.headers?.find((x) => x.name.toLowerCase() === n)?.value ?? "";
             return `From ${h("from")} to ${h("to")}${h("cc") ? `, cc ${h("cc")}` : ""} (${m.internalDate ? new Date(Number(m.internalDate)).toISOString().slice(0, 16).replace("T", " ") : h("date")})\nSubject: ${h("subject")}\n${withoutQuotes(plainText(m.payload) ?? "").trim()}`;
           });
-          return { messages: msgs.length, link: `https://mail.google.com/mail/?authuser=${encodeURIComponent(ctx.me.email)}#all/${id}`, ...textAnswer(msgs.join("\n\n---\n\n") || "(empty)", input) };
+          const f = await files(token, t);
+          return withImages({ messages: msgs.length, link, ...textAnswer(msgs.join("\n\n---\n\n") || "(empty)", input), ...f.fields }, f.images);
         }, "https://www.googleapis.com/auth/gmail.readonly");
       },
     },
