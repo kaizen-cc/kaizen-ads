@@ -29,7 +29,7 @@ export default async function ProspectPage({ params }: PageProps<"/sales/[id]">)
   ]);
   // The latest go-to-market strategy, and the white-label partners to brand one for
   const [{ data: g }, { data: partners }] = await Promise.all([
-    db.from("prospect_gtms").select("id, status, stage, partner_key, document_id, notes, error, created_at").eq("prospect_id", p.id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    db.from("prospect_gtms").select("id, status, stage, partner_key, document_id, notes, error, created_at").eq("prospect_id", p.id).order("created_at", { ascending: false }).limit(8),
     db.from("sales_partners").select("key, name, kit_confirmed_at").eq("active", true).order("name"),
   ]);
   // Its email flows and its competitors', from the swipe file
@@ -40,7 +40,11 @@ export default async function ProspectPage({ params }: PageProps<"/sales/[id]">)
     .map((x) => ({ brand: x.name, role: x.source === "prospect" ? "prospect" : "competitor", status: x.status, flows: ((sf ?? []) as { brand_id: string; flow_type: SwipeRow["flows"][number]["type"]; steps: number; cadence: string | null; offers: string | null }[]).filter((f) => f.brand_id === x.id).map((f) => ({ type: f.flow_type, steps: f.steps, cadence: f.cadence, offers: f.offers })) }));
   const { cleanNotes } = await import("@/lib/sales-gtm-core");
   const partnerName = (k: string | null) => ((partners ?? []) as { key: string; name: string }[]).find((x) => x.key === k)?.name ?? null;
-  const gtm = g ? { id: g.id as string, status: g.status as string, stage: (g.stage as string | null) ?? null, partner: partnerName(g.partner_key as string | null), documentId: (g.document_id as string | null) ?? null, notes: g.notes ? cleanNotes(g.notes, partnerName(g.partner_key as string | null)) : null, error: (g.error as string | null) ?? null, createdAt: g.created_at as string } : null;
+  const gtms = g ?? [];
+  // Earlier versions stay downloadable (a re-run never replaces one)
+  const earlier = gtms.slice(1).filter((x) => x.status === "done" && x.document_id).map((x) => ({ documentId: x.document_id as string, partner: partnerName(x.partner_key as string | null), createdAt: x.created_at as string }));
+  const latest = gtms[0];
+  const gtm = latest ? { id: latest.id as string, status: latest.status as string, stage: (latest.stage as string | null) ?? null, partner: partnerName(latest.partner_key as string | null), documentId: (latest.document_id as string | null) ?? null, notes: latest.notes ? cleanNotes(latest.notes, partnerName(latest.partner_key as string | null)) : null, error: (latest.error as string | null) ?? null, createdAt: latest.created_at as string } : null;
   const list: ProspectNote[] = (notes ?? []).map((n) =>
     n.kind === "pitch"
       ? { id: n.id as string, kind: "pitch", title: (n.title as string) ?? "Pitch drafts", at: n.created_at as string, pitch: cleanPitch(n.body) }
@@ -58,7 +62,7 @@ export default async function ProspectPage({ params }: PageProps<"/sales/[id]">)
         calls={(calls ?? []).map((c) => ({ id: c.id as string, title: c.title as string, startsAt: c.starts_at as string, status: c.status as string }))}
         meId={me.id}
         swipeSlot={<SwipeBlock rows={swipeRows} />}
-        gtmSlot={<GtmCard prospectId={p.id} gtm={gtm} relationship={p.relationship} partnerKey={p.partner_key} partners={((partners ?? []) as { key: string; name: string; kit_confirmed_at: string | null }[]).map((x) => ({ key: x.key, name: x.name, confirmed: Boolean(x.kit_confirmed_at) }))} />}
+        gtmSlot={<GtmCard key={gtm?.id ?? "none"} prospectId={p.id} gtm={gtm} earlier={earlier} relationship={p.relationship} partnerKey={p.partner_key} partners={((partners ?? []) as { key: string; name: string; kit_confirmed_at: string | null }[]).map((x) => ({ key: x.key, name: x.name, confirmed: Boolean(x.kit_confirmed_at) }))} />}
       />
     </Suspense>
   );

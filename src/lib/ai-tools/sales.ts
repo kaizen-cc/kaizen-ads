@@ -58,10 +58,10 @@ const webResearch: AiTool = {
 const research: AiTool = {
   name: "research_prospect",
   description:
-    "Executives and leads: the Sales agent researches one business (a prospect) from its website and the open web (Google reviews, social profiles, the Meta Ad Library, the Google Ads Transparency Center, email capture) into a prospect brief: what they sell, locations, positioning, visible marketing, likely gaps, a fit score, and a Kaizen sales strategy: which Kaizen services fit (from the rate card, with prices), the angle, proof from similar Kaizen clients (internal: never named to a prospect), and first-outreach talking points. Saved on the prospect in Sales › Prospects (made if new). Give a name and/or website (and the city if the name is common); prospect: an existing prospect to refresh. Takes one to two minutes: say so first.",
+    "Executives and leads: the Sales agent researches one business (a prospect) from its website and the open web (Google reviews, social profiles, the Meta Ad Library, the Google Ads Transparency Center, email capture) into a prospect brief: what they sell, locations, positioning, visible marketing, likely gaps, a fit score, and a Kaizen sales strategy: which Kaizen services fit (from the rate card, with prices), the angle, proof from similar Kaizen clients (internal: never named to a prospect), and first-outreach talking points. Saved on the prospect in Sales › Prospects (made if new). Give a name and/or website (and the city if the name is common); prospect: an existing prospect to refresh. Takes one to two minutes: say so first. When it finishes, the go-to-market strategy (the client PDF and the internal talking notes) builds by itself in the background: never ask whether they want it. The only question: for a NEW business, when they haven't said and nothing in the conversation shows it, ask once BEFORE researching \"Is this a direct Kaizen deal or a white-label pitch for a partner agency?\" and pass relationship (and partner for white label); a business whose site credits a partner is detected, and a prospect that already has it set needs nothing. Re-running research builds a new version (earlier ones stay).",
   input_schema: {
     type: "object",
-    properties: { name: { type: "string" }, website: { type: "string" }, location: { type: "string" }, question: { type: "string", description: "Anything specific to look into" }, prospect: { type: "string", description: "An existing prospect (id, name or site) to refresh" } },
+    properties: { name: { type: "string" }, website: { type: "string" }, location: { type: "string" }, question: { type: "string", description: "Anything specific to look into" }, prospect: { type: "string", description: "An existing prospect (id, name or site) to refresh" }, relationship: { type: "string", enum: ["direct", "white_label"], description: "Direct Kaizen deal or a white-label pitch for a partner agency, when said" }, partner: { type: "string", description: "White label: the partner agency (e.g. ZenChange)" } },
     additionalProperties: false,
   },
   only: worksSales,
@@ -71,11 +71,14 @@ const research: AiTool = {
     if (v) return v;
     const existing = await prospectFrom(input);
     const { researchProspect } = await import("@/lib/sales-agent");
-    const r = await researchProspect(await createClient(), createAdminClient(), user, { name: str(input.name), website: str(input.website), location: str(input.location), question: str(input.question), prospectId: existing?.id ?? null });
+    const rel = input.relationship === "direct" || input.relationship === "white_label" ? input.relationship : null;
+    const partner = rel === "white_label" ? await (await import("@/lib/sales-gtm")).partnerNamed(createAdminClient(), str(input.partner)) : null;
+    if (rel === "white_label" && !partner) return { ok: false, error: "Which partner agency? It isn't one Kaizen has a brand kit for yet: set it up with partner_kit first." };
+    const r = await researchProspect(await createClient(), createAdminClient(), user, { name: str(input.name), website: str(input.website), location: str(input.location), question: str(input.question), prospectId: existing?.id ?? null, relationship: rel, partnerKey: partner?.key ?? null });
     if (!r.ok) return r;
     const b = cleanBrief(r.prospect.brief);
     chat?.card({ type: "link", title: `Prospect: ${r.prospect.name}`, detail: `Fit ${b.fit_score ?? "?"}/100 · ${b.gaps.length} gaps · ${b.strategy.services.length} services`, href: pageOf(r.prospect.id), cta: "Open the prospect" });
-    return { ok: true, prospect_id: r.prospect.id, name: r.prospect.name, website: r.prospect.website, stage: r.prospect.status, fit_score: b.fit_score, brief: r.text, page: pageOf(r.prospect.id), next: "Offer the pitch drafts (draft_pitch) or a proposal (make_document with prospect: the name)." };
+    return { ok: true, prospect_id: r.prospect.id, name: r.prospect.name, website: r.prospect.website, stage: r.prospect.status, fit_score: b.fit_score, brief: r.text, page: pageOf(r.prospect.id), gtm: r.gtm?.queued ? "The go-to-market strategy (PDF + talking notes) is building in the background now; they'll get a notification when the PDF is ready. Say so in one line." : (r.gtm?.say ?? null), next: "Offer the pitch drafts (draft_pitch) or a proposal (make_document with prospect: the name)." };
   },
 };
 

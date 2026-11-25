@@ -177,7 +177,7 @@ export async function findProspect(db: SupabaseClient, ref: string): Promise<Pro
  * Researches one business into a prospect brief and a Kaizen sales strategy, and keeps it on the prospect (made if
  * new, found by its site or name otherwise). Takes a minute or two: the web first, then the brief.
  */
-export async function researchProspect(db: SupabaseClient, admin: Admin, me: { id: string }, input: { name?: string | null; website?: string | null; location?: string | null; question?: string | null; prospectId?: string | null; sequential?: boolean }): Promise<{ ok: true; prospect: Prospect; text: string; thin?: boolean } | { ok: false; error: string }> {
+export async function researchProspect(db: SupabaseClient, admin: Admin, me: { id: string }, input: { name?: string | null; website?: string | null; location?: string | null; question?: string | null; prospectId?: string | null; sequential?: boolean; relationship?: "direct" | "white_label" | null; partnerKey?: string | null; gtm?: boolean }): Promise<{ ok: true; prospect: Prospect; text: string; thin?: boolean; gtm?: { queued: boolean; say?: string } } | { ok: false; error: string }> {
   const existing = input.prospectId ? await getProspect(db, input.prospectId) : null;
   const name = (input.name ?? existing?.name ?? "").trim();
   const website = cleanSite(input.website) ?? existing?.website ?? null;
@@ -273,7 +273,16 @@ Only what the notes support; never invent a number, review or fact. Estimates sa
   await db.from("prospect_notes").insert({ prospect_id: saved.id, kind: "research", title: input.question ? `Research: ${input.question.slice(0, 120)}` : "Research", body: { brief, notes: notes.slice(0, 40_000), market_notes: market.slice(0, 40_000) }, created_by: me.id });
   // The prospect and its competitors join the swipe file, so their real email flows are captured (src/lib/swipe)
   await followInSwipe(admin, saved, brief).catch(() => undefined);
-  return { ok: true, prospect: saved, text: briefText(saved.name, brief), thin: thinResearch(market) };
+  // Direct or white label, when it was said at research start
+  if (input.relationship) await admin.from("prospects").update({ relationship: input.relationship, partner_key: input.relationship === "white_label" ? (input.partnerKey ?? null) : null }).eq("id", saved.id);
+  // Research done: the go-to-market strategy builds by itself (the GTM job's own research pass passes gtm: false)
+  let gtm: { queued: boolean; say?: string } | undefined;
+  if (input.gtm !== false && !thinResearch(market)) {
+    const { autoGtm } = await import("@/lib/sales-gtm");
+    const g = await autoGtm(admin, { prospectId: saved.id, profileId: me.id, ask: input.question ?? null }).catch((e) => ({ queued: false as const, need: "relationship" as const, say: e instanceof Error ? e.message : String(e) }));
+    gtm = g.queued ? { queued: true } : { queued: false, say: g.say };
+  }
+  return { ok: true, prospect: saved, text: briefText(saved.name, brief), thin: thinResearch(market), gtm };
 }
 
 /** The market pass came back without its research (search limits, errors): don't build on it */

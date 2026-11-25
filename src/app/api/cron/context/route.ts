@@ -127,6 +127,7 @@ function due(step: string | null) {
   if (step === "meta_tokens") return true; // daily (vercel.json): each Business Manager's Meta token checked, execs told when one stops working
   if (step === "workspace_retention") return true; // daily (vercel.json): old email bodies cut to their gist, closed owed replies' copies dropped
   if (step === "connectors") return true; // daily (vercel.json): the MCP registry's remote servers into the connector catalog, offered ones kept current
+  if (step === "gtm_run") return true; // started the moment a prospect's research finishes (?id=<gtm>): its go-to-market strategy, one pass
   if (step === "bible_write") return true; // started by a Bible build once its research is in (?client=<id>)
   if (step === "presentation_write") return true; // started once a Bible is written (?client=<id>): its client presentation, drafted (never sent)
   if (step === "presentations") return true; // every 10 minutes (vercel.json): a new client's presentation, written and sent
@@ -494,6 +495,11 @@ export async function GET(request: Request) {
       const { googleConfigured, pullEmailHistory } = await import("@/lib/context/google");
       if (!googleConfigured()) return Response.json({ skipped: "Google not set up" });
       return Response.json(await pullEmailHistory(admin, Date.now() + 300_000));
+    }
+    if (step === "gtm_run") {
+      const id = new URL(request.url).searchParams.get("id");
+      if (!id) return Response.json({ error: "id missing" }, { status: 400 });
+      return Response.json(await (await import("@/lib/sales-gtm")).runGtm(admin, id));
     }
     if (step === "bible_write") {
       const id = new URL(request.url).searchParams.get("client");

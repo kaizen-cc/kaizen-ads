@@ -7,7 +7,7 @@ import type { CallReview, PitchDrafts, ProspectBrief, ProspectStatus } from "@/l
 import { CallButton } from "@/components/call-button";
 import { ModeBadge } from "./gtm-card";
 import { pushParams, useParam } from "@/lib/url-state";
-import { deleteNoteAction, pitchAction, researchAction, reviewAction, updateAction, wonAction } from "../actions";
+import { deleteNoteAction, pitchAction, researchAction, researchAgainAction, reviewAction, updateAction, wonAction } from "../actions";
 import { ArchiveButton, FitBadge, StageSelect, UnarchiveButton } from "../sales-view";
 
 // One prospect: its research brief and Kaizen strategy, the outreach drafts and call reviews, and its stage, owner and
@@ -233,9 +233,13 @@ function Rerun({ p, label }: { p: P; label: string }) {
         onClick={() =>
           start(async () => {
             setError(null);
-            const r = await researchAction({ prospectId: p.id, name: p.name, website: p.website ?? undefined, location: p.location ?? undefined });
+            // Researched before: research and the strategy run together in the background (the strategy card shows it)
+            const r = p.researchedAt ? await researchAgainAction(p.id) : await researchAction({ prospectId: p.id, name: p.name, website: p.website ?? undefined, location: p.location ?? undefined });
             if (!r.ok) setError(r.error);
-            else router.refresh();
+            else {
+              router.refresh();
+              if ("background" in r && r.background) document.getElementById("gtm")?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }
           })
         }
         className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-full bg-brand px-5 text-[14px] font-medium text-white hover:bg-brand-hover disabled:opacity-60 sm:w-auto md:h-9 md:text-[13px]"

@@ -22,9 +22,10 @@ export default async function SalesPage({ searchParams }: PageProps<"/sales">) {
   // The executives only for now (viewing as someone else, it's that person's view)
   if (!seesSalesPages(me)) notFound();
   const db = await createClient();
-  const [{ data: rows }, { data: people }] = await Promise.all([
+  const [{ data: rows }, { data: people }, { data: partners }] = await Promise.all([
     db.from("prospects").select("id, name, website, industry, location, status, fit_score, fit_reason, owner_id, researched_at, updated_at, brief, archived_at, archived_by, archive_reason, archive_note").order("updated_at", { ascending: false }).limit(500),
     db.from("profiles").select("id, full_name").eq("is_active", true).or("is_exec.eq.true,is_lead.eq.true").order("full_name"),
+    db.from("sales_partners").select("key, name").eq("active", true).order("name"),
   ]);
   const names = new Map((people ?? []).map((p) => [p.id as string, p.full_name as string]));
   const prospects: ProspectRow[] = (rows ?? []).map((p) => ({
@@ -54,7 +55,7 @@ export default async function SalesPage({ searchParams }: PageProps<"/sales">) {
   const searches = [...(focused ? [focused] : []), ...(open ?? []).filter((x) => x.id !== focus)].map((x) => searchView(x as Record<string, unknown>));
   return (
     <Suspense>
-      <SalesView prospects={prospects} meId={me.id} searches={searches.length ? <div className="grid min-w-0 gap-3">{searches.map((x) => <SearchCard key={x.id} initial={x} focused={x.id === focus} />)}</div> : null} />
+      <SalesView prospects={prospects} meId={me.id} partners={((partners ?? []) as { key: string; name: string }[])} searches={searches.length ? <div className="grid min-w-0 gap-3">{searches.map((x) => <SearchCard key={x.id} initial={x} focused={x.id === focus} />)}</div> : null} />
     </Suspense>
   );
 }

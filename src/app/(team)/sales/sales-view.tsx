@@ -156,7 +156,7 @@ export function StageSelect({ id, status, onDone }: { id: string; status: Prospe
   );
 }
 
-export function SalesView({ prospects, meId, searches = null }: { prospects: ProspectRow[]; meId: string; searches?: React.ReactNode }) {
+export function SalesView({ prospects, meId, searches = null, partners = [] }: { prospects: ProspectRow[]; meId: string; searches?: React.ReactNode; partners?: { key: string; name: string }[] }) {
   const stage = useParam("stage");
   const all = useParam("all") === "1";
   const panel = useParam("new");
@@ -201,7 +201,7 @@ export function SalesView({ prospects, meId, searches = null }: { prospects: Pro
         ))}
       </div>
 
-      {panel === "research" && <ResearchPanel />}
+      {panel === "research" && <ResearchPanel partners={partners} />}
       {panel === "list" && <FindPanel />}
       {panel === "add" && <AddPanel />}
 
@@ -322,12 +322,12 @@ function Submit({ pending, label, busy }: { pending: boolean; label: string; bus
   );
 }
 
-function ResearchPanel() {
+function ResearchPanel({ partners }: { partners: { key: string; name: string }[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   return (
-    <Panel title="Research a business" sub="Its site, reviews, social, and whether it runs Meta or Google ads, turned into a brief and a Kaizen strategy: the services that fit, the angle, proof from similar clients, and talking points. Takes a minute or two.">
+    <Panel title="Research a business" sub="Its site, reviews, social, and whether it runs Meta or Google ads, turned into a brief and a Kaizen strategy: the services that fit, the angle, proof from similar clients, and talking points. Takes a minute or two, then the go-to-market strategy PDF builds by itself.">
       <form
         className="grid gap-3 md:grid-cols-3"
         onSubmit={(e) => {
@@ -335,16 +335,28 @@ function ResearchPanel() {
           const f = new FormData(e.currentTarget);
           setError(null);
           start(async () => {
-            const r = await researchAction({ name: String(f.get("name") ?? ""), website: String(f.get("website") ?? ""), location: String(f.get("location") ?? ""), question: String(f.get("question") ?? "") });
+            const r = await researchAction({ name: String(f.get("name") ?? ""), website: String(f.get("website") ?? ""), location: String(f.get("location") ?? ""), question: String(f.get("question") ?? ""), mode: String(f.get("mode") ?? "") });
             if (!r.ok) setError(r.error);
-            else router.push(`/sales/${r.id}`);
+            else router.push(`/sales/${r.id}#gtm`);
           });
         }}
       >
         <input name="name" placeholder="Business name" className={field} autoComplete="off" />
         <input name="website" placeholder="Website" inputMode="url" className={field} autoComplete="off" />
         <input name="location" placeholder="City (if the name is common)" className={field} autoComplete="off" />
-        <input name="question" placeholder="Anything to look into? (optional)" className={`${field} md:col-span-3`} autoComplete="off" />
+        <input name="question" placeholder="Anything to look into? (optional)" className={`${field} md:col-span-2`} autoComplete="off" />
+        <label className="grid">
+          <span className="sr-only">Direct Kaizen deal or white-label pitch for a partner agency</span>
+          <select name="mode" defaultValue="" className={field}>
+            <option value="">Direct or white label? (detect it)</option>
+            <option value="direct">Direct · Kaizen branding</option>
+            {partners.map((p) => (
+              <option key={p.key} value={`p:${p.key}`}>
+                White label · {p.name}
+              </option>
+            ))}
+          </select>
+        </label>
         <div className="grid gap-2 md:col-span-3 md:flex md:items-center">
           <Submit pending={pending} label="Research" busy="Researching… (a minute or two)" />
           {error && <p className="text-[13px] text-bad">{error}</p>}

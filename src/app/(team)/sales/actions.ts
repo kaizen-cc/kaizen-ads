@@ -27,15 +27,49 @@ function refresh(id?: string) {
   if (id) revalidatePath(`/sales/${id}`);
 }
 
-export async function researchAction(input: { name?: string; website?: string; location?: string; question?: string; prospectId?: string }): Promise<Result<{ id: string }>> {
+export async function researchAction(input: { name?: string; website?: string; location?: string; question?: string; prospectId?: string; mode?: string }): Promise<Result<{ id: string }>> {
   const g = await gate();
   if ("error" in g) return { ok: false, error: g.error };
   try {
     const { researchProspect } = await import("@/lib/sales-agent");
-    const r = await researchProspect(await createClient(), createAdminClient(), g.me, { name: input.name ?? null, website: input.website ?? null, location: input.location ?? null, question: input.question ?? null, prospectId: input.prospectId ?? null });
+    const r = await researchProspect(await createClient(), createAdminClient(), g.me, { name: input.name ?? null, website: input.website ?? null, location: input.location ?? null, question: input.question ?? null, prospectId: input.prospectId ?? null, ...modeOf(input.mode) });
     if (!r.ok) return r;
     refresh(r.prospect.id);
     return { ok: true, id: r.prospect.id };
+  } catch (e) {
+    return failed(e);
+  }
+}
+
+/** The research form's "Direct or white label" ("" = detect it; "direct"; "p:<partner key>") */
+function modeOf(mode: string | undefined): { relationship?: "direct" | "white_label"; partnerKey?: string | null } {
+  if (mode === "direct") return { relationship: "direct", partnerKey: null };
+  if (mode?.startsWith("p:")) return { relationship: "white_label", partnerKey: mode.slice(2) };
+  return {};
+}
+
+/**
+ * Research again from the prospect page: one background job does the research and then the go-to-market strategy (one
+ * progress bar, one notification when the PDF is ready). When direct-or-white-label isn't known yet, the research runs
+ * here and the strategy builds as soon as that's set.
+ */
+export async function researchAgainAction(prospectId: string): Promise<Result<{ background: boolean }>> {
+  const g = await gate();
+  if ("error" in g) return { ok: false, error: g.error };
+  try {
+    const { autoGtm } = await import("@/lib/sales-gtm");
+    const q = await autoGtm(createAdminClient(), { prospectId, profileId: g.me.id, refresh: true });
+    if (q.queued) {
+      refresh(prospectId);
+      return { ok: true, background: true };
+    }
+    const { researchProspect, getProspect } = await import("@/lib/sales-agent");
+    const p = await getProspect(await createClient(), prospectId);
+    if (!p) return { ok: false, error: "That prospect isn't there anymore." };
+    const r = await researchProspect(await createClient(), createAdminClient(), g.me, { prospectId, name: p.name, website: p.website, location: p.location });
+    if (!r.ok) return r;
+    refresh(prospectId);
+    return { ok: true, background: false };
   } catch (e) {
     return failed(e);
   }
@@ -251,6 +285,15 @@ export async function setRelationshipAction(prospectId: string, relationship: "d
   const { updateProspect } = await import("@/lib/sales-agent");
   const r = await updateProspect(await createClient(), prospectId, { relationship, partner_key: relationship === "white_label" ? partnerKey : null });
   if (!r.ok) return r;
+  // Researched already: the strategy builds now in the branding just set (a new version when the branding changed)
+  const admin = createAdminClient();
+  const { data: p } = await admin.from("prospects").select("researched_at").eq("id", prospectId).maybeSingle();
+  const { data: last } = await admin.from("prospect_gtms").select("partner_key, status").eq("prospect_id", prospectId).order("created_at", { ascending: false }).limit(1).maybeSingle();
+  const same = last && last.status !== "failed" && last.status !== "cancelled" && (last.partner_key ?? null) === (relationship === "white_label" ? partnerKey : null);
+  if (p?.researched_at && !same) {
+    const { autoGtm } = await import("@/lib/sales-gtm");
+    await autoGtm(admin, { prospectId, profileId: g.me.id });
+  }
   refresh(prospectId);
   return { ok: true };
 }

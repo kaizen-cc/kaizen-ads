@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { briefText, cleanBrief, type ProspectBrief } from "@/lib/sales-core";
-import { BASIC_CREATIVE, cleanGtm, shortName, cleanNotes, feeMentions, GTM_FILE, kaizenMentions, scrubKaizen, tierPlan, VERTICAL_FOCUS, verticalOf, type CaseStudy, type GtmContent, type GtmNotes, type Partner } from "@/lib/sales-gtm-core";
+import { BASIC_CREATIVE, cleanGtm, RELATIONSHIP_QUESTION, shortName, cleanNotes, feeMentions, GTM_FILE, kaizenMentions, scrubKaizen, tierPlan, VERTICAL_FOCUS, verticalOf, type CaseStudy, type GtmContent, type GtmNotes, type Partner } from "@/lib/sales-gtm-core";
 
 // The Sales agent's go-to-market engine (Nov 25 2026: the CEO's Loom and his "Proposal Builder" project). For one
 // prospect it makes two things, as a background job (queued from the prospect page, the assistant or the Sales agent;
@@ -71,12 +71,41 @@ export async function relationshipOf(admin: Admin, p: { relationship?: string | 
   return hit ? { relationship: "white_label", partner: hit, detected: true } : null;
 }
 
-export async function queueGtm(admin: Admin, o: { prospectId: string; profileId: string; partnerKey?: string | null; ask?: string | null }): Promise<{ id: string; existing: boolean }> {
+export async function queueGtm(admin: Admin, o: { prospectId: string; profileId: string; partnerKey?: string | null; ask?: string | null; researched?: boolean; refresh?: boolean }): Promise<{ id: string; existing: boolean }> {
   const { data: open } = await admin.from("prospect_gtms").select("id").eq("prospect_id", o.prospectId).in("status", ["queued", "running"]).limit(1).maybeSingle();
   if (open) return { id: open.id as string, existing: true };
-  const { data, error } = await admin.from("prospect_gtms").insert({ prospect_id: o.prospectId, profile_id: o.profileId, partner_key: o.partnerKey ?? null, ask: o.ask?.slice(0, 2000) ?? null }).select("id").single();
+  // Earlier versions stay (their rows and PDFs); the prospect shows the newest and lists the rest
+  const { data, error } = await admin.from("prospect_gtms").insert({ prospect_id: o.prospectId, profile_id: o.profileId, partner_key: o.partnerKey ?? null, ask: o.ask?.slice(0, 2000) ?? null, stage: o.researched ? "researched" : o.refresh ? "refresh" : null }).select("id").single();
   if (error || !data) throw new Error(error?.message ?? "The go-to-market strategy couldn't be started.");
+  await kickGtm(data.id as string);
   return { id: data.id as string, existing: false };
+}
+
+/**
+ * Starts a GTM pass now, in a run of its own (the cron route's gtm_run step, up to its 800s limit): the request is let go
+ * once sent and that run carries on by itself. The cron's five-minute pickup stays the fallback.
+ */
+export async function kickGtm(id: string) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return;
+  const base = (process.env.NEXT_PUBLIC_SITE_URL || "https://ads.kaizenmarketing.agency").replace(/\/$/, "");
+  await fetch(`${base}/api/cron/context?step=gtm_run&id=${encodeURIComponent(id)}`, { headers: { authorization: `Bearer ${secret}` }, signal: AbortSignal.timeout(4000), cache: "no-store" }).catch(() => {});
+}
+
+/**
+ * Research finished (on the page, from the assistant, re-run, or before a sales call): the go-to-market strategy builds
+ * by itself, no "want it?" step. It follows the prospect's direct-or-white-label setting (stored, or detected from the
+ * research); the only thing that can hold it is that one question when neither says, asked at research start.
+ */
+export async function autoGtm(admin: Admin, o: { prospectId: string; profileId: string; ask?: string | null; refresh?: boolean }): Promise<{ queued: true; id: string; existing: boolean } | { queued: false; need: "relationship" | "kit"; say: string }> {
+  const { data: p } = await admin.from("prospects").select("id, relationship, partner_key, brief").eq("id", o.prospectId).maybeSingle();
+  if (!p) return { queued: false, need: "relationship", say: "The prospect isn't there." };
+  const rel = await relationshipOf(admin, p as { id: string; relationship: string | null; partner_key: string | null; brief: unknown });
+  if (!rel) return { queued: false, need: "relationship", say: `${RELATIONSHIP_QUESTION} The strategy builds as soon as that's set.` };
+  if (rel.detected) await admin.from("prospects").update({ relationship: rel.relationship, partner_key: rel.partner?.key ?? null }).eq("id", o.prospectId);
+  if (rel.partner && !rel.partner.kit_confirmed_at) return { queued: false, need: "kit", say: `${rel.partner.name}'s brand kit isn't confirmed yet (partner_kit); the strategy builds once it is.` };
+  const q = await queueGtm(admin, { prospectId: o.prospectId, profileId: o.profileId, partnerKey: rel.partner?.key ?? null, ask: o.ask ?? null, researched: !o.refresh, refresh: o.refresh });
+  return { queued: true, ...q };
 }
 
 const today = () => new Date().toLocaleDateString("en-US", { timeZone: "America/New_York", month: "long", year: "numeric" });
@@ -98,10 +127,10 @@ export async function runGtm(admin: Admin, id: string): Promise<{ ran: boolean; 
     // Research once per job (a job already researched goes straight to writing, so it can never loop): when there's none,
     // it has no market analysis, or it's over two weeks old
     const researched = job.stage === "researched";
-    const stale = !researched && (!brief0 || !(brief0.market?.geo || brief0.market?.competitors?.length) || !p.researched_at || Date.now() - Date.parse(p.researched_at) > 14 * 86_400_000);
+    const stale = !researched && (job.stage === "refresh" || !brief0 || !(brief0.market?.geo || brief0.market?.competitors?.length) || !p.researched_at || Date.now() - Date.parse(p.researched_at) > 14 * 86_400_000);
     if (stale) {
       await set({ stage: "researching" });
-      const r = await researchProspect(admin, admin, { id: owner }, { prospectId: p.id, name: p.name, website: p.website, location: p.location, question: job.ask as string | null, sequential: true });
+      const r = await researchProspect(admin, admin, { id: owner }, { prospectId: p.id, name: p.name, website: p.website, location: p.location, question: job.ask as string | null, sequential: true, gtm: false });
       if (!r.ok) throw new Error(r.error);
       // The web search came back empty (limits, errors): try again in a later pass rather than write a thin strategy
       if (r.thin) {
@@ -109,8 +138,9 @@ export async function runGtm(admin: Admin, id: string): Promise<{ ran: boolean; 
         await set({ status: "queued", stage: null, error: "The market research came back thin: retrying" });
         return { ran: true, ok: false };
       }
-      // Research done: the writing runs in the next pass (each pass stays well inside a function's time limit)
+      // Research done: the writing runs in the next pass, started now (each pass stays well inside a function's time limit)
       await set({ status: "queued", stage: "researched" });
+      await kickGtm(id);
       return { ran: true, ok: true };
     }
     const brief = cleanBrief(p.brief) as ProspectBrief;
@@ -208,10 +238,11 @@ Rules: every number comes from the research or is clearly an estimate; never inv
 export async function pickUpGtms(admin: Admin) {
   const stale = new Date(Date.now() - 90_000).toISOString();
   const dead = new Date(Date.now() - 20 * 60_000).toISOString();
-  const { data: stuck } = await admin.from("prospect_gtms").select("id, attempts").eq("status", "running").lt("started_at", dead).limit(5);
+  const { data: stuck } = await admin.from("prospect_gtms").select("id, attempts, stage").eq("status", "running").lt("started_at", dead).limit(5);
   for (const s of stuck ?? []) {
-    if ((s.attempts as number) >= 2) await admin.from("prospect_gtms").update({ status: "failed", error: "It took too long. Try again.", finished_at: new Date().toISOString() }).eq("id", s.id);
-    else await admin.from("prospect_gtms").update({ status: "queued", stage: null }).eq("id", s.id).eq("status", "running");
+    if ((s.attempts as number) >= 3) await admin.from("prospect_gtms").update({ status: "failed", error: "It took too long. Try again.", finished_at: new Date().toISOString() }).eq("id", s.id);
+    // Died while writing: the research is in, so the retry goes straight to writing
+    else await admin.from("prospect_gtms").update({ status: "queued", stage: s.stage && s.stage !== "researching" ? "researched" : null }).eq("id", s.id).eq("status", "running");
   }
   const { data: queued } = await admin.from("prospect_gtms").select("id").eq("status", "queued").lt("created_at", stale).order("created_at").limit(1);
   let ran = 0;
