@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { modeLabel, TAG_LABEL, type GtmNotes } from "@/lib/sales-gtm-core";
+import { prospectStamp } from "@/lib/sales-dates";
 import { gtmPdfAction, gtmStatusAction, setRelationshipAction, startGtmAction } from "../actions";
 
 // The prospect's go-to-market strategy, inside the Research view (no tab of its own): build it (Kaizen's branding or a
@@ -109,7 +110,7 @@ export function GtmCard({ prospectId, gtm, earlier = [], partners, relationship,
             {earlier.map((e) => (
               <li key={e.documentId}>
                 <button type="button" onClick={() => download(e.documentId)} disabled={pending} className="flex min-h-11 w-full items-center justify-between gap-2 rounded-[12px] px-2 text-left text-[13.5px] hover:bg-surface-2 md:min-h-9">
-                  <span className="min-w-0 truncate">{new Date(e.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+                  <span className="min-w-0 truncate">{prospectStamp(e.createdAt)}</span>
                   <span className="shrink-0 text-[12px] text-faint">{e.partner ? `${e.partner} branding` : "Kaizen branding"} · Download</span>
                 </button>
               </li>

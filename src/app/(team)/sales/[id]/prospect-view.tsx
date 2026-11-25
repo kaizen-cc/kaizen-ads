@@ -7,6 +7,7 @@ import type { CallReview, PitchDrafts, ProspectBrief, ProspectStatus } from "@/l
 import { CallButton } from "@/components/call-button";
 import { ModeBadge } from "./gtm-card";
 import { pushParams, useParam } from "@/lib/url-state";
+import { prospectDay } from "@/lib/sales-dates";
 import { deleteNoteAction, pitchAction, researchAction, researchAgainAction, reviewAction, updateAction, wonAction } from "../actions";
 import { ArchiveButton, FitBadge, StageSelect, UnarchiveButton } from "../sales-view";
 
@@ -20,7 +21,7 @@ export type ProspectNote =
 
 type P = { id: string; name: string; website: string | null; industry: string | null; location: string | null; status: ProspectStatus; fit: number | null; fitReason: string | null; ownerId: string | null; notes: string | null; lostReason: string | null; researchedAt: string | null; source: string | null; mode?: { relationship: string | null; partner: string | null }; archived?: { at: string; by: string | null; label: string } | null };
 
-const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+const day = prospectDay;
 const host = (url: string) => url.replace(/^https?:\/\//, "").replace(/\/$/, "");
 const field = "w-full min-w-0 rounded-[14px] border border-line bg-bg px-3.5 text-[16px] text-fg placeholder:text-faint md:text-[14px]";
 
