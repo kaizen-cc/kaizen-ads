@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { mimeMessage, rawEmail } from "@/lib/assistant/messages";
 import { fixGmailLink } from "@/lib/email-filters";
-import { composeScopeMessage, draftError, gmailDraftLink, serviceAccountClientId, slackDmPlace, slackMessageLink, slackNewPlace, slackSelfNote, slackSelfText } from "@/lib/assistant/platform-drafts-core";
+import { composeScopeMessage, draftError, draftViaMcp, gmailDraftLink, serviceAccountClientId, slackDmPlace, slackMessageLink, slackNewPlace, slackSelfNote, slackSelfText } from "@/lib/assistant/platform-drafts-core";
 
 const decode = (raw: string) => Buffer.from(raw.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
 
@@ -137,5 +137,29 @@ describe("old Gmail draft links", () => {
     expect(fixGmailLink("https://mail.google.com/mail/u/owner%40kaizen.test/#drafts?compose=1a208b035413405c")).toBe("https://mail.google.com/mail/?authuser=owner%40kaizen.test#drafts?compose=1a208b035413405c");
     expect(fixGmailLink("https://mail.google.com/mail/u/owner@kaizen.test/#drafts")).toBe("https://mail.google.com/mail/?authuser=owner%40kaizen.test#drafts");
     expect(fixGmailLink("https://example.com/x")).toBe("https://example.com/x");
+  });
+});
+
+describe("draftViaMcp", () => {
+  it("keeps a reply on REST so Gmail files the draft inside its thread", () => {
+    expect(draftViaMcp({ threadId: "18c2f", inReplyTo: "<abc@mail.gmail.com>", references: null }, 0)).toBe(false);
+    expect(draftViaMcp({ threadId: "18c2f" }, 0)).toBe(false);
+    expect(draftViaMcp({ threadId: null, inReplyTo: "<abc@mail.gmail.com>" }, 0)).toBe(false);
+  });
+  it("keeps a draft with files on REST", () => {
+    expect(draftViaMcp({ threadId: null }, 1)).toBe(false);
+  });
+  it("lets a new email with no files go through MCP", () => {
+    expect(draftViaMcp({ threadId: null, inReplyTo: null, references: null }, 0)).toBe(true);
+    expect(draftViaMcp({ threadId: "  " }, 0)).toBe(true);
+  });
+});
+
+describe("a reply draft's raw email", () => {
+  it("carries In-Reply-To and References for the thread", () => {
+    const raw = rawEmail({ from: "A <a@x.com>", to: "b@y.com", cc: null, subject: "Re: Weekly Email Performance Breakdown", body: "Hi", inReplyTo: "<m2@mail.gmail.com>", references: "<m1@mail.gmail.com>" });
+    const text = Buffer.from(raw.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
+    expect(text).toContain("In-Reply-To: <m2@mail.gmail.com>");
+    expect(text).toContain("References: <m1@mail.gmail.com> <m2@mail.gmail.com>");
   });
 });
