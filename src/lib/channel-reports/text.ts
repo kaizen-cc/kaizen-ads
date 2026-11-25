@@ -116,7 +116,7 @@ function detailText(m: EmailMetrics): string {
   }
   if (d.deliverability) {
     const v = d.deliverability;
-    out.push(`Deliverability (campaign email): bounce ${was(v.bounce, (x) => pct(x, 2))}, spam complaints ${was(v.spam, (x) => pct(x, 3))}, unsubscribes ${was(v.unsub, (x) => pct(x, 2))}.`);
+    out.push(`Deliverability (email campaigns sent ${m.main.label} only, automated emails not included, so if you quote a rate say it's for this period's campaigns; it won't match a 30-day or whole-account figure): bounce ${was(v.bounce, (x) => pct(x, 2))}, spam complaints ${was(v.spam, (x) => pct(x, 3))}, unsubscribes ${was(v.unsub, (x) => pct(x, 2))}.`);
   }
   if (m.flags.length) out.push(`Deliverability flags:\n${m.flags.map((f) => `- [${f.tone === "bad" ? "red" : "amber"}] ${f.text}`).join("\n")}`);
   if (d.subscribers) {

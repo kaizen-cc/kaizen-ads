@@ -155,6 +155,19 @@ function ordersIn(i: DetailInput, w: Win): number | null {
   return camp || flows ? Math.round(camp + flows) : null;
 }
 
+/**
+ * What the report's deliverability rates count, in the client's words: email campaigns sent in the report's own dates,
+ * never automated emails. Klaviyo's deliverability tab (the last 30 days, the whole account) and the KPI board (the
+ * last 30 days of campaigns) read over other windows, so the report says its window and base to keep them apart.
+ */
+export function deliverabilityBasis(label: string, recipients: number | null, source?: string | null): { base: string; note: string | null } {
+  return {
+    base: `Email campaigns sent ${label}${recipients != null ? `, ${recipients.toLocaleString("en-US")} recipients` : ""}. Automated emails not included.`,
+    // Another provider (Brevo, Customer.io) has no such tab to tell apart
+    note: !source || /klaviyo/i.test(source) ? "Klaviyo's deliverability tab covers the last 30 days and includes automated emails, so its rates can differ." : null,
+  };
+}
+
 function deliverabilityOf(list: CampaignLite[]) {
   const em = list.filter((c) => c.channel !== "sms");
   const recipients = sum(em, (c) => c.recipients);
