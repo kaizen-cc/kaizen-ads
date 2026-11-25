@@ -197,3 +197,38 @@ export async function unarchiveAction(id: string): Promise<Result> {
   refresh(id);
   return { ok: true };
 }
+
+/** Starts a go-to-market strategy for a prospect in the background (Kaizen's branding, or a white-label partner's) */
+export async function startGtmAction(prospectId: string, partnerKey: string | null, ask: string): Promise<Result<{ id: string }>> {
+  const g = await gate();
+  if ("error" in g) return { ok: false, error: g.error };
+  try {
+    const { queueGtm } = await import("@/lib/sales-gtm");
+    const q = await queueGtm(createAdminClient(), { prospectId, profileId: g.me.id, partnerKey: partnerKey || null, ask: ask.trim() || null });
+    refresh(prospectId);
+    return { ok: true, id: q.id };
+  } catch (e) {
+    return failed(e);
+  }
+}
+
+/** A go-to-market strategy's state (the page polls it while it's built) */
+export async function gtmStatusAction(id: string): Promise<Result<{ status: string; stage: string | null }>> {
+  const g = await gate();
+  if ("error" in g) return { ok: false, error: g.error };
+  const { data } = await (await createClient()).from("prospect_gtms").select("status, stage").eq("id", id).maybeSingle();
+  if (!data) return { ok: false, error: "It isn't there." };
+  return { ok: true, status: data.status as string, stage: (data.stage as string | null) ?? null };
+}
+
+/** A short-lived link to download the GTM PDF */
+export async function gtmPdfAction(documentId: string): Promise<Result<{ url: string }>> {
+  const g = await gate();
+  if ("error" in g) return { ok: false, error: g.error };
+  // Execs only (the gate): any GTM PDF, whoever made it
+  const { data: d } = await createAdminClient().from("kaizen_documents").select("bucket, path, file_name").eq("id", documentId).eq("kind", "gtm").maybeSingle();
+  if (!d?.path) return { ok: false, error: "That PDF isn't there." };
+  const { data, error } = await createAdminClient().storage.from(d.bucket as string).createSignedUrl(d.path as string, 600, { download: (d.file_name as string) || true });
+  if (error || !data) return { ok: false, error: error?.message ?? "The link couldn't be made." };
+  return { ok: true, url: data.signedUrl };
+}

@@ -114,6 +114,7 @@ function due(step: string | null) {
   if (step === "owed") return !["Sat", "Sun"].includes(weekday) && hour >= 8 && hour <= 19; // every 15 minutes (vercel.json): unanswered messages, nudged then escalated
   if (step === "approvals") return businessHours; // every 15 minutes (vercel.json), weekdays 8am to 6pm: creative with the client posted, reminded at 24 and 48 business hours, chased or auto-approved
   if (step === "direction") return businessHours; // every 30 minutes (vercel.json), weekdays 8am to 6pm: a client changing direction, caught against their open work
+  if (step === "sales_jobs") return true; // every 5 minutes (vercel.json): prospect searches and go-to-market strategies in the background
   if (step === "launches") return true; // every 5 minutes (vercel.json): launch what reached Ready to launch, complete what was turned on
 
   if (step === "market") return hour === 8;
@@ -437,14 +438,20 @@ export async function GET(request: Request) {
       return Response.json({ audits, sprints, suggestions, socialAudits, socialSprints });
     }
     if (step === "sprints") return Response.json(await (await import("@/lib/sprints")).checkDueSprints(admin));
+    // Sales background work: prospect searches a cut-off server left behind, and go-to-market strategies (research one
+    // pass, writing the next), so a long one never holds up the launches
+    if (step === "sales_jobs") {
+      const fail = (e: unknown) => ({ error: e instanceof Error ? e.message : String(e) });
+      const prospectSearches = await (await import("@/lib/prospect-search")).pickUpProspectSearches(admin).catch(fail);
+      const gtms = await (await import("@/lib/sales-gtm")).pickUpGtms(admin).catch(fail);
+      return Response.json({ prospectSearches, gtms });
+    }
     if (step === "launches") {
       // Every 5 minutes: also pick up background briefs a cut-off server left queued or half-written
       const briefJobs = await (await import("@/lib/brief-jobs")).pickUpBriefJobs(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
       // …and finish Higgsfield images and videos nobody's page is waiting on (copied in, the person told)
       const mediaJobs = await (await import("@/lib/ai-media-jobs")).pickUpMediaJobs(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
-      // …and prospect searches a cut-off server left queued or half-run
-      const prospectSearches = await (await import("@/lib/prospect-search")).pickUpProspectSearches(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
-      return Response.json({ ...(await (await import("@/lib/launcher")).launchStep(admin)), briefJobs, mediaJobs, prospectSearches });
+      return Response.json({ ...(await (await import("@/lib/launcher")).launchStep(admin)), briefJobs, mediaJobs });
     }
     if (step === "creative_drive") {
       // The queue first (new creative), then files already in Drive moved to where the layout says (avatar / angle / concept)

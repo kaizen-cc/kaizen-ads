@@ -87,7 +87,7 @@ const STRS = { type: "array", items: STR };
 const BRIEF_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["name", "website", "industry", "summary", "sells", "locations", "positioning", "marketing", "gaps", "fit_score", "fit_reason", "strategy", "contacts", "sources"],
+  required: ["name", "website", "industry", "summary", "sells", "locations", "positioning", "marketing", "market", "tiers", "gaps", "fit_score", "fit_reason", "strategy", "contacts", "sources"],
   properties: {
     name: STR,
     website: STR,
@@ -118,8 +118,36 @@ const BRIEF_SCHEMA = {
     },
     contacts: { type: "array", items: { type: "object", additionalProperties: false, required: ["name", "role", "where"], properties: { name: STR, role: STR, where: STR } } },
     sources: STRS,
+    market: {
+      type: "object",
+      additionalProperties: false,
+      required: ["geo", "avatar", "tam", "competitors", "trends", "benchmarks", "seasonality", "email_intel"],
+      properties: {
+        geo: STR,
+        avatar: STR,
+        tam: STR,
+        competitors: { type: "array", items: { type: "object", additionalProperties: false, required: ["name", "channels", "funnel", "messaging", "offer", "usp"], properties: { name: STR, channels: STR, funnel: STR, messaging: STR, offer: STR, usp: STR } } },
+        trends: { type: "array", items: { type: "object", additionalProperties: false, required: ["keyword", "cpc", "volume", "note"], properties: { keyword: STR, cpc: STR, volume: STR, note: STR } } },
+        benchmarks: { type: "array", items: { type: "object", additionalProperties: false, required: ["platform", "metric", "value", "source", "proxy"], properties: { platform: STR, metric: STR, value: STR, source: STR, proxy: STR } } },
+        seasonality: STR,
+        email_intel: STR,
+      },
+    },
+    tiers: { type: "array", items: { type: "object", additionalProperties: false, required: ["name", "services", "ad_spend", "fees", "projection", "best_for"], properties: { name: STR, services: STRS, ad_spend: STR, fees: STR, projection: STR, best_for: STR } } },
   },
 };
+
+/** The market pass's brief (run beside the business pass): what the CEO's Loom said the research was missing */
+export const MARKET_PROMPT = (who: string, industry: string | null) => `Research the MARKET around this business: ${who}${industry ? ` (${industry})` : ""}. Each finding with its source URL; say "not found" rather than guess.
+1. Geography: the area they serve (city, county, zip codes). Median household income, age mix, marital status, homeownership and anything else that shapes the local buyer (census.gov QuickFacts, ACS data, city-data). If they sell US-wide or online, describe the national buyer instead.
+2. The customer avatar(s): who buys this, with age, income, role (business owner?), what triggers the purchase.
+3. TAM: a rough count of reachable buyers in that area or nationally, and how you estimated it (population x share).
+4. Competitors: the 3-5 biggest advertisers in this category and area. Search the Meta Ad Library (facebook.com/ads/library, keyword search, the right country) and the Google Ads Transparency Center for who's advertising. For each: name, channels, how long their ads have run, the funnel (ad, landing page, offer, booking or checkout), messaging, offer and USP.
+5. Search demand: the main buying keywords with typical cost per click and monthly search volume (public keyword data, agency benchmark posts, WordStream/LocaliQ, Semrush/Ahrefs public pages) and the seasonality (when clicks cost most and least).
+6. Benchmarks: the current year's WordStream/LocaliQ benchmarks for this industry (Google: CTR, CPC, CVR, cost per lead; Facebook: CTR, CPC, CVR, cost per lead; CPM if available). If the industry isn't broken out, use the closest adjacent category and say which.
+7. Email marketing: the business's and two competitors' email programs from public archives (milled.com search by brand, MailCharts public pages): how many emails, cadence, offers, design. If nothing is archived, say so.
+8. Rules that limit advertising in this vertical (licensing boards, health or financial ad rules, Meta special ad categories).
+Plain notes, no recommendations.`;
 
 /** One prospect by id (the caller's own session decides access) */
 export async function getProspect(db: SupabaseClient, id: string): Promise<Prospect | null> {
@@ -155,6 +183,16 @@ export async function researchProspect(db: SupabaseClient, admin: Admin, me: { i
   const location = (input.location ?? existing?.location ?? "").trim() || null;
   const who = [name, website, location].filter(Boolean).join(" · ");
 
+  // Two passes at once: the business itself, and the market around it (competitors, demand, benchmarks, the buyer)
+  const marketNotes = researchWeb({
+    agent: "sales_research",
+    label: "prospect market research",
+    model: "sonnet",
+    maxSearches: 10,
+    maxFetches: 12,
+    system: `You research a market for Kaizen, a paid-ads and creative agency, before a pitch. Facts with sources. ${RESEARCH_RULES}`,
+    prompt: MARKET_PROMPT(who, existing?.industry ?? null),
+  }).catch((e) => `(The market research didn't finish: ${e instanceof Error ? e.message : String(e)})`);
   const notes = await researchWeb({
     agent: "sales_research",
     label: "prospect research",
@@ -175,13 +213,15 @@ Find and note, each with its source URL:
 Plain notes, no recommendations.`,
   });
 
-  const [rates, proof] = await Promise.all([rateCardText(admin), clientProofText(admin, `${existing?.industry ?? ""} ${notes.slice(0, 1500)}`)]);
+  const [rates, proof, market] = await Promise.all([rateCardText(admin), clientProofText(admin, `${existing?.industry ?? ""} ${notes.slice(0, 1500)}`), marketNotes]);
+  const { tierPlan, verticalOf, VERTICAL_FOCUS } = await import("@/lib/sales-gtm-core");
+  const vertical = verticalOf(existing?.industry ?? null, notes.slice(0, 2000));
   const raw = await askJson<ProspectBrief & { name: string; website: string; industry: string }>({
     agent: "sales_research",
     label: "prospect brief",
     schema: BRIEF_SCHEMA,
-    maxTokens: 8000,
-    system: `You are Kaizen's Sales agent. Turn the research notes into a prospect brief and a Kaizen sales strategy.
+    maxTokens: 12000,
+    system: `You are Kaizen's Sales agent. Turn the research notes into a prospect brief, a market analysis and a Kaizen sales strategy.
 - name, website (https://domain), industry (a short sub-vertical like "med spa" or "roofing contractor").
 - summary: two sentences: who they are and the opportunity for Kaizen.
 - marketing: what was seen for each (site, offers, reviews, social, meta_ads, google_ads, email_capture); "not visible" when unknown.
@@ -193,8 +233,10 @@ Plain notes, no recommendations.`,
 - strategy.talking_points: 3 to 6 first-outreach points specific to this business.
 - contacts: people named publicly, with role and where seen. Never invent one.
 - sources: the URLs the facts came from.
-Only what the notes support; never invent a number, review or fact.`,
-    prompt: `<research_notes>\n${notes.slice(0, 40_000)}\n</research_notes>\n\n<rate_card>\n${rates}\n</rate_card>\n\n<kaizen_clients note="internal proof">\n${proof}\n</kaizen_clients>${input.question ? `\n\n<asked>${input.question}</asked>` : ""}`,
+- market (from the market notes): geo (area, zips, income, demographics), avatar (the local buyer, or the US-wide buyer), tam (an estimate and how it was made), competitors (who advertises and how: channels, funnel, messaging, offer, USP; internal only), trends (keyword, CPC, monthly volume, note), benchmarks (platform, metric, value, source with year; proxy names the adjacent category when the industry isn't published, else ""), seasonality, email_intel (their and competitors' email programs from public archives, or that none were found).
+- tiers: exactly three, weighted for this kind of business (${vertical}: lead with ${VERTICAL_FOCUS[vertical].lead.join(", ")}; add-ons ${VERTICAL_FOCUS[vertical].addons.join(", ")}). Start from: ${tierPlan(vertical).map((t) => `${t.name} = ${t.services.join(" + ")}`).join("; ")}. Each with ad_spend (monthly, paid to the platforms), fees (management and creative from the rate card, exact), projection (a planning range from the benchmarks, e.g. "25-55 leads/month"), best_for. The Basic creative package is the "310": 3 images + 10 videos a month, always attached to Meta.
+Only what the notes support; never invent a number, review or fact. Estimates say so.`,
+    prompt: `<research_notes>\n${notes.slice(0, 36_000)}\n</research_notes>\n\n<market_notes>\n${market.slice(0, 36_000)}\n</market_notes>\n\n<rate_card>\n${rates}\n</rate_card>\n\n<kaizen_clients note="internal proof">\n${proof}\n</kaizen_clients>${input.question ? `\n\n<asked>${input.question}</asked>` : ""}`,
   });
   const brief = cleanBrief(raw);
   const finalName = name || String(raw.name ?? "").trim() || siteHost(website) || "Prospect";
@@ -222,7 +264,7 @@ Only what the notes support; never invent a number, review or fact.`,
     if (error) return { ok: false, error: error.message };
     saved = data as Prospect;
   }
-  await db.from("prospect_notes").insert({ prospect_id: saved.id, kind: "research", title: input.question ? `Research: ${input.question.slice(0, 120)}` : "Research", body: { brief }, created_by: me.id });
+  await db.from("prospect_notes").insert({ prospect_id: saved.id, kind: "research", title: input.question ? `Research: ${input.question.slice(0, 120)}` : "Research", body: { brief, notes: notes.slice(0, 40_000), market_notes: market.slice(0, 40_000) }, created_by: me.id });
   return { ok: true, prospect: saved, text: briefText(saved.name, brief) };
 }
 

@@ -11,8 +11,8 @@ const lead = { role: "head_of_meta", isExec: false, isLead: true };
 const member = { role: "media_buyer", isExec: false, isLead: false };
 
 describe("sales agent: who sees it", () => {
-  it("is a role agent with five skills, in the strategy line, with a call look", () => {
-    expect(ROLE_SKILLS.sales).toEqual(["sales_research", "sales_list", "sales_pitch", "sales_call_review", "sales_desk"]);
+  it("is a role agent with its skills (GTM and proposal included), in the strategy line, with a call look", () => {
+    expect(ROLE_SKILLS.sales).toEqual(["sales_research", "sales_list", "sales_pitch", "sales_call_review", "sales_desk", "sales_gtm", "sales_proposal"]);
     expect(roleOfAgent("sales_pitch")).toBe("sales");
     expect(lineOfRole("sales")).toBe("strategy");
     expect(CALL_ROLES.sales.label).toBe("Sales");

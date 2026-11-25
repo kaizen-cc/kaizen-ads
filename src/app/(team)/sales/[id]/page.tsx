@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { archiveText, cleanBrief, cleanPitch, cleanReview, seesSalesPages } from "@/lib/sales-core";
 import { getProspect } from "@/lib/sales-agent";
 import { ProspectView, type ProspectNote } from "./prospect-view";
+import { GtmCard } from "./gtm-card";
 
 export const metadata: Metadata = { title: "Prospect" };
 // Research, pitch drafts and call reviews run from here (a minute or two)
@@ -25,6 +26,14 @@ export default async function ProspectPage({ params }: PageProps<"/sales/[id]">)
     p.client_id ? db.from("clients").select("name, slug").eq("id", p.client_id).maybeSingle() : Promise.resolve({ data: null }),
     db.from("sales_call_briefs").select("id, title, starts_at, status").eq("prospect_id", p.id).order("starts_at", { ascending: false }).limit(10),
   ]);
+  // The latest go-to-market strategy, and the white-label partners to brand one for
+  const [{ data: g }, { data: partners }] = await Promise.all([
+    db.from("prospect_gtms").select("id, status, stage, partner_key, document_id, notes, error, created_at").eq("prospect_id", p.id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    db.from("sales_partners").select("key, name").eq("active", true).order("name"),
+  ]);
+  const { cleanNotes } = await import("@/lib/sales-gtm-core");
+  const partnerName = (k: string | null) => ((partners ?? []) as { key: string; name: string }[]).find((x) => x.key === k)?.name ?? null;
+  const gtm = g ? { id: g.id as string, status: g.status as string, stage: (g.stage as string | null) ?? null, partner: partnerName(g.partner_key as string | null), documentId: (g.document_id as string | null) ?? null, notes: g.notes ? cleanNotes(g.notes, partnerName(g.partner_key as string | null)) : null, error: (g.error as string | null) ?? null, createdAt: g.created_at as string } : null;
   const list: ProspectNote[] = (notes ?? []).map((n) =>
     n.kind === "pitch"
       ? { id: n.id as string, kind: "pitch", title: (n.title as string) ?? "Pitch drafts", at: n.created_at as string, pitch: cleanPitch(n.body) }
@@ -41,6 +50,7 @@ export default async function ProspectPage({ params }: PageProps<"/sales/[id]">)
         client={client ? { name: client.name as string, slug: client.slug as string } : null}
         calls={(calls ?? []).map((c) => ({ id: c.id as string, title: c.title as string, startsAt: c.starts_at as string, status: c.status as string }))}
         meId={me.id}
+        gtmSlot={<GtmCard prospectId={p.id} gtm={gtm} partners={(partners ?? []) as { key: string; name: string }[]} />}
       />
     </Suspense>
   );

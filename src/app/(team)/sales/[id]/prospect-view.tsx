@@ -68,7 +68,7 @@ const Bullets = ({ items }: { items: string[] }) => (
   </ul>
 );
 
-export function ProspectView({ p, brief, notes, people, docs, client, meId, calls = [] }: { p: P; brief: ProspectBrief | null; notes: ProspectNote[]; people: { id: string; name: string }[]; docs: { id: string; title: string; link: string | null; folder: string | null }[]; client: { name: string; slug: string } | null; meId: string; calls?: { id: string; title: string; startsAt: string; status: string }[] }) {
+export function ProspectView({ p, brief, notes, people, docs, client, meId, calls = [], gtmSlot = null }: { p: P; brief: ProspectBrief | null; notes: ProspectNote[]; people: { id: string; name: string }[]; docs: { id: string; title: string; link: string | null; folder: string | null }[]; client: { name: string; slug: string } | null; meId: string; calls?: { id: string; title: string; startsAt: string; status: string }[]; gtmSlot?: React.ReactNode }) {
   const tab = useParam("tab") ?? "brief";
   const drafts = notes.length;
   return (
@@ -150,6 +150,7 @@ export function ProspectView({ p, brief, notes, people, docs, client, meId, call
         </section>
       )}
 
+      {tab === "brief" && gtmSlot}
       {tab === "brief" && <BriefTab p={p} brief={brief} />}
       {tab === "drafts" && <DraftsTab p={p} notes={notes} researched={Boolean(brief)} />}
       {tab === "notes" && <NotesTab p={p} docs={docs} />}
@@ -245,6 +246,68 @@ function Rerun({ p, label }: { p: P; label: string }) {
   );
 }
 
+/** The market around them: area and buyer, TAM, who advertises and how, search demand, sourced benchmarks, email */
+function MarketBlock({ m }: { m: ProspectBrief["market"] | undefined }) {
+  if (!m || !(m.geo || m.avatar || m.competitors.length || m.trends.length || m.benchmarks.length)) return null;
+  const row = (k: string, v: string) =>
+    v ? (
+      <div className="grid min-w-0 gap-0.5 rounded-[14px] bg-bg p-3">
+        <dt className="text-[12px] font-medium text-faint">{k}</dt>
+        <dd className="break-words text-[13.5px] leading-relaxed text-fg">{v}</dd>
+      </div>
+    ) : null;
+  return (
+    <Block title="The market">
+      <dl className="grid min-w-0 gap-3 md:grid-cols-2">
+        {row("Area and income", m.geo)}
+        {row("The buyer", m.avatar)}
+        {row("Total addressable market", m.tam)}
+        {row("Seasonality", m.seasonality)}
+        {row("Email programs (public archives)", m.email_intel)}
+      </dl>
+      {m.competitors.length > 0 && (
+        <div className="grid gap-2">
+          <p className="text-[12px] font-medium text-faint">Who&apos;s advertising (internal: never named in client documents)</p>
+          {m.competitors.map((c, i) => (
+            <div key={i} className="grid min-w-0 gap-1 rounded-[14px] border border-line p-3 text-[13px] leading-relaxed">
+              <p className="break-words font-medium">{c.name}{c.channels ? <span className="font-normal text-muted"> · {c.channels}</span> : null}</p>
+              {c.funnel && <p className="break-words text-muted">Funnel: {c.funnel}</p>}
+              {c.messaging && <p className="break-words text-muted">Messaging: {c.messaging}</p>}
+              {(c.offer || c.usp) && <p className="break-words text-muted">{[c.offer && `Offer: ${c.offer}`, c.usp && `USP: ${c.usp}`].filter(Boolean).join(" · ")}</p>}
+            </div>
+          ))}
+        </div>
+      )}
+      {m.trends.length > 0 && (
+        <div className="grid gap-2">
+          <p className="text-[12px] font-medium text-faint">Search demand</p>
+          <ul className="grid gap-1.5">
+            {m.trends.map((t, i) => (
+              <li key={i} className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 border-b border-line pb-1.5 text-[13px]">
+                <span className="min-w-0 break-words">{t.keyword}</span>
+                <span className="tabular-nums text-muted">{[t.cpc && `CPC ${t.cpc}`, t.volume && `${t.volume}/mo`].filter(Boolean).join(" · ")}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {m.benchmarks.length > 0 && (
+        <div className="grid gap-2">
+          <p className="text-[12px] font-medium text-faint">Benchmarks</p>
+          <ul className="grid gap-1.5">
+            {m.benchmarks.map((b, i) => (
+              <li key={i} className="break-words text-[13px] leading-relaxed">
+                <span className="font-medium">{b.platform} {b.metric}: {b.value}</span>
+                <span className="text-muted"> · {b.source}{b.proxy ? ` · stand-in: ${b.proxy}` : ""}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Block>
+  );
+}
+
 function BriefTab({ p, brief }: { p: P; brief: ProspectBrief | null }) {
   if (!brief)
     return (
@@ -301,11 +364,7 @@ function BriefTab({ p, brief }: { p: P; brief: ProspectBrief | null }) {
         </Block>
       )}
 
-      {brief.gaps.length > 0 && (
-        <Block title="Likely gaps">
-          <Bullets items={brief.gaps} />
-        </Block>
-      )}
+      <MarketBlock m={brief.market} />
 
       <Block title="Kaizen strategy">
         {st.angle && (
@@ -343,6 +402,35 @@ function BriefTab({ p, brief }: { p: P; brief: ProspectBrief | null }) {
           Draft the outreach →
         </Link>
       </Block>
+
+      {(brief.tiers ?? []).length > 0 && (
+        <Block title="Tiers">
+          <div className="grid min-w-0 gap-3 md:grid-cols-3">
+            {brief.tiers.map((t, i) => (
+              <div key={i} className={`grid min-w-0 content-start gap-2 rounded-[16px] border p-4 ${i === 1 ? "border-brand/50 bg-brand-soft" : "border-line"}`}>
+                <p className="break-words text-[14px] font-medium">{t.name}</p>
+                <ul className="grid gap-1">
+                  {t.services.map((x, j) => (
+                    <li key={j} className="break-words text-[13px] leading-relaxed text-muted">
+                      · {x}
+                    </li>
+                  ))}
+                </ul>
+                {t.ad_spend && <p className="break-words text-[13px]"><span className="text-faint">Ad spend </span>{t.ad_spend}</p>}
+                {t.fees && <p className="break-words text-[13px]"><span className="text-faint">Fees </span>{t.fees}</p>}
+                {t.projection && <p className="break-words text-[13px]"><span className="text-faint">Projection </span>{t.projection}</p>}
+                {t.best_for && <p className="break-words text-[12.5px] text-faint">{t.best_for}</p>}
+              </div>
+            ))}
+          </div>
+        </Block>
+      )}
+
+      {brief.gaps.length > 0 && (
+        <Block title="Likely gaps">
+          <Bullets items={brief.gaps} />
+        </Block>
+      )}
 
       {brief.contacts.length > 0 && (
         <Block title="People found (public)">

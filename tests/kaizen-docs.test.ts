@@ -47,8 +47,8 @@ describe("Kaizen document system: templates", () => {
     );
     expect(doc.title).toBe("Aesthetic Edge Relaunch, Growth Proposal");
     expect(doc.sections[0].key).toBe("executive_summary");
-    expect(doc.sections.map((s) => s.key)).not.toContain("planning_model");
-    expect(doc.sections.find((s) => s.key === "situation")?.blocks[0]).toEqual({ type: "paragraph", text: "[To be written]" });
+    expect(doc.sections.map((s) => s.key)).not.toContain("mission");
+    expect(doc.sections.find((s) => s.key === "methodology")?.blocks[0]).toEqual({ type: "paragraph", text: "[To be written]" });
     const inv = doc.sections.find((s) => s.key === "investment")!.blocks[0];
     expect(inv.type === "table" && inv.rows[1][1]).toBe(`${PRICE_TBD}/mo`);
     expect(inv.type === "table" && inv.total?.[1]).toBe(PRICE_TBD);

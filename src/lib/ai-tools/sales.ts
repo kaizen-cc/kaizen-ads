@@ -425,4 +425,95 @@ const unarchive: AiTool = {
   },
 };
 
-export const tools: AiTool[] = [webResearch, research, find, mine, details, save, pitch, review, won, myBriefs, saveToBrief, scanBriefs, archive, unarchive, searchStatus].map(execPagesOnly);
+// ─── Go-to-market strategy and proposal (src/lib/sales-gtm.ts) ─────────────
+
+const makeGtm: AiTool = {
+  name: "make_gtm",
+  description:
+    "Executives and leads: builds a prospect's go-to-market strategy in the background (several minutes): a client-facing branded PDF (cover, exec summary with 3 stat tiles, who they are, digital footprint leaks, the market and competitive landscape, positioning and front-door offer, channel plan, investment tiers with projections and sourced benchmarks, 90-day plan and 12-month calendar, measurement and next steps, sources) plus internal talking notes that are never sent (flags, strategy decisions, numbers caveats, risks and objections with the vertical's compliance rules, firm facts; every claim tagged certain / likely / guessing). The research is refreshed first when it's missing the market analysis or older than two weeks. partner: a white-label partner (e.g. ZenChange): their branding only, zero Kaizen mentions, ad spend only, notes written for the partner. ask: anything they said (channels, the creative package, who it's for). Say you've started it and they'll be notified; it's separate from the proposal (proposal_brief).",
+  input_schema: { type: "object", properties: { prospect: { type: "string" }, partner: { type: "string", description: "A white-label partner's name, e.g. ZenChange" }, ask: { type: "string" } }, required: ["prospect"], additionalProperties: false },
+  only: worksSales,
+  run: async (user: Staff, input) => {
+    if (!worksSales(user)) return NOT_SALES;
+    const v = viewing(user);
+    if (v) return v;
+    const p = await prospectFrom(input);
+    if (!p) return { ok: false, error: "No prospect by that name. Research it first (research_prospect) or add it (save_prospect)." };
+    const admin = createAdminClient();
+    const { queueGtm, partnerNamed } = await import("@/lib/sales-gtm");
+    const partner = str(input.partner) ? await partnerNamed(admin, str(input.partner)) : null;
+    if (str(input.partner) && !partner) return { ok: false, error: `${str(input.partner)} isn't a white-label partner on file. Ask an exec to add it, or leave partner out for Kaizen's own branding.` };
+    const q = await queueGtm(admin, { prospectId: p.id, profileId: user.id, partnerKey: partner?.key ?? null, ask: str(input.ask) });
+    return { ok: true, started: !q.existing, already_running: q.existing, gtm_id: q.id, partner: partner?.name ?? null, say: `${q.existing ? "A go-to-market strategy for them is already being built" : `I've started the go-to-market strategy${partner ? ` for ${partner.name}` : ""}`}. It takes several minutes (research, then the strategy, the talking notes and the PDF); you'll get a notification when it's ready.` };
+  },
+};
+
+const gtmStatus: AiTool = {
+  name: "gtm_status",
+  description: "Executives and leads: a prospect's go-to-market strategy: how it's going (researching, writing, notes, drawing the PDF) or, when ready, its document_id (give it to upload_to_drive to save it in Drive under the Drive rule, or to draft_message to email the PDF), the strategy's key points, and the internal talking notes (never sent).",
+  input_schema: { type: "object", properties: { prospect: { type: "string" } }, required: ["prospect"], additionalProperties: false },
+  only: worksSales,
+  run: async (user: Staff, input) => {
+    if (!worksSales(user)) return NOT_SALES;
+    const p = await prospectFrom(input);
+    if (!p) return { ok: false, error: "No prospect by that name." };
+    const db = await createClient();
+    const { data: g } = await db.from("prospect_gtms").select("id, status, stage, content, notes, document_id, partner_key, error, created_at").eq("prospect_id", p.id).order("created_at", { ascending: false }).limit(1).maybeSingle();
+    if (!g) return { ok: false, error: "No go-to-market strategy yet. make_gtm starts one." };
+    if (g.status !== "done") return { ok: true, status: g.status, stage: g.stage, ...(g.error ? { error: g.error } : {}) };
+    const { cleanGtm, cleanNotes, notesText } = await import("@/lib/sales-gtm-core");
+    const c = cleanGtm(g.content);
+    return {
+      ok: true,
+      status: "done",
+      document_id: g.document_id,
+      partner: g.partner_key,
+      headline: `${c.cover.headline} ${c.cover.highlight}`.trim(),
+      recommend: c.exec.recommend,
+      offer: c.positioning.offer,
+      tiers: c.investment.tiers,
+      internal_notes: notesText(p.name, cleanNotes(g.notes, null)),
+      note: "The talking notes are internal: never paste them into anything the prospect sees.",
+    };
+  },
+};
+
+const proposalBrief: AiTool = {
+  name: "proposal_brief",
+  description:
+    "Executives and leads: everything the proposal needs for one prospect, compiled for make_document (template proposal, prospect: the name): the CEO's 11-slide rules, the best-matching case study plus supporting ones with exact numbers, the proposed services at exact prices, the terms (the 60/90-day minimum and the 30-day written notice together), the research, the go-to-market strategy's recommendations and the call reviews. services: what's being proposed (\"Meta + Google + Email/SMS, Silver creative\"); game_plan: how it will be delivered (required: ask if missing); transcript: the meeting notes or transcript if they have them. Pass the returned brief to make_document as its brief.",
+  input_schema: { type: "object", properties: { prospect: { type: "string" }, services: { type: "string" }, game_plan: { type: "string" }, transcript: { type: "string" } }, required: ["prospect", "services"], additionalProperties: false },
+  only: worksSales,
+  run: async (user: Staff, input) => {
+    if (!worksSales(user)) return NOT_SALES;
+    const p = await prospectFrom(input);
+    if (!p) return { ok: false, error: "No prospect by that name." };
+    if (!str(input.game_plan)) return { ok: false, needs: "game_plan", say: "What's the game plan: how will we deliver it (the first 30/60/90 days)? The proposal is built around it." };
+    const db = await createClient();
+    const admin = createAdminClient();
+    const [{ data: studies }, { data: g }, { data: reviews }, { rateCardText }] = await Promise.all([
+      admin.from("sales_case_studies").select("key, name, vertical, fits, services, results, connection").eq("active", true).order("sort_order"),
+      db.from("prospect_gtms").select("content").eq("prospect_id", p.id).eq("status", "done").order("created_at", { ascending: false }).limit(1).maybeSingle(),
+      db.from("prospect_notes").select("body").eq("prospect_id", p.id).eq("kind", "call_review").order("created_at", { ascending: false }).limit(2),
+      import("@/lib/sales-agent"),
+    ]);
+    const { pickCaseStudies, verticalOf, cleanGtm } = await import("@/lib/sales-gtm-core");
+    const b = p.brief ? cleanBrief(p.brief) : null;
+    const picked = pickCaseStudies(`${p.industry ?? ""} ${b?.sells ?? ""}`, (studies ?? []) as import("@/lib/sales-gtm-core").CaseStudy[], verticalOf(p.industry, b?.sells));
+    const gtm = g?.content ? cleanGtm(g.content) : null;
+    const brief = [
+      `Proposal for ${p.name}${p.website ? ` (${p.website})` : ""}. Proposed services: ${str(input.services)}.`,
+      `Game plan (how we deliver; weave into the executive summary, the platform playbook bullets and the game plan slide): ${str(input.game_plan)}`,
+      `Rules: the CEO's 11 slides; only the proposed services; exact prices from the pricing reference below; ad spend paid directly to the platforms, never marked up; the 60-day minimum (90 days with email) AND the 30-day written notice to cancel, together; month to month after; the client owns every account and asset; tracking and analytics setup included; no competitor names; never a placeholder or an invented stat.`,
+      `Case studies (exact numbers, never changed). Lead with: ${picked[0] ? `${picked[0].name} (${picked[0].vertical}): ${picked[0].services}. Results: ${picked[0].results}. Connection: ${picked[0].connection}` : "none"}. Supporting: ${picked.slice(1, 3).map((c) => `${c.name}: ${c.results}`).join(" | ")}`,
+      `Pricing reference:\n${await rateCardText(admin)}`,
+      b ? `Research:\n${briefText(p.name, b)}` : "Not researched yet.",
+      gtm ? `Go-to-market strategy (already made; the proposal stays separate but consistent): offer ${gtm.positioning.offer.name}: ${gtm.positioning.offer.text}. Recommended: ${gtm.exec.recommend.map((r) => `${r.lead}: ${r.text}`).join(" | ")}. Benchmarks: ${JSON.stringify(gtm.investment.benchmarks).slice(0, 1500)}` : "",
+      (reviews ?? []).length ? `Call reviews: ${(reviews ?? []).map((r) => JSON.stringify(r.body).slice(0, 2000)).join("\n")}` : "",
+      str(input.transcript) ? `Meeting transcript (reference it at least 3 times, quoting their pain points):\n${str(input.transcript)!.slice(0, 20_000)}` : "No transcript given: use the call reviews and research for what they said.",
+    ].filter(Boolean).join("\n\n");
+    return { ok: true, prospect: p.name, case_study: picked[0]?.name ?? null, brief, next: "Call make_document with template proposal, prospect: the name, and this brief. Afterwards, write 'Proposal notes' for the person (2-3 follow-up insights, objections and handling, close talking points): internal, never sent." };
+  },
+};
+
+export const tools: AiTool[] = [webResearch, research, find, mine, details, save, pitch, review, won, myBriefs, saveToBrief, scanBriefs, archive, unarchive, searchStatus, makeGtm, gtmStatus, proposalBrief].map(execPagesOnly);

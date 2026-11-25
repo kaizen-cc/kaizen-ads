@@ -19,7 +19,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 export const MODEL_IDS = { opus: "claude-opus-5-5", sonnet: "claude-sonnet-5-5", haiku: "claude-haiku-5-5" } as const;
 export type ModelKey = keyof typeof MODEL_IDS;
 export type Effort = "low" | "medium" | "high";
-export type AgentKey = "suggest" | "review" | "briefing" | "copy" | "launcher" | "fatigue" | "scripts" | "brandbible" | "creativecheck" | "creativereview" | "coach" | "strategist" | "lab" | "industry" | "calls" | "gtm" | "market" | "winners" | "verticals" | "auditor" | "google_auditor" | "google_launcher" | "reporter" | "google_reporter" | "report_qa" | "tiktok_auditor" | "tiktok_launcher" | "tiktok_reporter" | "email_audit" | "email_calendar" | "email_copy" | "email_desk" | "email_design_brief" | "social_audit" | "social_desk" | "assistant_talk" | "tracking_audit" | "tracking_desk" | "sales_research" | "sales_list" | "sales_pitch" | "sales_call_review" | "sales_desk";
+export type AgentKey = "suggest" | "review" | "briefing" | "copy" | "launcher" | "fatigue" | "scripts" | "brandbible" | "creativecheck" | "creativereview" | "coach" | "strategist" | "lab" | "industry" | "calls" | "gtm" | "market" | "winners" | "verticals" | "auditor" | "google_auditor" | "google_launcher" | "reporter" | "google_reporter" | "report_qa" | "tiktok_auditor" | "tiktok_launcher" | "tiktok_reporter" | "email_audit" | "email_calendar" | "email_copy" | "email_desk" | "email_design_brief" | "social_audit" | "social_desk" | "assistant_talk" | "tracking_audit" | "tracking_desk" | "sales_research" | "sales_list" | "sales_pitch" | "sales_call_review" | "sales_desk" | "sales_gtm" | "sales_proposal";
 export const SOURCE_KEYS = ["meta", "briefing", "recent_messages", "memory", "angles", "recent_requests", "allotment", "kpis"] as const;
 export type Sources = Partial<Record<(typeof SOURCE_KEYS)[number], boolean>>;
 
@@ -83,6 +83,8 @@ const DEFAULTS: Record<AgentKey, Pick<AgentConfig, "model" | "effort">> = {
   sales_pitch: { model: "sonnet", effort: "medium" },
   sales_call_review: { model: "sonnet", effort: "medium" },
   sales_desk: { model: "sonnet", effort: "medium" },
+  sales_gtm: { model: "opus", effort: "high" },
+  sales_proposal: { model: "opus", effort: "medium" },
   // The assistant and every agent on a call or in the assistant's chat (each answer). Sonnet at medium: the owner's call
   assistant_talk: { model: "sonnet", effort: "medium" },
   coach: { model: "sonnet", effort: "medium" }, // talking to an agent (its page) or one skill: edits its core and playbooks from feedback

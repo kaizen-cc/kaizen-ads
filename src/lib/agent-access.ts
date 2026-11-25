@@ -25,7 +25,7 @@ export const ROLE_SKILLS: Record<string, readonly string[]> = {
   // The measurement expert for the tracking specialist and the buyers: a client's tracking check and the tracking desk
   tracking_engineer: ["tracking_audit", "tracking_desk"],
   // Sales (internal for now): prospect research, lists, pitch drafts, sales-call review and the desk; execs train it
-  sales: ["sales_research", "sales_list", "sales_pitch", "sales_call_review", "sales_desk"],
+  sales: ["sales_research", "sales_list", "sales_pitch", "sales_call_review", "sales_desk", "sales_gtm", "sales_proposal"],
 };
 
 /** Role agents only some people see and talk to (the rest of the team never sees them): Sales is the execs' and leads' */

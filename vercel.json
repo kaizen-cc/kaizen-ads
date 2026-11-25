@@ -187,6 +187,10 @@
       "schedule": "2 16,17,21,22 * * *"
     },
     {
+      "path": "/api/cron/context?step=sales_jobs",
+      "schedule": "1-59/5 * * * *"
+    },
+    {
       "path": "/api/cron/context?step=launches",
       "schedule": "2-59/5 * * * *"
     },

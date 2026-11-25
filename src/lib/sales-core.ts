@@ -91,7 +91,23 @@ export type ProspectBrief = {
   };
   contacts: { name: string; role: string; where: string }[];
   sources: string[];
+  /** The market around them (the CEO's Loom: market analysis right after their marketing today) */
+  market: MarketAnalysis;
+  /** Always at least three tiers: minimal, MVP, elite (weighted by the kind of business) */
+  tiers: StrategyTier[];
 };
+
+export type MarketAnalysis = {
+  geo: string;
+  avatar: string;
+  tam: string;
+  competitors: { name: string; channels: string; funnel: string; messaging: string; offer: string; usp: string }[];
+  trends: { keyword: string; cpc: string; volume: string; note: string }[];
+  benchmarks: { platform: string; metric: string; value: string; source: string; proxy: string }[];
+  seasonality: string;
+  email_intel: string;
+};
+export type StrategyTier = { name: string; services: string[]; ad_spend: string; fees: string; projection: string; best_for: string };
 
 const s = (v: unknown, n = 2000) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 const list = (v: unknown, n = 12, len = 600) => (Array.isArray(v) ? v.map((x) => s(x, len)).filter(Boolean).slice(0, n) : []);
@@ -124,6 +140,27 @@ export function cleanBrief(raw: unknown): ProspectBrief {
       return { name: s(o.name, 120), role: s(o.role, 120), where: s(o.where, 300) };
     }).filter((x) => x.name),
     sources: list(r.sources, 20, 400),
+    market: cleanMarket(r.market),
+    tiers: (Array.isArray(r.tiers) ? r.tiers : []).slice(0, 4).map((x) => {
+      const o = (x ?? {}) as Record<string, unknown>;
+      return { name: s(o.name, 60), services: list(o.services, 8, 160), ad_spend: s(o.ad_spend, 80), fees: s(o.fees, 120), projection: s(o.projection, 300), best_for: s(o.best_for, 200) };
+    }).filter((t) => t.name),
+  };
+}
+
+function cleanMarket(raw: unknown): MarketAnalysis {
+  const m = (raw ?? {}) as Record<string, unknown>;
+  const rows = <T extends Record<string, string>>(v: unknown, keys: (keyof T)[], n: number) =>
+    (Array.isArray(v) ? v : []).slice(0, n).map((x) => Object.fromEntries(keys.map((k) => [k, s((x as Record<string, unknown>)?.[k as string], 400)])) as T).filter((x) => Object.values(x).some(Boolean));
+  return {
+    geo: s(m.geo, 900),
+    avatar: s(m.avatar, 900),
+    tam: s(m.tam, 600),
+    competitors: rows(m.competitors, ["name", "channels", "funnel", "messaging", "offer", "usp"], 6),
+    trends: rows(m.trends, ["keyword", "cpc", "volume", "note"], 10),
+    benchmarks: rows(m.benchmarks, ["platform", "metric", "value", "source", "proxy"], 10),
+    seasonality: s(m.seasonality, 600),
+    email_intel: s(m.email_intel, 800),
   };
 }
 
@@ -136,6 +173,15 @@ export function briefText(name: string, b: ProspectBrief): string {
   const m = b.marketing;
   const mk = ([["Site", m.site], ["Offers", m.offers], ["Reviews", m.reviews], ["Social", m.social], ["Meta ads", m.meta_ads], ["Google ads", m.google_ads], ["Email capture", m.email_capture]] as const).filter(([, v]) => v);
   if (mk.length) out.push(`Marketing:\n${mk.map(([k, v]) => `- ${k}: ${v}`).join("\n")}`);
+  const mk2 = b.market;
+  if (mk2 && (mk2.geo || mk2.avatar || mk2.competitors.length)) {
+    const parts = [mk2.geo && `- Area: ${mk2.geo}`, mk2.avatar && `- Avatar: ${mk2.avatar}`, mk2.tam && `- TAM: ${mk2.tam}`, mk2.seasonality && `- Seasonality: ${mk2.seasonality}`, mk2.email_intel && `- Email: ${mk2.email_intel}`].filter(Boolean);
+    if (mk2.competitors.length) parts.push(`- Competitors (internal: never named in client documents): ${mk2.competitors.map((c) => `${c.name} (${[c.channels, c.offer, c.usp].filter(Boolean).join("; ")})`).join(" | ")}`);
+    if (mk2.trends.length) parts.push(`- Search: ${mk2.trends.map((t) => `${t.keyword} ${t.cpc}${t.volume ? `, ${t.volume}/mo` : ""}`).join("; ")}`);
+    if (mk2.benchmarks.length) parts.push(`- Benchmarks: ${mk2.benchmarks.map((x) => `${x.platform} ${x.metric} ${x.value} (${x.source}${x.proxy ? `, proxy: ${x.proxy}` : ""})`).join("; ")}`);
+    out.push(`Market:\n${parts.join("\n")}`);
+  }
+  if (b.tiers?.length) out.push(`Tiers:\n${b.tiers.map((t) => `- ${t.name}: ${t.services.join(", ")}${t.ad_spend ? `; ad spend ${t.ad_spend}` : ""}${t.fees ? `; fees ${t.fees}` : ""}${t.projection ? `; ${t.projection}` : ""}`).join("\n")}`);
   if (b.gaps.length) out.push(`Gaps:\n${b.gaps.map((g) => `- ${g}`).join("\n")}`);
   if (b.fit_score != null) out.push(`Fit: ${b.fit_score}/100 (${fitBand(b.fit_score)})${b.fit_reason ? `: ${b.fit_reason}` : ""}`);
   const st = b.strategy;
