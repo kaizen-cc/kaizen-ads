@@ -203,3 +203,50 @@ export async function metaAdIntel(admin: Admin, brands: { name: string; website:
     return `<meta_ads unavailable="true">The Meta Ad Library couldn't be read through Motion: ${why}</meta_ads>`;
   }
 }
+
+type SerpCreative = { advertiser?: string; advertiser_id?: string; target_domain?: string; format?: string; first_shown?: number | string; last_shown?: number | string; total_days_shown?: number; details_link?: string };
+
+const day = (v: number | string | undefined) => {
+  if (v == null) return null;
+  const ms = typeof v === "number" ? (v < 1e12 ? v * 1000 : v) : Date.parse(v);
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+};
+
+/**
+ * Google Ads Transparency Center for the prospect and its competitors, through SerpApi's google_ads_transparency_center
+ * engine (SERPAPI_KEY): each brand by its website's domain (else its name), US: creatives found, formats, first and last
+ * shown, the advertiser names they run under. Without the key it says so; an error is kept with the brand.
+ */
+export async function googleAdIntel(brands: { name: string; website: string | null; role: "prospect" | "competitor" }[]): Promise<string> {
+  const keyS = process.env.SERPAPI_KEY;
+  const read = new Date().toISOString().slice(0, 10);
+  if (!keyS) return `<google_ads_transparency checked="false">Not checked: SERPAPI_KEY isn't set, and the Google Ads Transparency Center has no public API.</google_ads_transparency>`;
+  const out: string[] = [];
+  for (const b of brands.slice(0, 6)) {
+    const domain = domainOf(b.website);
+    const label = `${b.role === "prospect" ? "PROSPECT" : "COMPETITOR"} ${b.name}${domain ? ` (${domain})` : ""}`;
+    try {
+      const q = new URLSearchParams({ engine: "google_ads_transparency_center", text: domain ?? b.name, region: "2840", num: "50", api_key: keyS });
+      const res = await fetch(`https://serpapi.com/search.json?${q}`, { cache: "no-store", signal: AbortSignal.timeout(30_000) });
+      const j = (await res.json()) as { ad_creatives?: SerpCreative[]; error?: string; search_information?: { total_results?: number } };
+      if (j.error && !/hasn't returned any results/i.test(j.error)) {
+        out.push(`${label}: not checked: the Transparency Center lookup errored (${j.error.slice(0, 160)}).`);
+        continue;
+      }
+      const ads = (j.ad_creatives ?? []).filter((a) => !domain || !a.target_domain || a.target_domain.toLowerCase().includes(domain));
+      if (!ads.length) {
+        out.push(`${label}: 0 Google ads found under ${domain ? `the domain ${domain}` : `"${b.name}"`} in the Google Ads Transparency Center, US (read ${read}).`);
+        continue;
+      }
+      const first = ads.map((a) => day(a.first_shown)).filter((x): x is string => Boolean(x)).sort()[0];
+      const last = ads.map((a) => day(a.last_shown)).filter((x): x is string => Boolean(x)).sort().at(-1);
+      const formats = Object.entries(ads.reduce<Record<string, number>>((m, a) => ({ ...m, [(a.format ?? "other").toLowerCase()]: (m[(a.format ?? "other").toLowerCase()] ?? 0) + 1 }), {})).map(([k, v]) => `${v} ${k}`).join(", ");
+      const advertisers = [...new Set(ads.map((a) => a.advertiser).filter(Boolean))].slice(0, 3).join(", ");
+      const total = j.search_information?.total_results;
+      out.push(`${label}: ${total && total > ads.length ? `${total} creatives (${ads.length} read)` : `${ads.length} creatives`} in the Google Ads Transparency Center, US (read ${read}); ${formats}; first shown ${month(first) ?? "n/a"}, last shown ${month(last) ?? "n/a"}; advertiser: ${advertisers || "n/a"}${ads[0]?.details_link ? `; example ${ads[0].details_link}` : ""}.`);
+    } catch (e) {
+      out.push(`${label}: not checked: the Transparency Center lookup errored (${e instanceof Error ? e.message.slice(0, 160) : String(e)}).`);
+    }
+  }
+  return `<google_ads_transparency source="Google Ads Transparency Center via SerpApi" read="${read}">\n${out.join("\n")}\n</google_ads_transparency>`;
+}
