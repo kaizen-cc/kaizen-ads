@@ -134,10 +134,16 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 export async function prospectKeywordData(admin: Admin, p: { website: string | null; location: string | null; industry: string | null }, brief: ProspectBrief): Promise<string | null> {
   try {
     const ga = await import("@/lib/context/google-ads");
-    if (!ga.googleAdsConfigured()) return null;
+    if (!ga.googleAdsConfigured()) {
+      console.log("[gtm] keyword planner: Google Ads not configured");
+      return null;
+    }
     const { data: acct } = await admin.from("kpi_targets").select("ad_account_id").eq("platform", "google").eq("active", true).not("ad_account_id", "is", null).limit(1).maybeSingle();
     const planner = acct?.ad_account_id ? String(acct.ad_account_id).replace(/\D/g, "") : null;
-    if (!planner) return null;
+    if (!planner) {
+      console.log("[gtm] keyword planner: no Google Ads account to ask through");
+      return null;
+    }
     // Its places as "City, ST" (addresses and zips trip Google's matcher), up to five
     const places = [...new Set([p.location ?? "", ...brief.locations].flatMap((t) => [...t.matchAll(/([A-Z][A-Za-z .'-]{2,40}),\s*([A-Z]{2})\b/g)].map((m) => `${m[1].replace(/^.*\d\s*/, "").trim()}, ${m[2]}`)))].slice(0, 5);
     const geos = places.length ? (await ga.suggestGeo(places).catch(() => [])).slice(0, 5) : [];
@@ -146,8 +152,12 @@ export async function prospectKeywordData(admin: Admin, p: { website: string | n
     const seeds = [p.industry?.replace(/\(.*?\)/g, ""), ...brief.sells.split(/[,;:()·.]| and /)].map((x) => String(x ?? "").trim().toLowerCase()).filter((x) => x.split(/\s+/).length >= 2 && x.length <= 60 && !/\$|\d/.test(x) && !/(no|not|shown|mentioned|site|faq|page|prices?|pricing|may|differ|also)/.test(x)).slice(0, 10);
     const url = p.website ? (/^https?:\/\//i.test(p.website) ? p.website : `https://${p.website}`) : null;
     const opts = { url, geo: geos.length ? geos.map((x) => x.geo) : undefined };
-    const raw = await ga.keywordIdeas(planner, seeds, opts).catch(() => (seeds.length ? ga.keywordIdeas(planner, seeds, { geo: opts.geo }) : []));
+    const raw = await ga.keywordIdeas(planner, seeds, opts).catch((e) => {
+      console.log("[gtm] keyword planner (with site):", e instanceof Error ? e.message.slice(0, 300) : e);
+      return seeds.length ? ga.keywordIdeas(planner, seeds, { geo: opts.geo }) : [];
+    });
     const ideas = raw.filter((r) => r.searches > 0).sort((a, b) => b.searches - a.searches).slice(0, 30);
+    console.log(`[gtm] keyword planner: ${raw.length} ideas (${ideas.length} with searches), area ${geoHit?.name ?? "US"}, seeds ${seeds.join("; ") || "none"}`);
     if (!ideas.length) return null;
     // The last 12 months, oldest first (Keyword Planner's order): the month each one ends on
     const now = new Date();
@@ -214,7 +224,7 @@ export async function runGtm(admin: Admin, id: string): Promise<{ ran: boolean; 
       agent: "sales_gtm",
       label: "gtm strategy",
       schema: GTM_SCHEMA,
-      maxTokens: 20_000,
+      maxTokens: 32_000,
       system: `You write a client-facing go-to-market strategy for ${p.name}, prepared by ${by}${partner ? ` (a white-label partner: never mention Kaizen anywhere, not in a word, a footer or a note; ${partner.rules})` : ""}. It's the document a prospect reads before or after a first call: research-heavy, specific, confident, plain language, no hype, no placeholders.
 Structure (every section is filled; tables are {head, rows, note}, rows as arrays of cells in the head's order; note "" when none):
 - cover: short (the name the business goes by in short, e.g. its initials or brand name, used in headers), eyebrow "GO-TO-MARKET STRATEGY · PAID MEDIA OVERVIEW" (or the channels in play), headline (a strong line about their opportunity, without the last few words) + highlight (its ending, shown in the accent color), subtitle (the channels and "90-day launch plan"), location, site (domain), date "${today()}".
@@ -228,7 +238,7 @@ Structure (every section is filled; tables are {head, rows, note}, rows as array
 - plan: title "What happens after ${short0} says yes", ninety table head ["Phase", "What we do", "What ${short0} sees"] rows Days 1-14 Foundation, Days 15-45 Launch & test, Days 46-90 Optimize & scale; calendar table head ["Window", "Market reality", "Campaign focus"] 4-6 rows across 12 months (their seasonality, deadlines, cheapest and most expensive click months).
 - measure: title "How we'll judge success", table head ["Checkpoint", "What we measure", "What \\"on track\\" looks like"] rows Day 30, Day 60, Day 90; note (their sales cycle), needs (5-8 things we need from them), next: 4 {lead, text}, one_line (the opportunity in one line).
 - sources: every source cited (publication, title, date).
-Search numbers (the trends table, the services table's CPC column, CPC assumptions and the calendar's click-price months): when <keyword_data> has rows, use them exactly (CPC as the top-of-page bid range, e.g. "$4.10-$12.80"; volume as average monthly searches, summed per theme), say in the table note "Google Keyword Planner, <area>, read <month year>", and name the busiest and quietest months from its 12-month searches. When it's unavailable, give ranges from published benchmarks and mark every such cell "[estimated]", with a note that says plainly they're estimates from <source> and that Keyword Planner numbers for the area replace them in week 1. Never write "pulled in week 1" in a cell, and never say anything is "confirmed" that isn't in the data.
+Search numbers (the trends table, the services table's CPC column, CPC assumptions and the calendar's click-price months): when <keyword_data> has rows, use them exactly (CPC as the top-of-page bid range, e.g. "$4.10-$12.80"; volume as average monthly searches, summed per theme), say in the table note "Google Keyword Planner, <area>, read <month year>", and name the busiest and quietest months from its 12-month searches. When it's unavailable, give a reasoned range for every cell (published benchmarks for the category, or the closest category) and mark each "[estimated]"; never leave a cell blank or write "not sourced", with a note that says plainly they're estimates from <source> and that Keyword Planner numbers for the area replace them in week 1. Never write "pulled in week 1" in a cell, and never say anything is "confirmed" that isn't in the data.
 Rules: every number comes from the research or is clearly an estimate; never invent a statistic, review count or quote; never name a competitor; no case studies (the proposal carries those); the vertical's advertising rules apply (licensing boards, health or financial claims, Meta special ad categories).`,
       prompt: `${material}\n\n<pricing_reference note="${partner && !partner.show_fees ? "for your understanding only: do NOT show fees" : "exact fees"}">\n${rates}\n</pricing_reference>`,
     });
