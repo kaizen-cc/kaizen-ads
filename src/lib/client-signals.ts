@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { nyClock } from "@/lib/routines-core";
 import { PEOPLE_RULE } from "@/lib/people-matters";
-import { automatedTemplates, isTeamAuthor, onHold, recurringDue, refsToIds, templateOf, type Recurring } from "@/lib/client-signals-core";
+import { automatedTemplates, isTeamAuthor, isWebRequest, onHold, recurringDue, refsToIds, templateOf, webTitle, type Recurring } from "@/lib/client-signals-core";
 
 // What clients (and the team) said in shared client channels and email that changes the work (Nov 25 2026, the safety
 // check of the OS against an exec's Claude runs), read every half hour with the floating sweep, each message once:
@@ -206,14 +206,16 @@ Owners are names from the client's team: ${seats || "none listed"}. Never state 
         tally.killed += kill.asks.filter((x) => killable.has(x)).length + kill.promises.length;
       }
       for (const [t, task] of s.tasks.slice(0, 5).entries()) {
-        const owner = ownerOf(task.owner);
+        // The client's website: never an ads, creative or email person; whoever hands it to the web team
+        const web = isWebRequest(`${task.title}\n${task.detail}`);
+        const owner = web ? await webOwner(admin) : ownerOf(task.owner);
         if (!owner || blockedForPeople({ text: `${task.title}\n${task.detail}` })) continue;
         const due = task.due && /^\d{4}-\d{2}-\d{2}$/.test(task.due) ? task.due : null;
         const r = await createItemIfNew(admin, {
           owner_id: owner.profileId,
           client_id: clientId,
-          title: `[Client ${today.slice(5, 7)}/${today.slice(8, 10)}] ${task.title}`.slice(0, 300),
-          detail: `${task.detail}\n${s.kind === "dated_request" ? "Asked" : s.kind === "hold" ? "Hold" : "Cancelled"} by the client: "${s.quote.slice(0, 400)}"${m.url ? `\n${m.url}` : ""}\n(Created by Kaizen OS from the client's message.)`,
+          title: web ? webTitle(task.title) : `[Client ${today.slice(5, 7)}/${today.slice(8, 10)}] ${task.title}`.slice(0, 300),
+          detail: `${web ? "Web request: the web team isn't in Kaizen OS yet, so hand this to them.\n" : ""}${task.detail}\n${s.kind === "dated_request" ? "Asked" : s.kind === "hold" ? "Hold" : "Cancelled"} by the client: "${s.quote.slice(0, 400)}"${m.url ? `\n${m.url}` : ""}\n(Created by Kaizen OS from the client's message.)`,
           due_on: due,
           urgent: Boolean(due && Date.parse(due) - Date.parse(today) <= 2 * DAY) || s.kind === "hold",
           source_ref: `signal:${m.id}:${k}:${t}`,
@@ -300,4 +302,22 @@ async function holdWatch(admin: Admin): Promise<number> {
     }
   }
   return made;
+}
+
+/**
+ * Who hands web requests to the web team until it's in Kaizen OS: the CS Coordinator, else the executive named in
+ * WEB_REQUESTS_OWNER_EMAIL (the owner's choice, Nov 25 2026)
+ */
+let webOwnerCache: { at: number; v: { profileId: string; name: string } | null } | null = null;
+async function webOwner(admin: Admin): Promise<{ profileId: string; name: string } | null> {
+  if (webOwnerCache && Date.now() - webOwnerCache.at < 600_000) return webOwnerCache.v;
+  const { data: cs } = await admin.from("profiles").select("id, full_name").eq("is_active", true).eq("role", "cs_coordinator").limit(1).maybeSingle();
+  let v = cs ? { profileId: cs.id as string, name: cs.full_name as string } : null;
+  if (!v) {
+    const email = (process.env.WEB_REQUESTS_OWNER_EMAIL ?? "kyle@kaizenmarketing.agency").toLowerCase();
+    const { data: ex } = await admin.from("profiles").select("id, full_name").eq("is_active", true).ilike("email", email).limit(1).maybeSingle();
+    v = ex ? { profileId: ex.id as string, name: ex.full_name as string } : null;
+  }
+  webOwnerCache = { at: Date.now(), v };
+  return v;
 }

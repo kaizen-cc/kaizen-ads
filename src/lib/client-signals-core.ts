@@ -62,3 +62,24 @@ export function refsToIds(refs: readonly string[], asks: readonly { id: string }
   }
   return { asks: [...new Set(out.asks)], promises: [...new Set(out.promises)] };
 }
+
+/**
+ * A request about the client's website (owner, Nov 25 2026): site edits, promos on the site, landing pages on their
+ * site, bios and photos, gift cards on the site. The web team isn't in Kaizen OS yet, so these never go to an ads,
+ * creative or email person: they go to whoever hands them to the web team.
+ */
+// The client's own site, said outright
+const SITE = /\b(website|web ?site|web ?page|webpage|homepage|home page|on (the|our|their) site|site ?wide|site edits?|wordpress|squarespace|wix|shopify theme)\b/i;
+// Web things that are also marketing words: web only when no ad, email or SMS work is in the same request
+const MAYBE = /\b(landing page|bios?|headshots?|team photos?|staff photos?|gift ?cards?|domain)\b/i;
+const CHANNEL = /\b(ads?|meta|facebook|instagram|tiktok|google ads|campaigns?|emails?|klaviyo|sms|flows?|creatives?)\b/i;
+export function isWebRequest(text: string): boolean {
+  const t = text.replace(/\s+/g, " ");
+  // With ad, email or SMS work in it, it's web only when the change itself is on the site ("ads off until the offer
+  // matches the website" is ads work)
+  if (SITE.test(t)) return !CHANNEL.test(t) || /\b(remove|update|add|change|fix|edit|build|take down|put|post|upload)\b[^.]{0,60}\b(on|to|from|in) (the |our |their |the client's )?(website|site|homepage|web ?page)\b/i.test(t);
+  return MAYBE.test(t) && !CHANNEL.test(t);
+}
+
+/** How a web request reads on the hand-off person's day */
+export const webTitle = (title: string) => `Pass to the web team: ${title.replace(/^\[[^\]]{1,24}\]\s*/, "").replace(/^pass to the web team:\s*/i, "")}`.slice(0, 300);

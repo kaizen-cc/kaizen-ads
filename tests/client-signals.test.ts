@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { automatedTemplates, isTeamAuthor, onHold, recurringDue, refsToIds, templateOf } from "@/lib/client-signals-core";
+import { automatedTemplates, isTeamAuthor, isWebRequest, onHold, recurringDue, refsToIds, templateOf, webTitle } from "@/lib/client-signals-core";
 import { originIds } from "@/lib/done-check-core";
 
 // Nov 25 2026 safety check of the OS against an exec's Claude runs: what clients said that changes the work, items
@@ -36,6 +36,19 @@ describe("client signals", () => {
     expect(recurringDue(r, "2026-11-23", 1)).toBe(false);
     expect(recurringDue({ ...r, cadence: "weekdays" }, "2026-11-29", 0)).toBe(false);
     expect(recurringDue({ ...r, cadence: "weekly", weekday: 1 }, "2026-11-30", 1)).toBe(true);
+  });
+  it("website requests go to whoever hands them to the web team, never ads, creative or email", () => {
+    expect(isWebRequest("Remove the summer promotions from the Mira website")).toBe(true);
+    expect(isWebRequest("Add online gift card purchasing through PatientNow")).toBe(true);
+    expect(isWebRequest("Update Lisa's bio and headshot on the team page")).toBe(true);
+    expect(isWebRequest("Build a landing page on their site for the event")).toBe(true);
+    expect(isWebRequest("Add the microneedling series to the 12/3 holiday event ads")).toBe(false);
+    expect(isWebRequest("Point the Meta ads at the new landing page")).toBe(false);
+    expect(isWebRequest("Unschedule the Black Friday emails in Klaviyo")).toBe(false);
+    expect(isWebRequest("Build and schedule the three December campaigns in Klaviyo: catering Dec 1, gift card Dec 8")).toBe(false);
+    expect(isWebRequest("Confirm Evergreen ads stay off until offer matches website")).toBe(false);
+    expect(isWebRequest("Add the Black Friday banner to the homepage and pause the old ads")).toBe(true);
+    expect(webTitle("[Client 11/25] Remove the summer promotions from the Mira website")).toBe("Pass to the web team: Remove the summer promotions from the Mira website");
   });
   it("maps the reader's refs back to items and promises", () => {
     expect(refsToIds(["A2", "p1", "X9", "A7"], [{ id: "a1" }, { id: "a2" }], [{ id: "p1" }])).toEqual({ asks: ["a2"], promises: ["p1"] });
