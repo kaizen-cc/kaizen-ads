@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { itemSheetHref, pointsAtOverview, primaryHref } from "@/lib/exec-overview-core";
+import { itemSheetHref, pointsAtOverview, primaryHref, rowOpens } from "@/lib/exec-overview-core";
 
 // Owner, Nov 24 2026: an ask's "Open it" showed "Opening..." and landed back on the Overview. No item's main action may
 // point back at the Overview it's on: it goes to its real destination, else opens the item's own sheet (?item=).
@@ -35,5 +35,13 @@ describe("an item's main action never lands back on the Overview", () => {
           }
         });
     expect(offenders).toEqual([]);
+  });
+
+  // Issue #153: on the Overview's list view (?open=mine), a row pointing at /pipeline reloaded the Overview without
+  // ?open=, folding the list back up instead of opening the task
+  it("a list row opens its item instead of folding the list", () => {
+    for (const h of ["/pipeline", "/today?topic=mine", "#", null]) expect(rowOpens(h), String(h)).toBe("sheet");
+    expect(rowOpens("https://app.asana.com/0/1/2")).toBe("external");
+    for (const h of ["/board?t=12", "/clients/acme?tab=plan", "/pipeline?block=needs&item=ask%3A1"]) expect(rowOpens(h), h).toBe("page");
   });
 });

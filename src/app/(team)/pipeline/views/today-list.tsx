@@ -5,6 +5,7 @@ import { useState } from "react";
 import type { TodayItem, TopicKey } from "@/lib/today";
 import { ItemQuickActions } from "@/components/item-quick-actions";
 import { pushParams, useParam } from "@/lib/url-state";
+import { rowOpens } from "@/lib/exec-overview-core";
 
 // The Overview's list view (switched on per person, never the default): the day as plain rows, Asana-style. One row per
 // item: the client, what it is, when it's due and where it stands, with the same quick actions everywhere (Done,
@@ -17,6 +18,31 @@ const TIER_WORD: Record<string, string> = { critical: "Critical", high: "Importa
 export type ListSection = { topic: TopicKey; label: string; blurb: string; items: TodayItem[] };
 
 const hrefOf = (i: TodayItem) => i.action.href ?? (i.clientSlug ? `/clients/${i.clientSlug}` : `/today?topic=${i.topic}`);
+
+const TITLE = "text-left text-[14px] leading-snug text-fg hover:underline md:text-[13.5px]";
+
+/** The row's title, opening the item: its own sheet when it would only land back here (the list stays open), else where it lives */
+function RowTitle({ i }: { i: TodayItem }) {
+  const href = hrefOf(i);
+  const how = rowOpens(href);
+  if (how === "sheet")
+    return (
+      <button type="button" onClick={() => pushParams({ item: i.key })} className={TITLE}>
+        {i.title}
+      </button>
+    );
+  if (how === "external")
+    return (
+      <a href={href} target="_blank" rel="noreferrer" className={TITLE}>
+        {i.title}
+      </a>
+    );
+  return (
+    <Link href={href} className={TITLE}>
+      {i.title}
+    </Link>
+  );
+}
 
 /** "Today", "Tomorrow", "Nov 18" (late shows in red), from a date or a timestamp */
 function dueOf(due: string | null | undefined): { text: string; late: boolean } | null {
@@ -90,9 +116,7 @@ export function TodayList({ sections, badges = {} }: { sections: ListSection[]; 
                             <span className="truncate">{i.client}</span>
                           </span>
                           <span role="cell" className="grid min-w-0 gap-1.5">
-                            <Link href={hrefOf(i)} className="text-[14px] leading-snug text-fg hover:underline md:text-[13.5px]">
-                              {i.title}
-                            </Link>
+                            <RowTitle i={i} />
                             <ItemQuickActions
                               compact
                               item={{ key: i.key, href: hrefOf(i), dueAt: i.due ?? null, comments: badges[i.key]?.comments, waiting: badges[i.key]?.waiting, snap: { topic: i.topic, client: i.client, title: i.title, clientId: i.clientId } }}
