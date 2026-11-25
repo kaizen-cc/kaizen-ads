@@ -7,7 +7,7 @@ import { tileView } from "@/lib/channel-reports/layout";
 import { conversionMetricsOf } from "@/lib/email-metrics";
 import type { CampaignLite } from "@/lib/klaviyo/insights";
 import type { LocationBreakdown, LocationRow } from "@/lib/klaviyo/locations";
-import { parseAttributedTotal, sourceCandidates } from "@/lib/klaviyo/sources";
+import { firstSource, parseAttributedTotal, sourceCandidates } from "@/lib/klaviyo/sources";
 
 // The head of email's asks for the email report: a section per revenue source for two-order-system clients (Toast and
 // a custom POS) with a combined total that never counts an order twice, SMS on the chart, the best and the lowest
@@ -105,6 +105,19 @@ describe("revenue sources", () => {
     expect(sourceCandidates(all, ["TOAST"]).map((m) => m.id)).toEqual(["POS", "SALE"]);
     const page = { data: { attributes: { dates: ["2026-11-10", "2026-11-11"], data: [{ dimensions: ["msg1"], measurements: { sum_value: [100, 50.5], count: [3, 2] } }, { dimensions: [""], measurements: { sum_value: [9999], count: [99] } }, { dimensions: ["none"], measurements: { sum_value: [1], count: [1] } }] } } };
     expect(parseAttributedTotal([page])).toEqual({ revenue: 150.5, orders: 5 });
+  });
+
+  it("finds a club's booked appointments when the account has no Placed Order, and counts the one email earns on as the sale", () => {
+    const all = [
+      { id: "BOOK", name: "Booked Appointment", integration: "Zenoti" },
+      { id: "CANC", name: "Appointment Cancelled", integration: "Zenoti" },
+      { id: "REM", name: "Appointment Reminder", integration: "Zenoti" },
+      { id: "OPEN", name: "Opened Email", integration: "Klaviyo" },
+    ];
+    expect(sourceCandidates(all, []).map((m) => m.id)).toEqual(["BOOK"]);
+    expect(firstSource([{ id: "BOOK", name: "Booked Appointment", integration: "Zenoti", revenue: 26652.59, orders: 80 }, { id: "SALE", name: "Sale", integration: "Square", revenue: 120, orders: 2 }])).toEqual({ id: "BOOK", name: "Booked Appointment", integration: "Zenoti" });
+    expect(firstSource([{ id: "X", name: "Sale", integration: null, revenue: 0, orders: 0 }])).toBeNull();
+    expect(firstSource(undefined)).toBeNull();
   });
 });
 

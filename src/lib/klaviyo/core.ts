@@ -465,7 +465,7 @@ export function plainKlaviyoError(raw: string | null | undefined, status?: strin
     return { message: "Klaviyo refused the key: it was revoked or deleted", fix: "Create a new private key with Full Access in their Klaviyo and paste it here.", severity: "bad" };
   if (!text) return null;
   if (/No Placed Order/i.test(text))
-    return { message: "No Placed Order metric yet, so revenue can't be read", fix: "Connect their store (Shopify or another) inside Klaviyo. Campaigns, flows and lists still sync.", severity: "warn" };
+    return { message: "No Placed Order metric yet, so revenue can't be read", fix: "Pick the metric that counts as the sale (Booked Appointment, Bought Ticket, another integration's order) on the Klaviyo card, or connect their store inside Klaviyo. Campaigns, flows and lists still sync.", severity: "warn" };
   if (/can't read everything|\b403\b|lacks|permission/i.test(text))
     return { message: "The key lacks Read access on something Kaizen reads", fix: "Create a new private key with Full Access in their Klaviyo and paste it here.", severity: "bad" };
   if (/key can't be read|can't be decrypted|TOKEN_ENCRYPTION_KEY/i.test(text))
