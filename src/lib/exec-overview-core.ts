@@ -80,6 +80,16 @@ export function pointsAtOverview(href: string | null | undefined): boolean {
 /** The item's own sheet on the Overview (?item=<key>, Back closes it), from anywhere (the recap opens it there) */
 export const itemSheetHref = (c: { key: string; tab: string }) => `/pipeline?block=${encodeURIComponent(c.tab)}&item=${encodeURIComponent(c.key)}`;
 
+/**
+ * How a row in the Overview's list view opens its item (owner, Nov 25 2026: a click folded the list back up instead of
+ * opening the task): one that only points at the Overview opens its own sheet in place (?item=, the list stays open),
+ * another site in a new tab, a page of Kaizen OS in this one.
+ */
+export function rowOpens(href: string | null | undefined): "sheet" | "external" | "page" {
+  if (pointsAtOverview(href)) return "sheet";
+  return /^https?:/i.test(String(href).trim()) ? "external" : "page";
+}
+
 /** An item's main action: its real destination, else its own sheet (never the Overview it's on) */
 export function primaryHref(c: { key: string; tab: string; action: { href: string | null } }): string {
   return pointsAtOverview(c.action.href) ? itemSheetHref(c) : (c.action.href as string);
