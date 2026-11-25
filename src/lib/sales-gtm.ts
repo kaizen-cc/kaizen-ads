@@ -39,11 +39,11 @@ const GTM_SCHEMA = obj({
   sources: STRS,
 });
 const CLAIMS = { type: "array", items: { type: "object", additionalProperties: false, required: ["text", "tag"], properties: { text: STR, tag: { type: "string", enum: ["certain", "likely", "guessing"] } } } };
-const NOTES_SCHEMA = obj({ headline: STR, flags: CLAIMS, decisions: CLAIMS, caveats: CLAIMS, risks: CLAIMS, facts: CLAIMS });
+const NOTES_SCHEMA = obj({ headline: STR, competitors: CLAIMS, flags: CLAIMS, decisions: CLAIMS, caveats: CLAIMS, risks: CLAIMS, facts: CLAIMS });
 
 export async function partnerOf(admin: Admin, key: string | null | undefined): Promise<Partner | null> {
   if (!key) return null;
-  const { data } = await admin.from("sales_partners").select("key, name, prepared_by, brand, rules, show_fees, contact, website, kit_confirmed_at").eq("key", key).eq("active", true).maybeSingle();
+  const { data } = await admin.from("sales_partners").select("key, name, prepared_by, brand, rules, show_fees, contact, pitcher, pitcher_title, website, kit_confirmed_at").eq("key", key).eq("active", true).maybeSingle();
   return (data as Partner | null) ?? null;
 }
 
@@ -51,7 +51,7 @@ export async function partnerOf(admin: Admin, key: string | null | undefined): P
 export async function partnerNamed(admin: Admin, text: string | null | undefined): Promise<Partner | null> {
   const t = String(text ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
   if (!t) return null;
-  const { data } = await admin.from("sales_partners").select("key, name, prepared_by, brand, rules, show_fees, contact, website, kit_confirmed_at").eq("active", true);
+  const { data } = await admin.from("sales_partners").select("key, name, prepared_by, brand, rules, show_fees, contact, pitcher, pitcher_title, website, kit_confirmed_at").eq("active", true);
   return ((data ?? []) as Partner[]).find((p) => t.includes(p.key) || t.includes(p.name.toLowerCase().replace(/[^a-z0-9]/g, ""))) ?? null;
 }
 
@@ -63,7 +63,7 @@ export async function partnerNamed(admin: Admin, text: string | null | undefined
 export async function relationshipOf(admin: Admin, p: { relationship?: string | null; partner_key?: string | null; brief?: unknown; id: string }): Promise<{ relationship: "direct" | "white_label"; partner: Partner | null; detected: boolean } | null> {
   if (p.relationship === "direct") return { relationship: "direct", partner: null, detected: false };
   if (p.relationship === "white_label" && p.partner_key) return { relationship: "white_label", partner: await partnerOf(admin, p.partner_key), detected: false };
-  const { data: partners } = await admin.from("sales_partners").select("key, name, prepared_by, brand, rules, show_fees, contact, website, kit_confirmed_at").eq("active", true);
+  const { data: partners } = await admin.from("sales_partners").select("key, name, prepared_by, brand, rules, show_fees, contact, pitcher, pitcher_title, website, kit_confirmed_at").eq("active", true);
   const { data: rn } = await admin.from("prospect_notes").select("body").eq("prospect_id", p.id).eq("kind", "research").order("created_at", { ascending: false }).limit(1).maybeSingle();
   const text = `${JSON.stringify(p.brief ?? {})} ${String((rn?.body as { notes?: string } | null)?.notes ?? "")}`.toLowerCase();
   const { partnerCredited } = await import("@/lib/sales-gtm-core");
@@ -103,7 +103,7 @@ export async function autoGtm(admin: Admin, o: { prospectId: string; profileId: 
   let rel = await relationshipOf(admin, p as { id: string; relationship: string | null; partner_key: string | null; brief: unknown });
   // A sales call's invite: a partner's domain among the guests, or its name in the title or description
   if (!rel && o.hint) {
-    const { data: partners } = await admin.from("sales_partners").select("key, name, prepared_by, brand, rules, show_fees, contact, website, kit_confirmed_at").eq("active", true);
+    const { data: partners } = await admin.from("sales_partners").select("key, name, prepared_by, brand, rules, show_fees, contact, pitcher, pitcher_title, website, kit_confirmed_at").eq("active", true);
     const { partnerCredited } = await import("@/lib/sales-gtm-core");
     const h = o.hint.toLowerCase();
     const hit = ((partners ?? []) as Partner[]).find((x) => partnerCredited(h, x) || (x.name.length >= 4 && h.includes(x.name.toLowerCase())));
@@ -159,6 +159,16 @@ export async function prospectKeywordData(admin: Admin, p: { website: string | n
     // And the searches the market research named ("sauna near me / cold plunge near me"), first
     const themed = (brief.market?.trends ?? []).flatMap((t) => t.keyword.split("/")).map((x) => x.replace(/\(.*?\)|\+.*$/g, "").trim().toLowerCase()).filter((x) => x.length >= 3 && x.length <= 60);
     seeds.unshift(...themed.filter((x) => !seeds.includes(x)));
+    const asked = await askJson<{ searches: string[] }>({
+      agent: "sales_research",
+      label: "gtm keyword seeds",
+      override: { model: "haiku", effort: "low" },
+      maxTokens: 800,
+      schema: { type: "object", additionalProperties: false, required: ["searches"], properties: { searches: { type: "array", items: { type: "string" } } } },
+      system: "List 12 short Google searches (2-4 words, lowercase, no brand names, no locations) that someone ready to buy would type to find a business like this one. Plain generic category and service searches.",
+      prompt: `${p.industry ?? ""}\n${brief.sells}\n${brief.summary ?? ""}`.slice(0, 2000),
+    }).catch(() => ({ searches: [] as string[] }));
+    seeds.unshift(...asked.searches.map((x) => x.trim().toLowerCase()).filter((x) => x.length >= 3 && x.length <= 60 && !seeds.includes(x)));
     seeds.splice(20);
     const url = p.website ? (/^https?:\/\//i.test(p.website) ? p.website : `https://${p.website}`) : null;
     const opts = { url, geo: geos.length ? geos.map((x) => x.geo) : undefined };
@@ -172,7 +182,7 @@ export async function prospectKeywordData(admin: Admin, p: { website: string | n
     // The last 12 months, oldest first (Keyword Planner's order): the month each one ends on
     const now = new Date();
     const monthName = (i: number, n: number) => MONTHS[(now.getMonth() - (n - i) + 24) % 12];
-    const lines = ideas.map((r) => `${r.text} | ${r.searches}/mo | top-of-page bid $${r.bidLow.toFixed(2)}-$${r.bidHigh.toFixed(2)} | ${r.competition} | ${r.months.length ? r.months.map((m, i) => `${monthName(i, r.months.length)} ${m}`).join(", ") : ""}`);
+    const lines = ideas.map((r) => `${r.text} | ${r.searches}/mo | ${r.bidHigh > 0 ? `top-of-page bid $${r.bidLow.toFixed(2)}-$${r.bidHigh.toFixed(2)}` : "no bid data"} | ${r.competition} | ${r.months.length ? r.months.map((m, i) => `${monthName(i, r.months.length)} ${m}`).join(", ") : ""}`);
     return `<keyword_data source="Google Keyword Planner" read="${today()}" area="${geoHit?.name ?? "United States"}">\nkeyword | avg monthly searches | top-of-page bid range | competition | last 12 months\n${lines.join("\n")}\n</keyword_data>`;
   } catch (e) {
     console.error("[gtm] keyword planner", e instanceof Error ? e.message : e);
@@ -224,8 +234,16 @@ export async function runGtm(admin: Admin, id: string): Promise<{ ran: boolean; 
     const [rates, { data: studies }] = await Promise.all([rateCardText(admin), admin.from("sales_case_studies").select("key, name, vertical, fits, services, results, connection").eq("active", true).order("sort_order")]);
     const by = partner ? partner.prepared_by : "Kaizen Marketing";
     const short0 = shortName(p.name);
-    const keywordData = await prospectKeywordData(admin, p, brief);
-    const material = `<prospect name="${p.name.replace(/"/g, "'")}" short_name_guess="${short0}" site="${p.website ?? ""}" industry="${p.industry ?? ""}" location="${p.location ?? ""}">\n${briefText(p.name, brief)}\n</prospect>\n\n<business_research>\n${String(raw.notes ?? "").slice(0, 30_000)}\n</business_research>\n\n<market_research>\n${String(raw.market_notes ?? "").slice(0, 30_000)}\n</market_research>\n\n${keywordData ?? '<keyword_data unavailable="true">Keyword Planner could not be read for this draft.</keyword_data>'}${job.ask ? `\n\n<asked>${job.ask}</asked>` : ""}`;
+    // The market data, read now: search demand (Keyword Planner), the trade area (Census), live Meta ads (Motion)
+    const { censusProfile, metaAdIntel } = await import("@/lib/sales-intel");
+    const rivals = (brief.market?.competitors ?? []).filter((x) => x.name).slice(0, 5).map((x) => ({ name: x.name, website: x.website ?? null, role: "competitor" as const }));
+    const [keywordData, censusData, adData] = await Promise.all([
+      prospectKeywordData(admin, p, brief),
+      censusProfile({ location: p.location, places: brief.locations }),
+      metaAdIntel(admin, [{ name: p.name, website: p.website, role: "prospect" }, ...rivals]),
+    ]);
+    console.log(`[gtm] ${id} market data: census ${censusData.includes('unavailable="true"') ? "unavailable" : "read"}, meta ads ${adData.includes('unavailable="true"') ? "unavailable" : "read"} (${rivals.length} competitors)`);
+    const material = `<prospect name="${p.name.replace(/"/g, "'")}" short_name_guess="${short0}" site="${p.website ?? ""}" industry="${p.industry ?? ""}" location="${p.location ?? ""}">\n${briefText(p.name, brief)}\n</prospect>\n\n<business_research>\n${String(raw.notes ?? "").slice(0, 30_000)}\n</business_research>\n\n<market_research>\n${String(raw.market_notes ?? "").slice(0, 30_000)}\n</market_research>\n\n${keywordData ?? '<keyword_data unavailable="true">Keyword Planner could not be read for this draft.</keyword_data>'}\n\n${censusData}\n\n${adData}${job.ask ? `\n\n<asked>${job.ask}</asked>` : ""}`;
 
     // 2. The strategy
     await set({ stage: "writing" });
@@ -249,6 +267,8 @@ Structure (every section is filled; tables are {head, rows, note}, rows as array
 - plan: title "What happens after ${short0} says yes", ninety table head ["Phase", "What we do", "What ${short0} sees"] rows Days 1-14 Foundation, Days 15-45 Launch & test, Days 46-90 Optimize & scale; calendar table head ["Window", "Market reality", "Campaign focus"] 4-6 rows across 12 months (their seasonality, deadlines, cheapest and most expensive click months).
 - measure: title "How we'll judge success", table head ["Checkpoint", "What we measure", "What \\"on track\\" looks like"] rows Day 30, Day 60, Day 90; note (their sales cycle), needs (5-8 things we need from them), next: 4 {lead, text}, one_line (the opportunity in one line).
 - sources: every source cited (publication, title, date).
+Live ads (<meta_ads>): the footprint's paid-social row states the prospect's verified Meta result with its read date (e.g. "0 active Meta ads (Meta Ad Library, read Nov 2026)", or the count and what they run); never "not verified" when <meta_ads> has it. The competitors table stays by TYPE (never a name) but its "how they win" comes from the real ads in <meta_ads>: their hooks, offers, formats, how long ads have run and where they send people. Google Ads Transparency Center has no public API: when it wasn't checked, say so once, plainly.
+The buyer and the market (<census>): market.avatar is built from the census numbers (income, households, age, homeownership, degrees for the zip, city and county), citing "U.S. Census ACS 2023". market.tam is a serviceable market, never a global or national industry figure: the relevant households or businesses in the trade area from <census> (e.g. households over $100k within the city, or county establishments of the right size in the right sectors) × a plausible annual value per customer, with the math written out, ending "[estimated]". When <census> is unavailable, say the census data wasn't read and compute the same estimate from the best counts in the research, marked "[estimated]", or give the method with one worked example.
 Search numbers (the trends table, the services table's CPC column, CPC assumptions and the calendar's click-price months): when <keyword_data> has rows, use them exactly (CPC as the top-of-page bid range, e.g. "$4.10-$12.80"; volume as average monthly searches, summed per theme), say in the table note "Google Keyword Planner, <area>, read <month year>", and name the busiest and quietest months from its 12-month searches. When it's unavailable, give a reasoned range for every cell (published benchmarks for the category, or the closest category) and mark each "[estimated]"; never leave a cell blank or write "not sourced", with a note that says plainly they're estimates from <source> and that Keyword Planner numbers for the area replace them in week 1. Never write "pulled in week 1" in a cell, and never say anything is "confirmed" that isn't in the data.
 Rules: every number comes from the research or is clearly an estimate; never invent a statistic, review count or quote; never name a competitor; no case studies (the proposal carries those); the vertical's advertising rules apply (licensing boards, health or financial claims, Meta special ad categories).`,
       prompt: `${material}\n\n<pricing_reference note="${partner && !partner.show_fees ? "for your understanding only: do NOT show fees" : "exact fees"}">\n${rates}\n</pricing_reference>`,
@@ -274,6 +294,7 @@ Rules: every number comes from the research or is clearly an estimate; never inv
       maxTokens: 16_000,
       system: `You write the internal talking notes that go with a go-to-market strategy for ${p.name}. Never sent to the prospect; they're for ${partner ? `the ${partner.name} team pitching it (a white-label partner: no Kaizen mentions, written for them)` : "the Kaizen person running the sales call"}. Every item is one or two sentences with a tag: certain (seen in a source), likely (a strong inference), guessing (an informed estimate).
 - headline: what the research says to lead with, in two sentences.
+- competitors: one item per competitor in <meta_ads>, NAMED (internal only): active Meta ad count and read date, formats, the hooks and offers they run, CTAs, landing pages and the funnel those imply; plus one item verifying the prospect's own Meta ads. "certain" for what <meta_ads> shows. When <meta_ads> is unavailable, one item saying so and why.
 - flags: things to know before pitching (a stat that could be wrong and how to check it, e.g. Meta Ad Library searched only under one page name; anything sensitive about the prospect's current vendors or site${partner ? `; if ${partner.name} appears to have built or run their site or marketing, say so plainly and how the document words those fixes` : ""}).
 - decisions: the strategy choices and why the research led there (the lead offer, what was left out and why, channel split).
 - caveats: where the numbers are soft (tiers and projections are estimates; benchmarks are adjacent categories; timing assumptions like a launch month and what to switch if they sign later).

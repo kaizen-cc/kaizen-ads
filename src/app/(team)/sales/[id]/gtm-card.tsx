@@ -177,6 +177,7 @@ export function GtmCard({ prospectId, gtm, earlier = [], partners, relationship,
 
 function Notes({ notes }: { notes: GtmNotes }) {
   const sections: [string, GtmNotes["flags"]][] = [
+    ["Competitor ads", notes.competitors ?? []],
     ["Flags", notes.flags],
     ["Strategy decisions", notes.decisions],
     ["Numbers caveats", notes.caveats],

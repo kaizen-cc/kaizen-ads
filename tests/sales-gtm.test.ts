@@ -93,3 +93,16 @@ describe("GTM text: lengths", () => {
     expect(fit("one long run of words without any stop at all here", 30)).toBe("one long run of words without…");
   });
 });
+
+describe("GTM text: bids and the partner cover", () => {
+  it("never shows a $0.00 bid range", () => {
+    const c = cleanGtm({ market: { trends: { head: ["Search theme", "Typical CPC", "Monthly volume", "Note"], rows: [["cpa firm", "$0.00-$0.00", "90", ""], ["cpas", "$6.96–$18.45", "210", ""]] } } });
+    expect(c.market.trends.rows[0][1]).toBe("No bid data");
+    expect(c.market.trends.rows[1][1]).toBe("$6.96–$18.45");
+  });
+  it("puts the partner's pitcher on the cover, the agency under it", () => {
+    const b = brandFor({ prepared_by: "ZenChange Marketing", brand: {}, contact: { name: "Diane", role: "Partner contact" }, pitcher: "Leann" });
+    expect(b.preparedLine).toBe("Leann");
+    expect(b.preparedBy).toBe("ZenChange Marketing");
+  });
+});

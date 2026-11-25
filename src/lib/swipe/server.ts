@@ -90,7 +90,7 @@ export function preheaderOf(html: string, snippet: string | null): string {
 /** The email's links (buttons and product links first), for the runner to open one before browsing */
 export function linksOf(html: string): string[] {
   const out: string[] = [];
-  for (const m of html.matchAll(/<a[^>]*href="(https?:[^"]+)"/gi)) {
+  for (const m of html.matchAll(/<a\b[^>]*href="(https?:[^"]+)"/gi)) {
     const u = m[1].replace(/&amp;/g, "&");
     if (/unsubscribe|preferences|manage|privacy|terms|facebook\.com|instagram\.com|tiktok\.com|twitter\.com|x\.com|youtube\.com|pinterest\.com|mailto:/i.test(u)) continue;
     if (!out.includes(u)) out.push(u);

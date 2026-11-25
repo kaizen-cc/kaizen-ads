@@ -476,7 +476,7 @@ const makeGtm: AiTool = {
 const partnerKit: AiTool = {
   name: "partner_kit",
   description: "Executives and leads: a white-label partner agency's brand kit, kept once and reused on every GTM for them (logo, colors, fonts, the 'Prepared by' name and contact). Without confirm: shows what's on file, or pulls the logo and main color from the partner's website (website) as a proposal; say it back and ask. confirm: true saves it (with any corrections: prepared_by, contact_name, contact_role, contact_email, accent, dark). Adding a new partner: name + website. Never guess silently: always confirm before it's used.",
-  input_schema: { type: "object", properties: { partner: { type: "string" }, website: { type: "string" }, prepared_by: { type: "string" }, contact_name: { type: "string" }, contact_role: { type: "string" }, contact_email: { type: "string" }, accent: { type: "string" }, dark: { type: "string" }, confirm: { type: "boolean" } }, required: ["partner"], additionalProperties: false },
+  input_schema: { type: "object", properties: { partner: { type: "string" }, website: { type: "string" }, prepared_by: { type: "string" }, pitcher: { type: "string", description: "Who pitches for the partner (shown under Prepared by on the cover)" }, pitcher_title: { type: "string" }, contact_name: { type: "string" }, contact_role: { type: "string" }, contact_email: { type: "string" }, accent: { type: "string" }, dark: { type: "string" }, confirm: { type: "boolean" } }, required: ["partner"], additionalProperties: false },
   only: worksSales,
   run: async (user: Staff, input) => {
     if (!worksSales(user)) return NOT_SALES;
@@ -502,7 +502,9 @@ const partnerKit: AiTool = {
     const summary = { partner: existing?.name ?? name, prepared_by: preparedBy, contact, website, logo_found: Boolean(logo), colors: { accent: brand.accent ?? null, dark: brand.dark ?? null }, confirmed: Boolean(existing?.kit_confirmed_at) };
     if (input.confirm !== true) return { ok: true, proposed: summary, say: `${summary.partner}'s kit: prepared by "${preparedBy}"${contact.name ? `, contact ${contact.name}` : ""}, ${logo ? "logo found" : "no logo (their name in text)"}${brand.accent ? `, accent ${brand.accent}` : ""}. Use it?`, note: "Say it back and ask; call again with confirm: true (and any corrections)." };
     const key = existing?.key ?? name.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 30);
-    const row = { key, name: existing?.name ?? name, prepared_by: preparedBy, brand, contact, website, kit_confirmed_at: new Date().toISOString(), updated_at: new Date().toISOString(), ...(existing ? {} : { rules: "White-label partner: their branding only, zero Kaizen mentions, ad spend only unless told otherwise; internal notes rewritten for the partner.", show_fees: false }) };
+    const pitcher = str(input.pitcher) ?? (existing as { pitcher?: string | null } | null)?.pitcher ?? null;
+    const pitcherTitle = str(input.pitcher_title) ?? (existing as { pitcher_title?: string | null } | null)?.pitcher_title ?? null;
+    const row = { key, name: existing?.name ?? name, prepared_by: preparedBy, pitcher, pitcher_title: pitcherTitle, brand, contact, website, kit_confirmed_at: new Date().toISOString(), updated_at: new Date().toISOString(), ...(existing ? {} : { rules: "White-label partner: their branding only, zero Kaizen mentions, ad spend only unless told otherwise; internal notes rewritten for the partner.", show_fees: false }) };
     const { error } = await admin.from("sales_partners").upsert(row, { onConflict: "key" });
     if (error) return { ok: false, error: error.message };
     return { ok: true, saved: row.name, say: `${row.name}'s brand kit is saved; every white-label GTM for them uses it.` };

@@ -15,7 +15,7 @@ type Obj = Record<string, unknown>;
 const isObj = (x: unknown): x is Obj => Boolean(x) && typeof x === "object" && !Array.isArray(x);
 
 /** The list inside a tool's answer, wherever Motion put it. */
-function itemsOf(x: unknown): Obj[] {
+export function itemsOf(x: unknown): Obj[] {
   if (Array.isArray(x)) return x.filter(isObj);
   if (!isObj(x)) return [];
   for (const v of Object.values(x)) if (Array.isArray(v) && v.some(isObj)) return v.filter(isObj);
@@ -24,14 +24,14 @@ function itemsOf(x: unknown): Obj[] {
 }
 
 /** The first field present, by any of its likely names (case and separators ignored), one level deep too. */
-function pick(o: Obj, ...keys: string[]): unknown {
+export function pick(o: Obj, ...keys: string[]): unknown {
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
   const want = keys.map(norm);
   for (const [k, v] of Object.entries(o)) if (want.includes(norm(k)) && v !== null && v !== undefined && v !== "") return v;
   for (const v of Object.values(o)) if (isObj(v)) for (const [k, w] of Object.entries(v)) if (want.includes(norm(k)) && w !== null && w !== undefined && w !== "") return w;
   return undefined;
 }
-const str = (v: unknown) => (typeof v === "string" ? v.trim() || null : typeof v === "number" ? String(v) : null);
+export const str = (v: unknown) => (typeof v === "string" ? v.trim() || null : typeof v === "number" ? String(v) : null);
 const num = (v: unknown) => (typeof v === "number" ? v : typeof v === "string" && /^\d+(\.\d+)?$/.test(v) ? Number(v) : null);
 const urls = (v: unknown): string[] => (typeof v === "string" && /^https?:\/\//.test(v) ? [v] : Array.isArray(v) ? v.flatMap(urls) : isObj(v) ? Object.values(v).flatMap(urls) : []);
 
@@ -54,7 +54,7 @@ function mediaOf(ad: Obj) {
   return out.slice(0, 10);
 }
 
-function adRow(ad: Obj, brandId: string, industry: string | null) {
+export function adRow(ad: Obj, brandId: string, industry: string | null) {
   // Motion's Inspo shape: { _id, page: { name }, creativeFile: { fileUrl, thumbnailUrl }, creativeAssetFormat, creativeDetails: {...} }
   const d = isObj(ad.creativeDetails) ? (ad.creativeDetails as Obj) : ad;
   const id = str(ad._id) ?? str(pick(ad, "id", "creativeId", "adId"));
@@ -102,7 +102,7 @@ type Session = Awaited<ReturnType<typeof openSession>>;
 type Workspace = { id: string; name: string };
 
 /** Kaizen's Motion workspaces (one per client), from the sign-in's auth context. */
-function workspacesOf(auth: unknown): Workspace[] {
+export function workspacesOf(auth: unknown): Workspace[] {
   const orgs = itemsOf(isObj(auth) && isObj(auth.data) ? (auth.data as Obj).organizations : isObj(auth) ? auth.organizations : null);
   return orgs.flatMap((o) => itemsOf(o.workspaces)).map((w) => ({ id: String(w.id), name: String(w.name ?? "") })).filter((w) => w.id);
 }

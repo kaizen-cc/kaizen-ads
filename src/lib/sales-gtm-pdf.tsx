@@ -95,7 +95,7 @@ export function kaizenBrand(sender: KaizenSender = { name: null, title: null, ta
 /** Kept for the tests and callers without a sender: Kaizen's look */
 export const KAIZEN_BRAND: GtmBrand = { ...kaizenBrand(), fonts: HELV };
 
-export type PartnerKit = { prepared_by: string; brand: Record<string, string>; contact?: { name?: string; role?: string; email?: string } | null };
+export type PartnerKit = { prepared_by: string; brand: Record<string, string>; contact?: { name?: string; role?: string; email?: string } | null; pitcher?: string | null; pitcher_title?: string | null };
 
 export function brandFor(partner: PartnerKit | null, sender?: KaizenSender): GtmBrand {
   if (!partner) return kaizenBrand(sender);
@@ -104,7 +104,8 @@ export function brandFor(partner: PartnerKit | null, sender?: KaizenSender): Gtm
   return {
     mode: "partner",
     preparedBy: partner.prepared_by,
-    preparedLine: c?.name ? `${c.name}${c.role ? `, ${c.role}` : ""}${c.email ? ` · ${c.email}` : ""}` : null,
+    // Who pitches it (the kit's pitcher), with the agency under it; the delivery contact only when no pitcher is set
+    preparedLine: partner.pitcher ? `${partner.pitcher}${partner.pitcher_title ? `, ${partner.pitcher_title}` : ""}` : c?.name ? `${c.name}${c.role ? `, ${c.role}` : ""}${c.email ? ` · ${c.email}` : ""}` : null,
     tagline: b.tagline ?? null,
     dark: b.dark ?? "#0F1F2E",
     accent: b.accent ?? "#178F92",
@@ -125,18 +126,18 @@ const LINE = "#E3E5E8";
 function styles(b: GtmBrand) {
   const f = b.fonts;
   return StyleSheet.create({
-    page: { fontFamily: f.body, fontSize: 9.6, color: b.ink, paddingTop: 58, paddingBottom: 56, paddingHorizontal: 50, backgroundColor: b.page },
+    page: { fontFamily: f.body, fontSize: 9.2, color: b.ink, paddingTop: 52, paddingBottom: 50, paddingHorizontal: 46, backgroundColor: b.page },
     head: { position: "absolute", top: 20, left: 50, right: 50, flexDirection: "row", justifyContent: "space-between", alignItems: "center", fontSize: 7, color: b.muted, letterSpacing: 0.6, textTransform: "uppercase", borderBottomWidth: 0.6, borderBottomColor: LINE, paddingBottom: 6 },
     headLogo: { height: 12, objectFit: "contain" },
     foot: { position: "absolute", bottom: 24, left: 50, right: 50, flexDirection: "row", justifyContent: "space-between", fontSize: 7.5, color: b.muted, borderTopWidth: 0.6, borderTopColor: LINE, paddingTop: 7 },
     num: { fontSize: 8, color: b.accent, fontFamily: f.bodyBold, letterSpacing: 1, textTransform: "uppercase", marginBottom: 6 },
     h1: { fontSize: 22, fontFamily: f.title === "Helvetica-Bold" ? "Helvetica-Bold" : f.title, letterSpacing: -0.3, marginBottom: 8, lineHeight: 1.15 },
-    lede: { fontSize: 11, color: "#33363C", lineHeight: 1.5, marginBottom: 14 },
-    h3: { fontSize: 11.5, fontFamily: f.title, marginTop: 12, marginBottom: 6 },
-    p: { fontSize: 9.6, lineHeight: 1.55, color: "#2B2E33", marginBottom: 6 },
+    lede: { fontSize: 10.4, color: "#33363C", lineHeight: 1.45, marginBottom: 10 },
+    h3: { fontSize: 11.2, fontFamily: f.title, marginTop: 10, marginBottom: 5 },
+    p: { fontSize: 9.2, lineHeight: 1.45, color: "#2B2E33", marginBottom: 5 },
     li: { flexDirection: "row", marginBottom: 5 },
     dot: { width: 12, color: b.accent, fontFamily: f.bodyBold },
-    liText: { flex: 1, fontSize: 9.6, lineHeight: 1.5, color: "#2B2E33" },
+    liText: { flex: 1, fontSize: 9.2, lineHeight: 1.42, color: "#2B2E33" },
     bold: { fontFamily: f.bodyBold, color: b.ink },
     stats: { flexDirection: "row", marginBottom: 14, marginTop: 2 },
     stat: { flex: 1, backgroundColor: SOFT, borderTopWidth: 3, borderTopColor: b.accent, padding: 11, marginRight: 8, borderRadius: 5 },
@@ -146,12 +147,12 @@ function styles(b: GtmBrand) {
     table: { marginTop: 4, marginBottom: 8 },
     th: { flexDirection: "row", borderBottomWidth: 1.4, borderBottomColor: b.accent, paddingBottom: 5 },
     thCell: { flex: 1, fontSize: 8, color: b.accent, fontFamily: f.bodyBold, paddingRight: 6 },
-    tr: { flexDirection: "row", borderBottomWidth: 0.6, borderBottomColor: LINE, paddingVertical: 6 },
-    trAlt: { flexDirection: "row", borderBottomWidth: 0.6, borderBottomColor: LINE, paddingVertical: 6, backgroundColor: SOFT },
-    cell: { flex: 1, fontSize: 8.4, lineHeight: 1.42, color: "#2B2E33", paddingRight: 6 },
-    cellFirst: { flex: 1, fontSize: 8.4, lineHeight: 1.42, color: b.ink, fontFamily: f.bodyBold, paddingRight: 6 },
+    tr: { flexDirection: "row", borderBottomWidth: 0.6, borderBottomColor: LINE, paddingVertical: 4.5 },
+    trAlt: { flexDirection: "row", borderBottomWidth: 0.6, borderBottomColor: LINE, paddingVertical: 4.5, backgroundColor: SOFT },
+    cell: { flex: 1, fontSize: 8.1, lineHeight: 1.35, color: "#2B2E33", paddingRight: 6 },
+    cellFirst: { flex: 1, fontSize: 8.1, lineHeight: 1.35, color: b.ink, fontFamily: f.bodyBold, paddingRight: 6 },
     note: { fontSize: 7.4, color: b.muted, lineHeight: 1.4, marginTop: 2, marginBottom: 8 },
-    callout: { backgroundColor: b.accentSoft, borderLeftWidth: 3, borderLeftColor: b.accent, padding: 12, marginTop: 10, marginBottom: 6, borderRadius: 5 },
+    callout: { backgroundColor: b.accentSoft, borderLeftWidth: 3, borderLeftColor: b.accent, padding: 10, marginTop: 8, marginBottom: 6, borderRadius: 5 },
     calloutTitle: { fontSize: 10.5, color: b.accent, fontFamily: f.title, marginBottom: 4 },
     two: { flexDirection: "row", marginTop: 10 },
     card: { flex: 1, backgroundColor: SOFT, padding: 12, marginRight: 10, borderRadius: 5 },
@@ -247,7 +248,24 @@ function Callout({ s, title, text }: { s: S; title: string; text: string }) {
   );
 }
 
-function Section({ s, b, short, prepFor, n, eyebrow, title, lede, children }: { s: S; b: GtmBrand; short: string; prepFor: string; n: string; eyebrow: string; title: string; lede?: string; children: React.ReactNode }) {
+/** One numbered section, flowing on from the last (no forced page break): its heading never sits alone at a page's foot */
+function Section({ s, n, eyebrow, title, lede, children }: { s: S; b?: GtmBrand; short?: string; prepFor?: string; n: string; eyebrow: string; title: string; lede?: string; children: React.ReactNode }) {
+  return (
+    <View style={n === "01" ? undefined : { marginTop: 26 }}>
+      <View wrap={false} minPresenceAhead={140}>
+        <Text style={s.num}>
+          {n} · {eyebrow}
+        </Text>
+        <Text style={s.h1}>{title}</Text>
+        {lede ? <Text style={s.lede}>{lede}</Text> : null}
+      </View>
+      {children}
+    </View>
+  );
+}
+
+/** The pages after the cover: one flowing run with the running header and footer */
+function Body({ s, b, short, prepFor, children }: { s: S; b: GtmBrand; short: string; prepFor: string; children: React.ReactNode }) {
   return (
     <Page size="LETTER" style={s.page}>
       <View style={s.head} fixed>
@@ -257,11 +275,6 @@ function Section({ s, b, short, prepFor, n, eyebrow, title, lede, children }: { 
           {b.logo ? `${short} · Go-to-market strategy · ` : ""}Confidential · Prepared for {prepFor}
         </Text>
       </View>
-      <Text style={s.num}>
-        {n} · {eyebrow}
-      </Text>
-      <Text style={s.h1}>{title}</Text>
-      {lede ? <Text style={s.lede}>{lede}</Text> : null}
       {children}
       <View style={s.foot} fixed>
         <Text>
@@ -310,6 +323,7 @@ export function GtmDoc({ c, brand, prospect }: { c: GtmContent; brand: GtmBrand;
         </View>
       </Page>
 
+      <Body {...sec}>
       <Section {...sec} n="01" eyebrow="Executive summary" title="The short version" lede={c.exec.lede}>
         <Stats s={s} items={c.exec.stats} />
         <Text style={s.h3}>The opportunity</Text>
@@ -460,6 +474,7 @@ export function GtmDoc({ c, brand, prospect }: { c: GtmContent; brand: GtmBrand;
           </View>
         )}
       </Section>
+      </Body>
     </Document>
   );
 }

@@ -25,7 +25,7 @@ export type GtmContent = {
 };
 
 export type Claim = { text: string; tag: "certain" | "likely" | "guessing" };
-export type GtmNotes = { headline: string; flags: Claim[]; decisions: Claim[]; caveats: Claim[]; risks: Claim[]; facts: Claim[]; partner_label: string | null };
+export type GtmNotes = { headline: string; competitors: Claim[]; flags: Claim[]; decisions: Claim[]; caveats: Claim[]; risks: Claim[]; facts: Claim[]; partner_label: string | null };
 
 /** Text that went through a Latin-1 round trip ("Days 1-14 Â·", "â€“"): the characters put back */
 export function demojibake(t: string): string {
@@ -48,7 +48,9 @@ export function fit(t: string, n: number): string {
   const end = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("! "), cut.lastIndexOf("? "), cut.endsWith(".") ? n - 1 : -1);
   return end >= n * 0.5 ? cut.slice(0, end + 1) : `${cut.replace(/\s+\S*$/, "").replace(/[,;:\s]+$/, "")}…`;
 }
-const s = (v: unknown, n = 1200) => fit(demojibake(String(v ?? "")).replace(/\s+/g, " ").trim(), n);
+/** "$0.00-$0.00" is Keyword Planner returning no bid estimate, never a free click */
+const noZeroBids = (t: string) => t.replace(/\$0\.00\s*[-–]\s*\$0\.00/g, "No bid data");
+const s = (v: unknown, n = 1200) => fit(noZeroBids(demojibake(String(v ?? "")).replace(/\s+/g, " ").trim()), n);
 const list = (v: unknown, n = 10, len = 600) => (Array.isArray(v) ? v.map((x) => s(x, len)).filter(Boolean).slice(0, n) : []);
 const table = (v: unknown, maxRows = 10): Table => {
   const t = (v ?? {}) as Record<string, unknown>;
@@ -112,7 +114,7 @@ const claims = (v: unknown, n = 12): Claim[] =>
 
 export function cleanNotes(raw: unknown, partnerLabel: string | null = null): GtmNotes {
   const r = (raw ?? {}) as Record<string, unknown>;
-  return { headline: s(r.headline, 600), flags: claims(r.flags), decisions: claims(r.decisions), caveats: claims(r.caveats), risks: claims(r.risks), facts: claims(r.facts, 16), partner_label: partnerLabel };
+  return { headline: s(r.headline, 600), competitors: claims(r.competitors, 8), flags: claims(r.flags), decisions: claims(r.decisions), caveats: claims(r.caveats), risks: claims(r.risks), facts: claims(r.facts, 16), partner_label: partnerLabel };
 }
 
 export const TAG_LABEL: Record<Claim["tag"], string> = { certain: "[certain]", likely: "[likely]", guessing: "[guessing, informed]" };
@@ -120,7 +122,7 @@ export const TAG_LABEL: Record<Claim["tag"], string> = { certain: "[certain]", l
 /** The notes as plain text (the agent reads them; copy-paste for the call) */
 export function notesText(name: string, n: GtmNotes): string {
   const sec = (title: string, xs: Claim[]) => (xs.length ? `${title}\n${xs.map((x) => `- ${x.text} ${TAG_LABEL[x.tag]}`).join("\n")}` : "");
-  return [n.partner_label ? `Internal · for ${n.partner_label} only · do not share with ${name}` : `Internal talking notes · ${name} · never sent`, n.headline, sec("Flags", n.flags), sec("Strategy decisions", n.decisions), sec("Numbers caveats", n.caveats), sec("Risks and objections", n.risks), sec("Firm facts", n.facts)].filter(Boolean).join("\n\n");
+  return [n.partner_label ? `Internal · for ${n.partner_label} only · do not share with ${name}` : `Internal talking notes · ${name} · never sent`, n.headline, sec("Competitor ads", n.competitors ?? []), sec("Flags", n.flags), sec("Strategy decisions", n.decisions), sec("Numbers caveats", n.caveats), sec("Risks and objections", n.risks), sec("Firm facts", n.facts)].filter(Boolean).join("\n\n");
 }
 
 // ─── The strategy rules (the CEO's) ─────────────────────────────────────────
@@ -171,7 +173,7 @@ export function pickCaseStudies(industry: string | null | undefined, studies: re
   return [...studies].sort((a, b) => score(b) - score(a));
 }
 
-export type Partner = { key: string; name: string; prepared_by: string; brand: Record<string, string>; rules: string; show_fees: boolean; contact?: { name?: string; role?: string; email?: string } | null; website?: string | null; kit_confirmed_at?: string | null };
+export type Partner = { key: string; name: string; prepared_by: string; brand: Record<string, string>; rules: string; show_fees: boolean; contact?: { name?: string; role?: string; email?: string } | null; pitcher?: string | null; pitcher_title?: string | null; website?: string | null; kit_confirmed_at?: string | null };
 
 /** Whether a prospect's site or research credits a partner ("Powered by ZenChange", forms on links.zenchange.com) */
 export function partnerCredited(text: string, p: { key: string; name: string; website?: string | null }): boolean {
