@@ -51,7 +51,7 @@ export async function dedupeNew(admin: Admin, opts: { hours?: number; clients?: 
         override: { model: "haiku", effort: "low" },
         maxTokens: 1500,
         system:
-          "You find duplicate work items for one client at an agency. Two items are the same when finishing one finishes the other: the same deliverable or check in different words (\"Verify Google Ads conversion tracking events\" and \"Confirm purchase and lead events fire in Google Ads\"), or the same task made for two people. Not the same: related but separate steps (write the copy vs launch the ads), different platforms, different dates or offers. For each NEW item that duplicates another, give item (its ref) and same_as (the OLDER one's ref). Only sure pairs.",
+          "You find duplicate work items for one client at an agency. Two items are the same when finishing one finishes the other (replying to someone about a piece of work is not the work itself): the same deliverable or check in different words (\"Verify Google Ads conversion tracking events\" and \"Confirm purchase and lead events fire in Google Ads\"), or the same task made for two people. Not the same: related but separate steps (write the copy vs launch the ads), different platforms, different dates or offers. For each NEW item that duplicates another, give item (its ref) and same_as (the OLDER one's ref). Only sure pairs.",
         schema: SCHEMA,
         prompt: items.map((i) => `${i.ref}${i.isNew ? " (NEW)" : ""}${i.kind === "asana" ? ` (Asana${i.done ? ", done" : ""})` : ""} [${i.at.slice(0, 10)} · ${i.owner}] ${i.title}`).join("\n"),
       });
@@ -65,11 +65,20 @@ export async function dedupeNew(admin: Admin, opts: { hours?: number; clients?: 
       const keep = byRef.get(p.same_as.trim().toUpperCase());
       // An Asana task always keeps the work (it may be newer: both run side by side)
       if (!dup || !keep || dup === keep || !dup.isNew || dup.kind === "asana" || gone.has(dup.ref) || gone.has(keep.ref) || (keep.kind !== "asana" && dup.at < keep.at)) continue;
+      // Someone's own Asana task only stands for their own items (Nov 25 2026: an exec's "Send the recap" swallowed a
+      // teammate's "Fix tracking"); and answering or confirming about the work isn't the work ("Answer Leann: add the
+      // Glacé ad" closed the ads task itself)
+      if (keep.kind === "asana" && keep.ownerId !== dup.ownerId) continue;
+      const talk = /^(answer|reply|respond|tell|let\s+\w+\s+know|confirm with|follow up|update)\b/i;
+      if (talk.test(keep.title) !== talk.test(dup.title)) continue;
       // A decision or approval never folds into someone else's task
       if (/\b(decide|approve|sign off|sign-off|pricing|fee|contract)\b/i.test(dup.title) !== /\b(decide|approve|sign off|sign-off|pricing|fee|contract)\b/i.test(keep.title)) continue;
       const note = keep.kind === "asana" ? `${keep.done ? "Done" : "Already"} in Asana${keep.owner === dup.owner ? "" : ` (${keep.owner})`}: "${keep.title}"${keep.url ? ` ${keep.url}` : ""}` : `Same work as ${keep.owner === dup.owner ? "" : `${keep.owner}'s `}"${keep.title}"`;
       if (dup.kind === "ask") {
-        await admin.from("agent_asks").update({ status: keep.kind === "asana" && keep.done ? "done" : "dismissed", done_at: new Date().toISOString(), detail: `Duplicate: ${note}` }).eq("id", dup.id).eq("status", "open");
+        // Its own words kept (the note goes on top)
+        const { data: d } = await admin.from("agent_asks").select("detail").eq("id", dup.id).maybeSingle();
+        await admin.from("agent_asks").update({ status: keep.kind === "asana" && keep.done ? "done" : "dismissed", done_at: new Date().toISOString(), detail: `Duplicate: ${note}
+${String(d?.detail ?? "").trim()}`.trim().slice(0, 4000) }).eq("id", dup.id).eq("status", "open");
       } else {
         await admin.from("message_promises").update({ status: "in_motion", evidence: note.slice(0, 300), checked_at: new Date().toISOString() }).eq("id", dup.id);
       }

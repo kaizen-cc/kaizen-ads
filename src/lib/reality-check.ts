@@ -26,7 +26,8 @@ export async function loadReality(admin: Admin, o: { clientIds: (string | null)[
     clients.length ? admin.from("board_requests").select("id, number, title, client_id, assignee_id, stage, created_at").in("client_id", clients).gte("created_at", since).limit(800) : none,
     admin.from("profiles").select("id, full_name").limit(500),
     // Each connected person's own Asana tasks (src/lib/asana-person.ts): the ones an exec's own runs made, too
-    clients.length || owners.length ? admin.from("asana_person_tasks").select("gid, name, client_id, profile_id, completed, completed_at, url, asana_created_at").or([clients.length ? `client_id.in.(${clients.join(",")})` : "", owners.length ? `profile_id.in.(${owners.join(",")})` : ""].filter(Boolean).join(",")).limit(2000) : none,
+    // Only for the people an item is being made for: someone's Asana stands for their own work, never a teammate's
+    owners.length ? admin.from("asana_person_tasks").select("gid, name, client_id, profile_id, completed, completed_at, url, asana_created_at").in("profile_id", owners).limit(2000) : none,
   ]);
   const name = new Map(((people.data ?? []) as { id: string; full_name: string }[]).map((p) => [p.id, p.full_name]));
   const out: Existing[] = [];
