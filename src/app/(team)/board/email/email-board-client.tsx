@@ -25,7 +25,7 @@ import { migrateEmailAsana, moveEmailAsana } from "./actions";
 import { EmailMoveDialog, EmailTicketSheet, KindBadge } from "./email-ticket-sheet";
 
 type Person = { id: string; name: string; role: string };
-const day = (d: string) => new Date(`${d}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+const day = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 type ClientOption = { id: string; name: string; slug: string };
 
 const COL = 288;

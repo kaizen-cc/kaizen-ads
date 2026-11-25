@@ -184,7 +184,7 @@ function BatchTimeline({ messages, stage, selected, onPick }: { messages: EmailM
           <button key={m.id} type="button" onClick={() => onPick(m.id)} className={`flex min-h-11 items-center gap-2 rounded-[12px] border px-3 text-left text-sm transition ${selected === m.id ? "border-fg/40 bg-surface-2" : "border-line hover:border-faint"}`}>
             <span className="grid h-6 w-6 place-items-center rounded-full bg-surface-2 text-[10px] font-bold text-muted">{m.channel === "sms" ? "T" : "E"}</span>
             <span className="min-w-0 flex-1 truncate">{m.name}</span>
-            <span className="text-xs text-faint">{m.sendOn ? new Date(`${m.sendOn}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "No day yet"}</span>
+            <span className="text-xs text-faint">{m.sendOn ? new Date(`${m.sendOn}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }) : "No day yet"}</span>
             <StatusChip s={messageStatus(liteOf(m), stage)} />
           </button>
         ))}
@@ -821,7 +821,7 @@ export function EmailTicketSheet({ number, people, onClose, onChanged }: { numbe
                 <ol className="mt-2 grid gap-1.5">
                   {d.events.map((e) => (
                     <li key={e.id} className="flex gap-3 text-[13px]">
-                      <span className="tabular w-24 shrink-0 text-faint">{new Date(e.at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+                      <span className="tabular w-24 shrink-0 text-faint">{new Date(e.at).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" })}</span>
                       <span className="min-w-0 text-fg/80">
                         {e.actor && <span className="text-muted">{e.actor}: </span>}
                         {e.kind === "stage" && e.toStage ? `Moved to ${emailStageInfo(e.toStage as EmailStage).label}${e.body ? `. ${e.body}` : ""}` : (e.body ?? e.kind)}

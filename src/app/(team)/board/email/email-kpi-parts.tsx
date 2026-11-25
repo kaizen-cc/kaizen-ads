@@ -18,7 +18,9 @@ import { dismissCadence, restoreCadence } from "./kpi-actions";
 // each client's sending this cycle with Dismiss, the workload, late tickets, and the emails themselves as they land in
 // the inbox: designs that out-click their account, the ones that fell short, and flows whose clicks are tiring.
 
-const when = (iso: string | null) => (iso ? new Date(iso.length === 10 ? `${iso}T12:00:00` : iso).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : null);
+// On Kaizen's clock (New York), so the server and the browser print the same day (a late-evening moment read in the
+// server's UTC is already tomorrow: React #418)
+const when = (iso: string | null) => (iso ? new Date(iso.length === 10 ? `${iso}T12:00:00Z` : iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" }) : null);
 const pct = (n: number, of: number) => (of ? Math.round((n / of) * 100) : null);
 const initials = (name: string) =>
   name
