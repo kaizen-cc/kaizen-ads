@@ -207,6 +207,7 @@ const UTILITY: Record<string, { labels: string[]; why: string }> = {
   "src/lib/patterns.ts": { labels: ["cross-client patterns"], why: "patterns across a business model, unnamed" },
   "src/lib/playbooks.ts": { labels: ["playbook"], why: "cross-client playbook per sub-vertical" },
   "src/lib/promise-groups.ts": { labels: ["group promises"], why: "groups duplicate promises; a utility" },
+  "src/lib/swipe/server.ts": { labels: ["swipe email classify"], why: "labels another brand's marketing email for the swipe file; a classifier, no client" },
   "src/lib/sales-briefs.ts": { labels: ["sales call brief"], why: "a sales call with a prospect: no client exists yet (current clients' calls are never briefed here)" },
   "src/lib/routine-sweeps.ts": { labels: ["routine delegation tracker"], why: "reads one person's Slack asks across all their clients; each item gets its client after" },
   "src/lib/website-issues.ts": { labels: ["website issues"], why: "reads a page check's findings; extraction" },

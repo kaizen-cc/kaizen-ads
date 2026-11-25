@@ -69,7 +69,7 @@ const Bullets = ({ items }: { items: string[] }) => (
   </ul>
 );
 
-export function ProspectView({ p, brief, notes, people, docs, client, meId, calls = [], gtmSlot = null }: { p: P; brief: ProspectBrief | null; notes: ProspectNote[]; people: { id: string; name: string }[]; docs: { id: string; title: string; link: string | null; folder: string | null }[]; client: { name: string; slug: string } | null; meId: string; calls?: { id: string; title: string; startsAt: string; status: string }[]; gtmSlot?: React.ReactNode }) {
+export function ProspectView({ p, brief, notes, people, docs, client, meId, calls = [], gtmSlot = null, swipeSlot = null }: { p: P; brief: ProspectBrief | null; notes: ProspectNote[]; people: { id: string; name: string }[]; docs: { id: string; title: string; link: string | null; folder: string | null }[]; client: { name: string; slug: string } | null; meId: string; calls?: { id: string; title: string; startsAt: string; status: string }[]; gtmSlot?: React.ReactNode; swipeSlot?: React.ReactNode }) {
   const tab = useParam("tab") ?? "brief";
   const drafts = notes.length;
   return (
@@ -153,7 +153,7 @@ export function ProspectView({ p, brief, notes, people, docs, client, meId, call
       )}
 
       {tab === "brief" && gtmSlot}
-      {tab === "brief" && <BriefTab p={p} brief={brief} />}
+      {tab === "brief" && <BriefTab p={p} brief={brief} swipe={swipeSlot} />}
       {tab === "drafts" && <DraftsTab p={p} notes={notes} researched={Boolean(brief)} />}
       {tab === "notes" && <NotesTab p={p} docs={docs} />}
     </div>
@@ -310,7 +310,7 @@ function MarketBlock({ m }: { m: ProspectBrief["market"] | undefined }) {
   );
 }
 
-function BriefTab({ p, brief }: { p: P; brief: ProspectBrief | null }) {
+function BriefTab({ p, brief, swipe = null }: { p: P; brief: ProspectBrief | null; swipe?: React.ReactNode }) {
   if (!brief)
     return (
       <Block title="Research">
@@ -367,6 +367,7 @@ function BriefTab({ p, brief }: { p: P; brief: ProspectBrief | null }) {
       )}
 
       <MarketBlock m={brief.market} />
+      {swipe}
 
       <Block title="Kaizen strategy">
         {st.angle && (

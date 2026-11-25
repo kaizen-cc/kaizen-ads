@@ -32,6 +32,7 @@ const MODULES: { key: string; label: string; load: () => Promise<{ tools: Shared
   { key: "tracking", label: "Tracking", load: () => import("@/lib/ai-tools/tracking") },
   { key: "shopify", label: "Shopify", load: () => import("@/lib/ai-tools/shopify") },
   { key: "sales", label: "Sales", load: () => import("@/lib/ai-tools/sales") },
+  { key: "swipe", label: "Swipe file", load: () => import("@/lib/ai-tools/swipe") },
   { key: "connections", label: "Team connections", load: () => import("@/lib/ai-tools/connections") },
 ];
 

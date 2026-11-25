@@ -101,7 +101,7 @@ export type MarketAnalysis = {
   geo: string;
   avatar: string;
   tam: string;
-  competitors: { name: string; channels: string; funnel: string; messaging: string; offer: string; usp: string }[];
+  competitors: { name: string; website?: string; channels: string; funnel: string; messaging: string; offer: string; usp: string }[];
   trends: { keyword: string; cpc: string; volume: string; note: string }[];
   benchmarks: { platform: string; metric: string; value: string; source: string; proxy: string }[];
   seasonality: string;
@@ -156,7 +156,7 @@ function cleanMarket(raw: unknown): MarketAnalysis {
     geo: s(m.geo, 900),
     avatar: s(m.avatar, 900),
     tam: s(m.tam, 600),
-    competitors: rows(m.competitors, ["name", "channels", "funnel", "messaging", "offer", "usp"], 6),
+    competitors: rows(m.competitors, ["name", "website", "channels", "funnel", "messaging", "offer", "usp"], 6),
     trends: rows(m.trends, ["keyword", "cpc", "volume", "note"], 10),
     benchmarks: rows(m.benchmarks, ["platform", "metric", "value", "source", "proxy"], 10),
     seasonality: s(m.seasonality, 600),

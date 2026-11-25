@@ -7,6 +7,7 @@ import { archiveText, cleanBrief, cleanPitch, cleanReview, seesSalesPages } from
 import { getProspect } from "@/lib/sales-agent";
 import { ProspectView, type ProspectNote } from "./prospect-view";
 import { GtmCard } from "./gtm-card";
+import { SwipeBlock, type SwipeRow } from "./swipe-block";
 
 export const metadata: Metadata = { title: "Prospect" };
 // Research, pitch drafts and call reviews run from here (a minute or two)
@@ -31,6 +32,12 @@ export default async function ProspectPage({ params }: PageProps<"/sales/[id]">)
     db.from("prospect_gtms").select("id, status, stage, partner_key, document_id, notes, error, created_at").eq("prospect_id", p.id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
     db.from("sales_partners").select("key, name, kit_confirmed_at").eq("active", true).order("name"),
   ]);
+  // Its email flows and its competitors', from the swipe file
+  const { data: sb } = await db.from("swipe_brands").select("id, name, source, status").eq("prospect_id", p.id).limit(8);
+  const { data: sf } = (sb ?? []).length ? await db.from("swipe_flows").select("brand_id, flow_type, steps, cadence, offers").in("brand_id", (sb ?? []).map((x) => x.id as string)).neq("flow_type", "campaign").order("steps", { ascending: false }).limit(40) : { data: [] };
+  const swipeRows: SwipeRow[] = ((sb ?? []) as { id: string; name: string; source: string; status: string }[])
+    .sort((a, b) => (a.source === "prospect" ? -1 : b.source === "prospect" ? 1 : 0))
+    .map((x) => ({ brand: x.name, role: x.source === "prospect" ? "prospect" : "competitor", status: x.status, flows: ((sf ?? []) as { brand_id: string; flow_type: SwipeRow["flows"][number]["type"]; steps: number; cadence: string | null; offers: string | null }[]).filter((f) => f.brand_id === x.id).map((f) => ({ type: f.flow_type, steps: f.steps, cadence: f.cadence, offers: f.offers })) }));
   const { cleanNotes } = await import("@/lib/sales-gtm-core");
   const partnerName = (k: string | null) => ((partners ?? []) as { key: string; name: string }[]).find((x) => x.key === k)?.name ?? null;
   const gtm = g ? { id: g.id as string, status: g.status as string, stage: (g.stage as string | null) ?? null, partner: partnerName(g.partner_key as string | null), documentId: (g.document_id as string | null) ?? null, notes: g.notes ? cleanNotes(g.notes, partnerName(g.partner_key as string | null)) : null, error: (g.error as string | null) ?? null, createdAt: g.created_at as string } : null;
@@ -50,6 +57,7 @@ export default async function ProspectPage({ params }: PageProps<"/sales/[id]">)
         client={client ? { name: client.name as string, slug: client.slug as string } : null}
         calls={(calls ?? []).map((c) => ({ id: c.id as string, title: c.title as string, startsAt: c.starts_at as string, status: c.status as string }))}
         meId={me.id}
+        swipeSlot={<SwipeBlock rows={swipeRows} />}
         gtmSlot={<GtmCard prospectId={p.id} gtm={gtm} relationship={p.relationship} partnerKey={p.partner_key} partners={((partners ?? []) as { key: string; name: string; kit_confirmed_at: string | null }[]).map((x) => ({ key: x.key, name: x.name, confirmed: Boolean(x.kit_confirmed_at) }))} />}
       />
     </Suspense>

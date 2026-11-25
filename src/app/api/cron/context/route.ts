@@ -114,6 +114,7 @@ function due(step: string | null) {
   if (step === "owed") return !["Sat", "Sun"].includes(weekday) && hour >= 8 && hour <= 19; // every 15 minutes (vercel.json): unanswered messages, nudged then escalated
   if (step === "approvals") return businessHours; // every 15 minutes (vercel.json), weekdays 8am to 6pm: creative with the client posted, reminded at 24 and 48 business hours, chased or auto-approved
   if (step === "direction") return businessHours; // every 30 minutes (vercel.json), weekdays 8am to 6pm: a client changing direction, caught against their open work
+  if (step === "swipe") return true; // every 15 minutes (vercel.json): the swipe mailbox read into the swipe file
   if (step === "sales_jobs") return true; // every 5 minutes (vercel.json): prospect searches and go-to-market strategies in the background
   if (step === "launches") return true; // every 5 minutes (vercel.json): launch what reached Ready to launch, complete what was turned on
 
@@ -440,6 +441,8 @@ export async function GET(request: Request) {
     if (step === "sprints") return Response.json(await (await import("@/lib/sprints")).checkDueSprints(admin));
     // Sales background work: prospect searches a cut-off server left behind, and go-to-market strategies (research one
     // pass, writing the next), so a long one never holds up the launches
+    // The swipe file: the swipe@ mailbox checked, new brand emails stored and classified, flows grouped, silent brands flagged
+    if (step === "swipe") return Response.json(await (await import("@/lib/swipe/server")).runSwipe(admin));
     if (step === "sales_jobs") {
       const fail = (e: unknown) => ({ error: e instanceof Error ? e.message : String(e) });
       const prospectSearches = await (await import("@/lib/prospect-search")).pickUpProspectSearches(admin).catch(fail);

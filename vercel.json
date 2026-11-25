@@ -187,6 +187,10 @@
       "schedule": "2 16,17,21,22 * * *"
     },
     {
+      "path": "/api/cron/context?step=swipe",
+      "schedule": "7,22,37,52 * * * *"
+    },
+    {
       "path": "/api/cron/context?step=sales_jobs",
       "schedule": "1-59/5 * * * *"
     },

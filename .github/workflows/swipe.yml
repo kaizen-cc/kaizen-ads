@@ -1,0 +1,40 @@
+# The swipe bot's browser runner (scripts/swipe-runner.mjs): signs brands up for their emails and triggers their welcome,
+# browse, cart and checkout flows, a few steps a run. Never buys, never solves a CAPTCHA (the brand goes to a human),
+# respects robots.txt. It stops on its own while the swipe mailbox is unresolved or auto-forwards (app_settings.swipe).
+name: Swipe bot
+
+on:
+  schedule:
+    - cron: "17 */3 * * *" # every three hours
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "How many steps this run (default 8)"
+        required: false
+        default: "8"
+      only:
+        description: "Only these brand slugs (comma-separated)"
+        required: false
+      step:
+        description: "Only this step (signup, browse, cart, checkout)"
+        required: false
+
+concurrency:
+  group: swipe-bot
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - run: npm install --no-save --no-audit --no-fund pg@8 puppeteer-core@25
+      - name: Run
+        run: node scripts/swipe-runner.mjs --limit "${{ inputs.limit || '8' }}" ${{ inputs.only && format('--only {0}', inputs.only) || '' }} ${{ inputs.step && format('--step {0}', inputs.step) || '' }}
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          CHROME_PATH: /usr/bin/google-chrome

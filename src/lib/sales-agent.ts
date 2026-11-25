@@ -128,7 +128,7 @@ const BRIEF_SCHEMA = {
         geo: STR,
         avatar: STR,
         tam: STR,
-        competitors: { type: "array", items: { type: "object", additionalProperties: false, required: ["name", "channels", "funnel", "messaging", "offer", "usp"], properties: { name: STR, channels: STR, funnel: STR, messaging: STR, offer: STR, usp: STR } } },
+        competitors: { type: "array", items: { type: "object", additionalProperties: false, required: ["name", "website", "channels", "funnel", "messaging", "offer", "usp"], properties: { name: STR, website: STR, channels: STR, funnel: STR, messaging: STR, offer: STR, usp: STR } } },
         trends: { type: "array", items: { type: "object", additionalProperties: false, required: ["keyword", "cpc", "volume", "note"], properties: { keyword: STR, cpc: STR, volume: STR, note: STR } } },
         benchmarks: { type: "array", items: { type: "object", additionalProperties: false, required: ["platform", "metric", "value", "source", "proxy"], properties: { platform: STR, metric: STR, value: STR, source: STR, proxy: STR } } },
         seasonality: STR,
@@ -144,7 +144,7 @@ export const MARKET_PROMPT = (who: string, industry: string | null) => `Research
 1. Geography: the area they serve (city, county, zip codes). Median household income, age mix, marital status, homeownership and anything else that shapes the local buyer (census.gov QuickFacts, ACS data, city-data). If they sell US-wide or online, describe the national buyer instead.
 2. The customer avatar(s): who buys this, with age, income, role (business owner?), what triggers the purchase.
 3. TAM: a rough count of reachable buyers in that area or nationally, and how you estimated it (population x share).
-4. Competitors: the 3-5 biggest advertisers in this category and area. Search the Meta Ad Library (facebook.com/ads/library, keyword search, the right country) and the Google Ads Transparency Center for who's advertising. For each: name, channels, how long their ads have run, the funnel (ad, landing page, offer, booking or checkout), messaging, offer and USP.
+4. Competitors: the 3-5 biggest advertisers in this category and area. Search the Meta Ad Library (facebook.com/ads/library, keyword search, the right country) and the Google Ads Transparency Center for who's advertising. For each: name, website, channels, how long their ads have run, the funnel (ad, landing page, offer, booking or checkout), messaging, offer and USP.
 5. Search demand: the main buying keywords with typical cost per click and monthly search volume (public keyword data, agency benchmark posts, WordStream/LocaliQ, Semrush/Ahrefs public pages) and the seasonality (when clicks cost most and least).
 6. Benchmarks: the current year's WordStream/LocaliQ benchmarks for this industry (Google: CTR, CPC, CVR, cost per lead; Facebook: CTR, CPC, CVR, cost per lead; CPM if available). If the industry isn't broken out, use the closest adjacent category and say which.
 7. Email marketing: the business's and two competitors' email programs from public archives (milled.com search by brand, MailCharts public pages): how many emails, cadence, offers, design. If nothing is archived, say so.
@@ -235,7 +235,7 @@ Plain notes, no recommendations.`,
 - strategy.talking_points: 3 to 6 first-outreach points specific to this business.
 - contacts: people named publicly, with role and where seen. Never invent one.
 - sources: the URLs the facts came from.
-- market (from the market notes): geo (area, zips, income, demographics), avatar (the local buyer, or the US-wide buyer), tam (an estimate and how it was made), competitors (who advertises and how: channels, funnel, messaging, offer, USP; internal only), trends (keyword, CPC, monthly volume, note), benchmarks (platform, metric, value, source with year; proxy names the adjacent category when the industry isn't published, else ""), seasonality, email_intel (their and competitors' email programs from public archives, or that none were found).
+- market (from the market notes): geo (area, zips, income, demographics), avatar (the local buyer, or the US-wide buyer), tam (an estimate and how it was made), competitors (who advertises and how: name, website as https://domain, channels, funnel, messaging, offer, USP; internal only), trends (keyword, CPC, monthly volume, note), benchmarks (platform, metric, value, source with year; proxy names the adjacent category when the industry isn't published, else ""), seasonality, email_intel (their and competitors' email programs from public archives, or that none were found).
 - tiers: exactly three, weighted for this kind of business (${vertical}: lead with ${VERTICAL_FOCUS[vertical].lead.join(", ")}; add-ons ${VERTICAL_FOCUS[vertical].addons.join(", ")}). Start from: ${tierPlan(vertical).map((t) => `${t.name} = ${t.services.join(" + ")}`).join("; ")}. Each with ad_spend (monthly, paid to the platforms), fees (management and creative from the rate card, exact), projection (a planning range from the benchmarks, e.g. "25-55 leads/month"), best_for. The Basic creative package is the "310": 3 images + 10 videos a month, always attached to Meta.
 Only what the notes support; never invent a number, review or fact. Estimates say so.`,
     prompt: `<research_notes>\n${notes.slice(0, 36_000)}\n</research_notes>\n\n<market_notes>\n${market.slice(0, 36_000)}\n</market_notes>\n\n<rate_card>\n${rates}\n</rate_card>\n\n<kaizen_clients note="internal proof">\n${proof}\n</kaizen_clients>${input.question ? `\n\n<asked>${input.question}</asked>` : ""}`,
@@ -267,6 +267,8 @@ Only what the notes support; never invent a number, review or fact. Estimates sa
     saved = data as Prospect;
   }
   await db.from("prospect_notes").insert({ prospect_id: saved.id, kind: "research", title: input.question ? `Research: ${input.question.slice(0, 120)}` : "Research", body: { brief, notes: notes.slice(0, 40_000), market_notes: market.slice(0, 40_000) }, created_by: me.id });
+  // The prospect and its competitors join the swipe file, so their real email flows are captured (src/lib/swipe)
+  await followInSwipe(admin, saved, brief).catch(() => undefined);
   return { ok: true, prospect: saved, text: briefText(saved.name, brief) };
 }
 
@@ -594,4 +596,18 @@ export async function unarchiveProspect(db: SupabaseClient, admin: Admin, me: { 
   await admin.from("sales_call_briefs").update({ status: "pending", notified_at: null, updated_at: now }).eq("prospect_id", id).eq("status", "stopped").gt("starts_at", now);
   await db.from("prospect_notes").insert({ prospect_id: id, kind: "note", title: "Unarchived", body: { by: me.id, at: now }, created_by: me.id });
   return { ok: true, prospect: data as Prospect };
+}
+
+/** A researched prospect and the competitors its market research found (with a site) are followed in the swipe file */
+async function followInSwipe(admin: Admin, p: Prospect, brief: ProspectBrief) {
+  const { slugOf } = await import("@/lib/swipe/core");
+  const rows: { slug: string; name: string; website: string; vertical: string; source: string; prospect_id: string }[] = [];
+  const vertical = `prospect · ${(p.industry ?? "business").slice(0, 60)}`;
+  if (p.website) rows.push({ slug: slugOf(p.name), name: p.name, website: p.website, vertical, source: "prospect", prospect_id: p.id });
+  for (const c of brief.market?.competitors ?? []) {
+    const site = cleanSite((c as { website?: string }).website);
+    if (site && c.name) rows.push({ slug: slugOf(c.name), name: c.name.slice(0, 120), website: site, vertical: `competitor · ${(p.industry ?? "business").slice(0, 60)}`, source: "competitor", prospect_id: p.id });
+  }
+  const ok = rows.filter((r) => r.slug.length >= 2).slice(0, 6);
+  if (ok.length) await admin.from("swipe_brands").upsert(ok, { onConflict: "slug", ignoreDuplicates: true });
 }
