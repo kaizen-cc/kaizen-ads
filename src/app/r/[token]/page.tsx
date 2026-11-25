@@ -1,4 +1,5 @@
 import { cache, type CSSProperties, type ReactNode } from "react";
+import { adCopyLine } from "@/lib/reports/weekly-core";
 import type { Metadata, Viewport } from "next";
 import { notFound } from "next/navigation";
 import { count, delta, headlineTiles, kpiRows, money, multiple, percent, platformName, singular, type Delta, type Tile } from "@/lib/reports/format";
@@ -220,6 +221,8 @@ function PlatformSection({ part, token }: { part: ReportPart; token: string }) {
                 </div>
                 <div className="p-4">
                   <p className="line-clamp-2 text-sm font-medium [overflow-wrap:anywhere]">{a.name}</p>
+                  {a.format && <p className="mt-0.5 text-[12px] uppercase tracking-wide text-faint">{a.format}</p>}
+                  {adCopyLine(a.copy) && <p className="mt-2 line-clamp-3 text-[13px] text-muted [overflow-wrap:anywhere]">{adCopyLine(a.copy)}</p>}
                   <p className="mt-2 text-[13px] text-muted tabular-nums">
                     {count(a.results)} {m.conversion.toLowerCase()} · {money(a.costPerResult)} per {one}
                   </p>
@@ -228,7 +231,7 @@ function PlatformSection({ part, token }: { part: ReportPart; token: string }) {
                   </p>
                   {a.link && (
                     <a href={a.link} target="_blank" rel="noopener noreferrer" className="mt-3 inline-block text-sm font-medium text-brand hover:underline max-md:inline-flex max-md:min-h-11 max-md:items-center">
-                      View ad
+                      Review the ad ›
                     </a>
                   )}
                 </div>

@@ -447,9 +447,15 @@ export async function reportMetrics(admin: SupabaseClient, base: Target, kind: "
       .slice(0, kind === "monthly" ? 3 : 8);
     const { adPreviews } = await import("@/lib/context/meta");
     const previews = await adPreviews(ranked.map((a) => a.id)).catch(() => new Map());
+    // The ad catalog the client page's Ads tab reads (meta_ads): its picture, format and words when Meta's preview gives none
+    const { data: catalog } = ranked.length ? await admin.from("meta_ads").select("ad_id, format, thumbnail_url, headline, body").in("ad_id", ranked.map((a) => a.id)) : { data: [] };
+    const known = new Map(((catalog ?? []) as { ad_id: string; format: string | null; thumbnail_url: string | null; headline: string | null; body: string | null }[]).map((c) => [c.ad_id, c]));
     topAds = ranked.map((a) => {
       const v = previews.get(a.id);
-      return { ...a, link: v?.link ?? null, image: v?.image ?? null, format: v?.format ?? null, copy: v ? { body: v.body ?? null, headline: v.headline ?? null, cta: v.cta ?? null, url: v.url ?? null } : undefined };
+      const k = known.get(a.id);
+      const headline = v?.headline ?? k?.headline ?? null;
+      const body = v?.body ?? k?.body ?? null;
+      return { ...a, link: v?.link ?? null, image: v?.image ?? k?.thumbnail_url ?? null, format: v?.format ?? k?.format ?? null, copy: v || k ? { body, headline, cta: v?.cta ?? null, url: v?.url ?? null } : undefined };
     });
   }
 

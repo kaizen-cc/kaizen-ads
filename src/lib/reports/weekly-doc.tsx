@@ -731,7 +731,7 @@ function Bars({ part, rows, look }: { part: WeeklyPart; rows: ScoreRow[]; look: 
 }
 
 /** The ads behind the results, as the creative itself: the top three by the KPI, picture first */
-function TopAds({ part, rows, images, look }: { part: WeeklyPart; rows: ScoreRow[]; images: (string | null)[]; look: Look }) {
+function TopAds({ part, rows, images, look, whiteLabel = false }: { part: WeeklyPart; rows: ScoreRow[]; images: (string | null)[]; look: Look; whiteLabel?: boolean }) {
   if (part.platform === "google") return null;
   const top = rows.slice(0, 3);
   // Always there when ads ran: a picture Meta won't give (an expired link, a video with no thumbnail) leaves a quiet card
@@ -760,6 +760,8 @@ function TopAds({ part, rows, images, look }: { part: WeeklyPart; rows: ScoreRow
               <View style={s.adBody}>
                 <Text style={[s.adName, { fontSize: 8 }]}>{r.name}</Text>
                 {r.detail ? <Text style={s.adMeta}>{r.detail}</Text> : null}
+                {/* What the ad says, so the client knows which one it is without opening it */}
+                {r.copy ? <Text style={{ fontSize: 6.6, color: MUTED, marginTop: 3, lineHeight: 1.3 }}>{r.copy}</Text> : null}
                 <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 10.5, fontFamily: "Helvetica-Bold", color: look.barsText }}>{m.roasKpi ? multiple(r.roas) : count(r.results)}</Text>
@@ -774,6 +776,12 @@ function TopAds({ part, rows, images, look }: { part: WeeklyPart; rows: ScoreRow
                     <Text style={{ fontSize: 5.2, color: MUTED, marginTop: 1.5, textTransform: "uppercase", letterSpacing: 0.2, lineHeight: 1.25 }}>Spend</Text>
                   </View>
                 </View>
+                {/* The ad itself, to review: Meta's shareable preview (opens for anyone with the link) */}
+                {r.link && (!whiteLabel || !/kaizen/i.test(r.link)) ? (
+                  <Link src={r.link} style={{ marginTop: 7, fontSize: 7, fontFamily: "Helvetica-Bold", color: look.primary, textDecoration: "none" }}>
+                    Review the ad ›
+                  </Link>
+                ) : null}
               </View>
             </View>
           );
@@ -869,7 +877,7 @@ function Creative({ input, part, images, look }: { input: WeeklyInput; part: Wee
           {bars ? <Bars part={part} rows={rows} look={look} /> : null}
         </View>
       </View>
-      <TopAds part={part} rows={rows} images={images} look={look} />
+      <TopAds part={part} rows={rows} images={images} look={look} whiteLabel={Boolean(input.whiteLabel)} />
     </View>
   );
 }

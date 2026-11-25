@@ -157,6 +157,8 @@ export type ScoreRow = {
   img: number | null;
   /** The ad's preview link (Meta), on its name in the PDF */
   link?: string | null;
+  /** The ad's own words, shortened: its headline in quotes, else the start of its primary text */
+  copy?: string | null;
   spend: number;
   results: number;
   costPerResult: number | null;
@@ -184,6 +186,16 @@ export function cleanAdName(name: string) {
   );
 }
 
+/** An ad's words for its card: the headline in quotes, else the primary text's first sentence (about 90 characters) */
+export function adCopyLine(c: TopAd["copy"] | null | undefined): string | null {
+  const clip = (t: string, n: number) => (t.length > n ? `${t.slice(0, n - 1).replace(/\s+\S*$/, "")}…` : t);
+  const h = c?.headline?.replace(/\s+/g, " ").trim();
+  if (h) return `“${clip(h, 70)}”`;
+  const b = c?.body?.replace(/\s+/g, " ").trim();
+  if (!b) return null;
+  return clip(b.split(/(?<=[.!?])\s/)[0] ?? b, 90);
+}
+
 function adRow(a: TopAd, i: number, platform: string): ScoreRow {
   const status = a.active == null ? null : a.active ? "Active" : "Inactive";
   const format = a.format ?? (platform === "tiktok" ? "Video" : null);
@@ -194,6 +206,7 @@ function adRow(a: TopAd, i: number, platform: string): ScoreRow {
     detail: [format, status].filter(Boolean).join(" · ") || null,
     img: i,
     link: a.link,
+    copy: adCopyLine(a.copy),
     spend: a.spend,
     results: a.results,
     costPerResult: a.costPerResult,
