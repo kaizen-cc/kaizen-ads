@@ -122,12 +122,12 @@ async function readClient(admin: Admin, clientId: string, batch: Msg[], team: st
   const { clientTeam } = await import("@/lib/assistant/routing-server");
   const [ct, { data: asks }, { data: promises }] = await Promise.all([
     clientTeam(admin, clientId),
-    admin.from("agent_asks").select("id, title, owner_id, status, profiles!agent_asks_owner_id_fkey(full_name)").eq("client_id", clientId).eq("status", "open").order("created_at", { ascending: false }).limit(50),
+    admin.from("agent_asks").select("id, title, owner_id, status, kind, source_ref, profiles!agent_asks_owner_id_fkey(full_name)").eq("client_id", clientId).eq("status", "open").order("created_at", { ascending: false }).limit(50),
     admin.from("message_promises").select("id, what, owner_id, status").eq("client_id", clientId).in("status", ["open", "overdue", "escalated", "in_motion"]).order("said_at", { ascending: false }).limit(40),
   ]);
   if (!ct) return null;
   const seats = ct.seats.map((s) => `${s.seat.replace(/_/g, " ")}: ${s.name}${s.primary === false ? " (second)" : ""}`).join("; ");
-  const askRows = (asks ?? []) as unknown as { id: string; title: string; profiles: { full_name: string } | null }[];
+  const askRows = (asks ?? []) as unknown as { id: string; title: string; kind: string | null; source_ref: string | null; profiles: { full_name: string } | null }[];
   const promiseRows = (promises ?? []) as { id: string; what: string | null }[];
   const out = await askJson<{ items: { n: number; signals: Signal[] }[] }>({
     agent: "calls",
@@ -168,7 +168,10 @@ Owners are names from the client's team: ${seats || "none listed"}. Never state 
       const why = `${s.kind === "hold" ? "On hold" : "Client cancelled"} (${when}${m.author ? `, ${m.author.replace(/<[^>]*>/g, "").trim()}` : ""}): "${s.quote.slice(0, 300)}"`;
       if (s.kind === "cancel" || s.kind === "hold") {
         const kill = refsToIds(s.kill, askRows, promiseRows);
-        for (const id of kill.asks) {
+        // Never the work this reader made from a client's words (Nov 25 2026: a hold closed the task that was about the
+        // hold); a hold closes reminders and promises (contacting the client), never tasks
+        const killable = new Set(askRows.filter((r) => !String(r.source_ref ?? "").startsWith("signal:") && (s.kind === "cancel" || r.kind === "reminder")).map((r) => r.id));
+        for (const id of kill.asks.filter((x) => killable.has(x))) {
           const { data: it } = await admin.from("agent_asks").select("detail, status").eq("id", id).maybeSingle();
           if (!it || it.status !== "open") continue;
           await admin.from("agent_asks").update({ status: "dismissed", done_at: new Date().toISOString(), detail: `${String(it.detail ?? "").trim()}\n${why}${m.url ? ` ${m.url}` : ""}`.trim().slice(0, 4000) }).eq("id", id);
@@ -178,7 +181,7 @@ Owners are names from the client's team: ${seats || "none listed"}. Never state 
           await admin.from("message_promises").update({ status: "dismissed", dismiss_reason: why.slice(0, 300), closed_at: new Date().toISOString() }).eq("id", id).in("status", ["open", "overdue", "escalated", "in_motion"]);
           outcome.killed.push(`said:${id}`);
         }
-        tally.killed += kill.asks.length + kill.promises.length;
+        tally.killed += kill.asks.filter((x) => killable.has(x)).length + kill.promises.length;
       }
       for (const [t, task] of s.tasks.slice(0, 5).entries()) {
         const owner = ownerOf(task.owner);
