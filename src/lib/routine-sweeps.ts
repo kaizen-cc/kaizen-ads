@@ -123,11 +123,16 @@ ${PEOPLE_RULE} Mark any such item personnel: true; it is never filed.`,
   }
   // Calls with notes still processing aren't marked read: the next sweep takes them
   const meetings = await (await import("@/lib/routines")).meetingsBetween(me.email, since, new Date().toISOString());
-  const gaps = meetings ? coverageGaps(meetings, mine.map((c) => ({ at: c.occurred_at as string }))) : [];
+  // Any notes the OS has for the meeting count: every ingested call (whoever's recorder took it) and call notes on the
+  // client's history
+  const { data: noted } = meetings?.length ? await admin.from("context_items").select("occurred_at, title").eq("source", "call").gte("occurred_at", since).limit(300) : { data: [] };
+  const gaps = meetings ? coverageGaps(meetings, [...(calls ?? []), ...(noted ?? [])].map((c) => ({ at: c.occurred_at as string, title: (c.title as string | null) ?? null }))) : [];
+  const closedNow = await settleNew(admin, created.map((l) => l.itemId).filter((x): x is string => Boolean(x)));
   const sections = [
     { title: "Calls read", lines: callLines },
     { title: "Sales calls", lines: sales },
-    { title: "New items for you", lines: created },
+    { title: "New items for you", lines: created.filter((l) => !closedNow.has(l.itemId ?? "")) },
+    { title: "Already done since the call", lines: created.filter((l) => closedNow.has(l.itemId ?? "")) },
     { title: "Already handled", lines: handled },
     { title: "Coverage gaps", lines: gaps.map((g) => ({ text: `${g.title} (${new Date(g.start).toLocaleString("en-US", { timeZone: "America/New_York", weekday: "short", hour: "numeric", minute: "2-digit" })}): no notes from Gemini or Fireflies`, href: null, tag: null })) },
   ].filter((s) => s.lines.length);
@@ -191,13 +196,16 @@ export async function delegation(admin: Admin, me: Me): Promise<RoutineReport> {
   const start = new Date(`${today}T05:00:00Z`).toISOString();
   const [{ data: msgs }, { data: people }, { data: clients }] = await Promise.all([
     admin.from("context_items").select("id, client_id, occurred_at, author, title, body, url").eq("source", "slack_internal").eq("author", me.full_name).gte("occurred_at", start).order("occurred_at").limit(80),
-    admin.from("profiles").select("id, full_name, email").eq("is_active", true),
+    admin.from("profiles").select("id, full_name, email, slack_user_id").eq("is_active", true),
     admin.from("clients").select("id, name").is("archived_at", null).limit(800),
   ]);
   const team: Teammate[] = (people ?? []).filter((p) => p.id !== me.id).map((p) => ({ id: p.id as string, name: p.full_name as string, email: p.email as string }));
   const list = (msgs ?? []).filter((m) => String(m.body ?? "").trim().length > 8);
   const failed = ["Slack DMs and group DMs (read only when they allow it in Connections; internal channels were read)"];
   if (!list.length) return { headline: "No asks of teammates in Slack today.", sections: [], failedSources: failed };
+  // Slack's tags as the teammate's name (mapped by their Slack user), so an ask of "<@U…>" has an owner
+  const bySlack = new Map(((people ?? []) as { full_name: string; slack_user_id?: string | null }[]).filter((p) => p.slack_user_id).map((p) => [String(p.slack_user_id), p.full_name]));
+  const named = (t: string) => t.replace(/<@([A-Z0-9]+)(?:\|[^>]*)?>/g, (all, id: string) => (bySlack.has(id) ? `@${bySlack.get(id)}` : all));
   const out = await askJson<{ asks: { n: number; owner: string | null; scope: string; client: string | null; due: string | null; soon: boolean; done: string; personnel: boolean; about: string[] }[] }>({
     agent: "calls",
     label: "routine delegation tracker",
@@ -205,7 +213,7 @@ export async function delegation(admin: Admin, me: Me): Promise<RoutineReport> {
     maxTokens: 3000,
     system: `You read Slack messages one person at Kaizen wrote today and pick out the asks they made of a specific teammate: "can you…", "please…", "@Name build…", "need X by Friday", a request in a reply. Skip FYIs, questions that only want a chat answer, brainstorming, anything to clients or outside people, things already marked done, and asks of themselves. owner: the teammate's name as written (an @mention or the name addressed), or null for a group ask with no single owner. scope: verb-first, what to do. client: the client it's about, if any. due: a date they said (YYYY-MM-DD) else null. soon: true when it's about a client, revenue or churn, or someone is blocked. done: what finished looks like. Several asks for the same thing to the same person are one ask. ${PEOPLE_RULE} Mark any such ask personnel: true and list who it's about. Teammates: ${team.map((t) => t.name).join(", ")}.`,
     schema: ASKS_SCHEMA,
-    prompt: list.map((m, i) => `${i + 1}. [${String(m.occurred_at).slice(11, 16)}${m.title ? ` · ${m.title}` : ""}] ${String(m.body ?? "").replace(/\s+/g, " ").slice(0, 900)}`).join("\n"),
+    prompt: list.map((m, i) => `${i + 1}. [${String(m.occurred_at).slice(11, 16)}${m.title ? ` · ${m.title}` : ""}] ${named(String(m.body ?? "")).replace(/\s+/g, " ").slice(0, 900)}`).join("\n"),
   });
   const { loadReality, createItemIfNew } = await import("@/lib/reality-check");
   const found = await loadReality(admin, { clientIds: list.map((m) => (m.client_id as string | null) ?? null), ownerIds: team.map((t) => t.id) }).catch(() => []);
@@ -213,6 +221,7 @@ export async function delegation(admin: Admin, me: Me): Promise<RoutineReport> {
   const existing: RecapLine[] = [];
   const unclear: RecapLine[] = [];
   const nomatch: RecapLine[] = [];
+  const newIds: string[] = [];
   for (const a of (out.asks ?? []).slice(0, 15)) {
     const m = list[a.n - 1];
     if (!m) continue;
@@ -242,14 +251,26 @@ export async function delegation(admin: Admin, me: Me): Promise<RoutineReport> {
       found,
     );
     const line = `${who.name} · ${a.scope}`;
+    if (r.state === "new" && r.id) newIds.push(r.id);
     if (r.state === "new" && r.id) created.push({ text: `${who.name.split(" ")[0]}: ${a.scope}`, client: a.client, due: dueOf(today, a.due, a.soon, 1, 3), href: (m.url as string | null) ?? null, tag: null });
     else existing.push({ text: r.match ? `${line} (${r.state === "done" ? "already done" : `already in motion${r.match.owner ? `, ${r.match.owner}` : ""}`}: ${r.match.title})` : line, href: r.match?.href ?? null, tag: null });
   }
+  // Checked against the thread at once: an ask the teammate already answered ("I've just given you access") closes now
+  const closedNow = await settleNew(admin, newIds);
   const sections = [
-    { title: "Created", lines: created },
+    { title: "Created", lines: created.filter((l, i) => !closedNow.has(newIds[i] ?? "")) },
+    { title: "Already done in the thread", lines: created.filter((l, i) => closedNow.has(newIds[i] ?? "")) },
     { title: "Added to existing", lines: existing },
     { title: "Unclear owner", lines: unclear },
     { title: "Couldn't match", lines: nomatch },
   ].filter((s) => s.lines.length);
   return { headline: created.length ? `${created.length} ask${created.length === 1 ? "" : "s"} from Slack today now ${created.length === 1 ? "is an item its owner has" : "are items their owners have"}.` : "Nothing new to track from today's Slack asks.", sections, failedSources: failed };
+}
+
+/** New items read against what was said since their source right away; the ones already done close (with the quote) */
+async function settleNew(admin: Admin, ids: string[]): Promise<Set<string>> {
+  if (!ids.length) return new Set();
+  const { runDoneChecks } = await import("@/lib/done-check");
+  const r = await runDoneChecks(admin, { onlyKeys: ids.map((id) => `ask:${id}`), force: true, budget: 20 }).catch(() => null);
+  return new Set((r?.results ?? []).filter((x) => x.state === "done").map((x) => x.key.slice(4)));
 }

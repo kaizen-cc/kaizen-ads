@@ -39,4 +39,10 @@ describe("the debrief sweep and the delegation tracker (Nov 24 2026)", () => {
     ];
     expect(coverageGaps(meetings, [{ at: "2026-11-24T16:05:00Z" }], now).map((g) => g.title)).toEqual(["Discovery Call"]);
   });
+  it("coverage gaps: notes carrying the meeting's title the same day count, even far from its start", () => {
+    const now = Date.parse("2026-11-25T01:00:00Z");
+    const meetings = [{ title: "Kaizen x OceanBox — Weekly Data Review", start: "2026-11-24T18:30:00Z", external: ["hugo@oceanbox.com"] }];
+    expect(coverageGaps(meetings, [{ at: "2026-11-24T20:10:00Z", title: "Kaizen x OceanBox - Weekly Data Review" }], now)).toEqual([]);
+    expect(coverageGaps(meetings, [{ at: "2026-11-24T20:10:00Z", title: "Acme kickoff" }], now)).toHaveLength(1);
+  });
 });

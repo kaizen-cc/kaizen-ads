@@ -47,7 +47,14 @@ export async function openCheckables(admin: Admin): Promise<Checkable[]> {
   ]);
   for (const f of flags ?? []) out.push({ key: `dog:${f.id}`, kind: "dog", clientId: f.client_id as string, ownerId: null, title: f.title as string, client: nameOf.get(f.client_id as string) ?? "Client", since: f.opened_at as string, meta: { flagKind: f.kind } });
   // Every open item, every role (owner, Nov 24 2026): meeting and call tasks, routine items, reminders on a client
-  for (const a of asks ?? []) out.push({ key: `ask:${a.id}`, kind: "ask", clientId: a.client_id as string, ownerId: a.owner_id as string, title: a.title as string, client: nameOf.get(a.client_id as string) ?? "Client", since: a.created_at as string });
+  // Read from where it started, not when the item was made (Nov 25 2026: a Slack ask filed 11 hours after the owner had
+  // already replied "I've just given you access" in its thread stayed open): the message or call it came from
+  const origin = await originsOf(admin, (asks ?? []).map((a) => String(a.source_ref ?? "")));
+  for (const a of asks ?? []) {
+    const from = origin.get(String(a.source_ref ?? ""));
+    const since = from && from < String(a.created_at) ? from : (a.created_at as string);
+    out.push({ key: `ask:${a.id}`, kind: "ask", clientId: a.client_id as string, ownerId: a.owner_id as string, title: a.title as string, client: nameOf.get(a.client_id as string) ?? "Client", since });
+  }
   for (const t of tasks ?? []) {
     const stage = String(t.stage ?? "");
     const kind = stage === "copy" ? "stuck_copy" : stage === "client_review" ? "stuck_client" : "asana";
@@ -70,6 +77,22 @@ export async function openCheckables(admin: Admin): Promise<Checkable[]> {
       for (const b of onboardingBlockers({ start, today: todayNY(), intakeAt: ((forms ?? []).find((f) => f.client_id === c.id && f.submitted_at)?.submitted_at as string | undefined) ?? null, callBooked: (calls ?? []).some((x) => x.client_id === c.id && String(x.occurred_at) >= start) || Boolean(o?.call_checked_at || o?.call_prep), lastAssetAt: ((assets ?? []).find((a) => a.client_id === c.id && String(a.created_at) >= start)?.created_at as string | undefined) ?? null, quietDays: 7 }))
         out.push({ key: `onboard:${c.id}:${b.kind}`, kind: `onboard_${b.kind}`, clientId: c.id as string, ownerId: null, title: b.title, client: c.name as string, since: start });
     }
+  }
+  return out;
+}
+
+/** When each item's source happened: a Slack message (deleg:<context item>), a call (routine:call:<call>) */
+async function originsOf(admin: Admin, refs: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const { originIds } = await import("@/lib/done-check-core");
+  const { ctx, calls } = originIds(refs);
+  for (let i = 0; i < ctx.length; i += 200) {
+    const { data } = await admin.from("context_items").select("id, occurred_at").in("id", ctx.slice(i, i + 200));
+    for (const r of data ?? []) for (const ref of refs) if (ref.startsWith(`deleg:${r.id}:`)) out.set(ref, String(r.occurred_at));
+  }
+  for (let i = 0; i < calls.length; i += 200) {
+    const { data } = await admin.from("client_calls").select("id, occurred_at").in("id", calls.slice(i, i + 200));
+    for (const r of data ?? []) for (const ref of refs) if (ref.startsWith(`routine:call:${r.id}:`)) out.set(ref, String(r.occurred_at));
   }
   return out;
 }

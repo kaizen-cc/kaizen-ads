@@ -153,7 +153,7 @@ const REPORT_SCHEMA = {
         type: "object",
         properties: {
           title: { type: "string" },
-          lines: { type: "array", items: { type: "object", properties: { text: { type: "string", description: "Verb-first, under 10 words (\"Send Acme the Q4 plan\")" }, client: { type: ["string", "null"], description: "The client's name, else null" }, due: { type: ["string", "null"], description: "YYYY-MM-DD, or a time today like 3pm, else null" }, detail: { type: ["string", "null"], description: "One short sentence more (the number, who, why), else null" }, href: { type: ["string", "null"] }, tag: { type: ["string", "null"], enum: ["certain", "likely", "guessing", null] } }, required: ["text", "client", "due", "detail", "href", "tag"], additionalProperties: false } },
+          lines: { type: "array", items: { type: "object", properties: { text: { type: "string", description: "Verb-first, under 10 words (\"Send Acme the Q4 plan\")" }, client: { type: ["string", "null"], description: "The client's name, else null" }, due: { type: ["string", "null"], description: "YYYY-MM-DD, or a time today like 3pm, else null" }, detail: { type: ["string", "null"], description: "One short sentence more (the number, who, why), else null" }, href: { type: ["string", "null"] }, tag: { anyOf: [{ type: "string", enum: ["certain", "likely", "guessing"] }, { type: "null" }] } }, required: ["text", "client", "due", "detail", "href", "tag"], additionalProperties: false } },
         },
         required: ["title", "lines"],
         additionalProperties: false,

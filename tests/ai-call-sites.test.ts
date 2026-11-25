@@ -200,6 +200,7 @@ const UTILITY: Record<string, { labels: string[]; why: string }> = {
   "src/lib/youtube-slack.ts": { labels: ["youtube client fit"], why: "a yes or no on whether a shared video fits the client it was shared with" },
   "src/lib/youtube.ts": { labels: ["youtube takeaways", "youtube lines", "youtube ask"], why: "reads public marketing videos into takeaways for every line; no client is the subject" },
   "src/lib/market.ts": { labels: ["brands to watch", "check market brands", "describe market brands"], why: "market brands across all clients" },
+  "src/lib/semantic-dedupe.ts": { labels: ["dedupe items"], why: "a small classifier: which new item repeats an older one for the same client, by meaning" },
   "src/lib/done-check.ts": { labels: ["done check"], why: "a small classifier: is one item on someone's day done, from its client's messages (precision-first guardrails in done-check-core)" },
   "src/lib/message-promises.ts": { labels: ["promises in messages", "promise follow-through", "promise client match"], why: "extracts and checks promises in batches, and matches them to clients across the whole client list" },
   "src/lib/owed-replies.ts": { labels: ["owed replies"], why: "classifies which messages wait on a reply, in batches" },

@@ -22,7 +22,7 @@ const BRIEF = {
   type: "object",
   properties: {
     headline: { type: "string", description: "First sentence: the one thing to do or know before this call" },
-    sections: { type: "array", items: { type: "object", properties: { title: { type: "string" }, lines: { type: "array", items: { type: "object", properties: { text: { type: "string" }, href: { type: ["string", "null"] }, tag: { type: ["string", "null"], enum: ["certain", "likely", "guessing", null] } }, required: ["text", "href", "tag"], additionalProperties: false } } }, required: ["title", "lines"], additionalProperties: false } },
+    sections: { type: "array", items: { type: "object", properties: { title: { type: "string" }, lines: { type: "array", items: { type: "object", properties: { text: { type: "string" }, href: { type: ["string", "null"] }, tag: { anyOf: [{ type: "string", enum: ["certain", "likely", "guessing"] }, { type: "null" }] } }, required: ["text", "href", "tag"], additionalProperties: false } } }, required: ["title", "lines"], additionalProperties: false } },
   },
   required: ["headline", "sections"],
   additionalProperties: false,

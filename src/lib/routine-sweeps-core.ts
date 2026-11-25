@@ -42,7 +42,20 @@ export function matchPerson(said: string, people: readonly Person[]): Person | n
 }
 
 /** Meetings with people outside Kaizen that have no notes from Gemini or Fireflies (matched within 20 minutes) */
-export function coverageGaps(meetings: readonly { title: string; start: string; external: readonly string[] }[], calls: readonly { at: string }[], now = Date.now()): { title: string; start: string }[] {
-  const near = (a: string, b: string) => Math.abs(Date.parse(a) - Date.parse(b)) <= 20 * 60_000;
-  return meetings.filter((m) => m.external.length > 0 && Date.parse(m.start) < now - 45 * 60_000 && !calls.some((c) => near(c.at, m.start))).map((m) => ({ title: m.title, start: m.start }));
+export function coverageGaps(meetings: readonly { title: string; start: string; external: readonly string[] }[], calls: readonly { at: string; title?: string | null }[], now = Date.now()): { title: string; start: string }[] {
+  // Notes count when they start near the meeting (a recorder joins late, a call runs over) or carry its title the same
+  // day (Nov 25 2026: "Kaizen x OceanBox — Weekly Data Review" had notes yet read as a gap)
+  const near = (a: string, b: string) => Math.abs(Date.parse(a) - Date.parse(b)) <= 45 * 60_000;
+  const words = (t: string) => new Set(t.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter((w) => w.length > 2 && !["kaizen", "the", "and", "with", "call", "meeting"].includes(w)));
+  const sameTitle = (a: string, b: string) => {
+    const x = words(a);
+    const y = words(b);
+    if (!x.size || !y.size) return false;
+    const shared = [...x].filter((w) => y.has(w)).length;
+    return shared / Math.min(x.size, y.size) >= 0.75;
+  };
+  const sameDay = (a: string, b: string) => Math.abs(Date.parse(a) - Date.parse(b)) <= 14 * 3_600_000;
+  return meetings
+    .filter((m) => m.external.length > 0 && Date.parse(m.start) < now - 45 * 60_000 && !calls.some((c) => near(c.at, m.start) || (c.title && sameDay(c.at, m.start) && sameTitle(c.title, m.title))))
+    .map((m) => ({ title: m.title, start: m.start }));
 }

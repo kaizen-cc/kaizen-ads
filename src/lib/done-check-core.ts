@@ -144,3 +144,17 @@ export function subjectOf(kind: string, title: string): RegExp | null {
 
 /** Kinds whose evidence is about tracking (the Tracking Specialist sees their auto-closes) */
 export const TRACKING_KINDS = new Set(["notrack", "dog"]);
+
+/** The source ids inside items' source_refs: deleg:<context item>:<owner>, routine:call:<call>:<n> */
+export function originIds(refs: readonly string[]): { ctx: string[]; calls: string[] } {
+  const uuid = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+  const ctx = new Set<string>();
+  const calls = new Set<string>();
+  for (const r of refs) {
+    const d = new RegExp(`^deleg:(${uuid}):`).exec(r);
+    if (d) ctx.add(d[1]);
+    const c = new RegExp(`^routine:call:(${uuid}):`).exec(r);
+    if (c) calls.add(c[1]);
+  }
+  return { ctx: [...ctx], calls: [...calls] };
+}

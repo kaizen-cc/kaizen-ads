@@ -95,7 +95,7 @@ const FOUND_SCHEMA = {
 };
 
 /** Read what the scan found (each message once), keep the real commitments, and start watching them. */
-export async function recordPromises(admin: Admin, found: Candidate[], names: Map<string, string>) {
+export async function recordPromises(admin: Admin, found: Candidate[], names: Map<string, string>, who: SlackWho | null = null) {
   const fresh = [...new Map(found.map((c) => [`${c.source}|${c.message_key}`, c])).values()];
   if (!fresh.length) return { read: 0, promises: 0 };
   // Already read ones (a reaction is seen on every run) aren't read again
@@ -147,9 +147,20 @@ promise: true only when it's a real commitment by the person named as saying it.
         said: c.said.slice(0, 1500),
       };
     });
-    const { error } = await admin.from("message_promises").upsert(rows, { onConflict: "source,message_key", ignoreDuplicates: true });
+    const { data: saved, error } = await admin.from("message_promises").upsert(rows, { onConflict: "source,message_key", ignoreDuplicates: true }).select("*");
     if (error) console.error("[promises] saving failed:", error.message);
     promises += rows.filter((r) => r.status === "open").length;
+    // Checked against reality the moment it's made (Nov 25 2026: a ✅ read hours late opened a promise the owner had
+    // already delivered in the channel): replies in its thread and the owner's later posts in the channel close it
+    const fresh = ((saved ?? []) as Row[]).filter((r) => r.status === "open");
+    for (let j = 0; j < fresh.length; j += 8) {
+      const part = fresh.slice(j, j + 8);
+      const moves = await movement(admin, part, who, names).catch(() => new Map<string, Move & { asanaGids: string[] }>());
+      for (const p of part) {
+        const m = moves.get(String(p.id));
+        if (m && m.state !== "nothing") await closeMoving(admin, p, { ...m, state: m.state }, names.get(String(p.owner_id)) ?? "Someone").catch(() => null);
+      }
+    }
   }
   return { read: todo.length, promises };
 }
@@ -258,6 +269,19 @@ async function since(p: Row, who: SlackWho | null): Promise<string> {
     // Can't read it right now: judged on tickets and tasks alone
   }
   return "";
+}
+
+/**
+ * What Kaizen OS holds from the same Slack channel (or Gmail thread's client) after the message: replies in its thread
+ * and everyone's later posts there, the owner's included. Read even when Slack itself can't be (an on-demand recheck),
+ * so "campaign is now live" posted in the channel closes the promise to take it live.
+ */
+async function channelSince(admin: Admin, p: Row): Promise<string> {
+  if (p.source !== "slack" || !p.channel_id) return "";
+  const ts = Number(p.message_ts ?? 0);
+  const from = ts ? new Date(ts * 1000).toISOString() : String(p.said_at);
+  const { data } = await admin.from("context_items").select("occurred_at, author, body").in("source", ["slack_internal", "slack_external"]).like("url", `%/archives/${String(p.channel_id)}/%`).gt("occurred_at", from).order("occurred_at").limit(25);
+  return (data ?? []).map((x) => `${nyDay(String(x.occurred_at))} ${x.author ?? "Someone"}: ${String(x.body ?? "").replace(/\s+/g, " ").slice(0, 300)}`).join("\n");
 }
 
 type Move = { n: number; state: "done" | "moving" | "nothing"; evidence: string; tickets: number[]; asana: number[] };
@@ -403,7 +427,7 @@ async function movement(admin: Admin, list: Row[], who: SlackWho | null, names: 
   const blocks: string[] = [];
   const tasksOf = new Map<string, { gid: string }[]>();
   for (const [i, p] of list.entries()) {
-    const after = await since(p, who);
+    const after = [await since(p, who), await channelSince(admin, p)].filter(Boolean).join("\n");
     let work = "";
     if (p.client_id) {
       const [{ data: tickets }, tasks, changes, system, { data: client }] = await Promise.all([

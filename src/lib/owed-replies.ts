@@ -99,10 +99,24 @@ async function slackPeople(admin: Admin) {
     // Their own Slack connection first, then the email Slack shows (when the app may read it), then the name
     let id = connected.get(p.id) ?? (p.slack_user_id as string | null) ?? null;
     if (!id) id = users.find((u) => !u.deleted && u.profile?.email && u.profile.email.toLowerCase() === String(p.email ?? "").toLowerCase())?.id ?? null;
+    // The same mailbox name at another address (an alias or an old domain)
+    const local = String(p.email ?? "").toLowerCase().split("@")[0];
+    if (!id && local.length > 2) {
+      const same = users.filter((u) => !u.deleted && !u.is_bot && team.has(u.id) && String(u.profile?.email ?? "").toLowerCase().split("@")[0] === local);
+      if (same.length === 1) id = same[0].id;
+    }
     if (!id) {
       const same = users.filter((u) => !u.deleted && !u.is_bot && team.has(u.id) && norm(u.real_name || u.profile?.real_name || "") === norm(p.full_name ?? ""));
       if (same.length === 1) id = same[0].id;
     }
+    // A short name ("Fabi") that starts exactly one teammate's Slack name ("Fabiola …")
+    const firstOf = (s: string) => s.toLowerCase().trim().split(/\s+/)[0].replace(/[^a-z]/g, "");
+    if (!id && !/\s/.test(String(p.full_name ?? "").trim()) && firstOf(p.full_name ?? "").length >= 3) {
+      const first = firstOf(p.full_name ?? "");
+      const same = users.filter((u) => !u.deleted && !u.is_bot && team.has(u.id) && [u.real_name, u.profile?.real_name, u.profile?.display_name].some((n) => firstOf(n ?? "").startsWith(first)));
+      if (same.length === 1) id = same[0].id;
+    }
+    if (!id && p.email) id = (await (await import("@/lib/profile-slack")).findSlackUser(String(p.email)).catch(() => null))?.id ?? null;
     if (!id) continue;
     profileOf.set(id, p.id as string);
     if (id !== p.slack_user_id) await admin.from("profiles").update({ slack_user_id: id }).eq("id", p.id);
@@ -811,7 +825,7 @@ export async function runOwedReplies(admin: Admin) {
 
   // What the team said yes to: new ones read, due ones followed through
   const candidates = [...(slackRun && !("error" in slackRun) ? slackRun.said : []), ...(gmailRun && !("error" in gmailRun) ? gmailRun.said : [])];
-  const promises = await recordPromises(admin, candidates, names).catch(fail);
+  const promises = await recordPromises(admin, candidates, names, who).catch(fail);
   // A new one about something already promised (on a call, in another thread) joins it
   const { groupPromises, settleGroups } = await import("@/lib/promise-groups");
   const grouped = await groupPromises(admin).catch(fail);

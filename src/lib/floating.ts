@@ -19,8 +19,15 @@ export const DONE_ELSEWHERE = 0.8;
 export async function runFloating(admin: Admin, opts: { budget?: number } = {}) {
   const reality = await realityPass(admin).catch((e) => ({ error: String(e), inMotion: 0, closedElsewhere: 0 }));
   const { runDoneChecks } = await import("@/lib/done-check");
+  // What clients (and the team) said that changes the work: cancellations, dated asks, holds, recurring commitments
+  // (src/lib/client-signals.ts), before the done-check reads every open item
+  const { runClientSignals } = await import("@/lib/client-signals");
+  const signals = await runClientSignals(admin).catch((e) => ({ error: String(e) }));
+  // Same work in different words, by meaning (src/lib/semantic-dedupe.ts)
+  const { dedupeNew } = await import("@/lib/semantic-dedupe");
+  const deduped = await dedupeNew(admin).catch((e) => ({ error: String(e) }));
   const checks = await runDoneChecks(admin, { budget: opts.budget ?? 50, staleHours: 6 }).catch(() => null);
-  return { ...reality, checked: checks?.checked ?? 0, closed: checks?.closed ?? 0, moving: checks?.moving ?? 0 };
+  return { ...reality, signals, deduped, checked: checks?.checked ?? 0, closed: checks?.closed ?? 0, moving: checks?.moving ?? 0 };
 }
 
 async function realityPass(admin: Admin) {
