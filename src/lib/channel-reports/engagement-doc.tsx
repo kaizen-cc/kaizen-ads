@@ -1598,7 +1598,7 @@ function ListHealth({
               marginTop: 3,
               marginBottom: 6,
             }}
-          >{`${int(e.reached.now)} delivered of ${int(e.recipients.now)} sent`}</Text>
+          >{`Email campaigns ${m.main.label}: ${int(e.reached.now)} delivered of ${int(e.recipients.now)} sent`}</Text>
           <HealthRow
             name="Bounce rate"
             x={e.bounceRate}

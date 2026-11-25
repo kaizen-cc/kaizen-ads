@@ -11,7 +11,7 @@ import { columnKeys, tileViews, type ChannelLayout, type TileView } from "./layo
 import { wholeMoney } from "./email-message";
 import { splitDay, splitLegend, splitOfDays, splitTotal, SPLIT_HEX } from "./email-split";
 import { audienceLines } from "@/lib/klaviyo/audiences";
-import { rprOf, type Grade, type MessageRow, type Pair, type PerfBlock } from "./email-detail";
+import { deliverabilityBasis, rprOf, type Grade, type MessageRow, type Pair, type PerfBlock } from "./email-detail";
 import type { RevenueSource } from "./email-sources";
 import type { LocationMetricBreakdown } from "@/lib/klaviyo/locations";
 import { campaignPicks, cardCampaigns, cardStats, flowCardViews, fromKlaviyo, heat, klaviyoCampaignUrl, locationViews, shareText, tint, type CardStat, type FlowCardView } from "./email-cards";
@@ -1045,17 +1045,19 @@ const health = (rate: number | null, b: { warn: number; bad: number }) => (rate 
 
 function Deliverability({ m, width }: { m: EmailMetrics; width: number }) {
   const dl = m.detail!.deliverability!;
+  const basis = deliverabilityBasis(m.main.label, dl.recipients.now, m.source);
   return (
     <View style={[s.panel, { width, paddingVertical: 11 }]}>
       <View style={{ flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", marginBottom: 8, height: 30 }}>
         <View style={{ flexShrink: 1 }}>
           <Text style={label}>Deliverability</Text>
-          <Text style={{ fontSize: 6.2, color: MUTED, marginTop: 3, maxLines: 2 }}>Campaign email to {int(dl.recipients.now)} recipients</Text>
+          <Text style={{ fontSize: 6.2, color: MUTED, marginTop: 3, maxLines: 2 }}>{basis.base}</Text>
         </View>
       </View>
       <KeyLine name="Bounce rate" value={pct(dl.bounce.now, 2)} note={`healthy < ${pct(BENCHMARKS.bounce.warn, 0)}`} mv={moveOf(dl.bounce.now, dl.bounce.before, "down")} color={health(dl.bounce.now, BENCHMARKS.bounce)} />
       <KeyLine name="Spam complaints" value={pct(dl.spam.now, 3)} note={`healthy < ${pct(BENCHMARKS.spam.warn, 2)}`} mv={moveOf(dl.spam.now, dl.spam.before, "down")} color={health(dl.spam.now, BENCHMARKS.spam)} />
       <KeyLine name="Unsubscribe rate" value={pct(dl.unsub.now, 2)} note={`healthy < ${pct(BENCHMARKS.unsubscribe.warn, 1)}`} mv={moveOf(dl.unsub.now, dl.unsub.before, "down")} color={health(dl.unsub.now, BENCHMARKS.unsubscribe)} />
+      {basis.note ? <Text style={{ fontSize: 5.8, color: FAINT, marginTop: 5 }}>{basis.note}</Text> : null}
     </View>
   );
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { emailMetrics, fitFont, shortMoney } from "@/lib/channel-reports/core";
-import { emailDetail, grade, RATE_BARS, upcomingItems, type FlowDay } from "@/lib/channel-reports/email-detail";
+import { deliverabilityBasis, emailDetail, grade, RATE_BARS, upcomingItems, type FlowDay } from "@/lib/channel-reports/email-detail";
 import { emailMessageFlags, periodWords, reportTitle, wholeMoney, whatHappenedBullets, withTitle } from "@/lib/channel-reports/email-message";
 import type { CampaignLite } from "@/lib/klaviyo/insights";
 
@@ -131,5 +131,17 @@ describe("fitting numbers in the PDF", () => {
     expect(shortMoney(28300, "AUD")).toBe("AUD 28k");
     expect(shortMoney(640)).toBe("$640");
     expect(shortMoney(3000)).toBe("$3k");
+  });
+});
+
+describe("the deliverability section's stated basis", () => {
+  it("says the window and that only campaigns count, and how it differs from Klaviyo's tab", () => {
+    const b = deliverabilityBasis("Nov 17 – 23", 12345);
+    expect(b.base).toBe("Email campaigns sent Nov 17 – 23, 12,345 recipients. Automated emails not included.");
+    expect(b.note).toMatch(/last 30 days and includes automated emails/);
+    expect(deliverabilityBasis("Nov 17 – 23", 10, "Klaviyo").note).not.toBeNull();
+  });
+  it("names no Klaviyo tab for another provider", () => {
+    expect(deliverabilityBasis("Nov 17 – 23", null, "Brevo")).toEqual({ base: "Email campaigns sent Nov 17 – 23. Automated emails not included.", note: null });
   });
 });

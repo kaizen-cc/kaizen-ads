@@ -645,7 +645,7 @@ export function EngagementRecap({
             <p className="text-[11px] tracking-[0.08em] text-muted uppercase">
               Delivery
             </p>
-            <p className="mt-1 text-[13px] text-muted">{`${int(e.reached.now)} delivered of ${int(e.recipients.now)} sent`}</p>
+            <p className="mt-1 text-[13px] text-muted">{`Email campaigns ${m.main.label}: ${int(e.reached.now)} delivered of ${int(e.recipients.now)} sent`}</p>
             <dl className="mt-3 grid gap-2 text-[13px] tabular-nums">
               {(
                 [
