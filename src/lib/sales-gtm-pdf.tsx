@@ -45,12 +45,12 @@ function kaizenFontSet(): GtmBrand["fonts"] {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const path = require("node:path") as typeof import("node:path");
     const dir = path.join(process.cwd(), "public", "fonts");
-    const osake = path.join(dir, "Osake-ads.woff2");
     const flexa = path.join(dir, "GT-Flexa-Regular-Trial.woff2");
-    if (!fs.existsSync(osake) || !fs.existsSync(flexa)) throw new Error("fonts missing");
-    Font.register({ family: "Osake", src: osake });
+    if (!fs.existsSync(flexa)) throw new Error("fonts missing");
+    // Osake ships subset to the letters of the "ads" wordmark only, and the GT Flexa file has letters and digits but no
+    // punctuation: headlines and titles in GT Flexa, body text in Helvetica, so no line mixes fonts glyph by glyph
     Font.register({ family: "GT Flexa", src: flexa });
-    kaizenFonts = { display: "Osake", title: "GT Flexa", body: "GT Flexa", bodyBold: "Helvetica-Bold" };
+    kaizenFonts = { display: "GT Flexa", title: "GT Flexa", body: "Helvetica", bodyBold: "Helvetica-Bold" };
   } catch {
     kaizenFonts = HELV;
   }
@@ -64,7 +64,8 @@ function publicFile(name: string): string | null {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const path = require("node:path") as typeof import("node:path");
     const f = path.join(process.cwd(), "public", name);
-    return fs.existsSync(f) ? f : null;
+    // Embedded as data, so it draws wherever the file path wouldn't resolve
+    return fs.existsSync(f) ? `data:image/png;base64,${fs.readFileSync(f).toString("base64")}` : null;
   } catch {
     return null;
   }
@@ -272,7 +273,7 @@ export function GtmDoc({ c, brand, prospect }: { c: GtmContent; brand: GtmBrand;
   const s = styles(brand);
   const sec = { s, b: brand, short: prospect.short, prepFor: prospect.name };
   return (
-    <Document title={`${prospect.name} · Go-to-market strategy`} author={brand.preparedBy} creator={brand.preparedBy} producer={brand.preparedBy}>
+    <Document title={`${prospect.name}: Go-to-market strategy`} author={brand.preparedBy} creator={brand.preparedBy} producer={brand.preparedBy}>
       <Page size="LETTER" style={s.cover}>
         <View>
           {/* eslint-disable-next-line jsx-a11y/alt-text -- react-pdf images take no alt */}
