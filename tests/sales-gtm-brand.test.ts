@@ -23,9 +23,10 @@ describe("GTM branding: direct or white label", () => {
   it("Kaizen's look: its colors, fonts, logo, tagline and the CEO under Prepared by", () => {
     const b = kaizenBrand({ name: "Kyle Barry", title: "CEO & Founder", tagline: "The 1% Agency" });
     expect(b).toMatchObject({ mode: "kaizen", accent: "#B21E2C", dark: "#060606", accentSoft: "#F2F2F2", page: "#FAFAFA", tagline: "The 1% Agency", preparedLine: "Kyle Barry, CEO & Founder" });
-    expect(b.fonts.display).toBe("Osake");
-    expect(b.fonts.body).toBe("GT Flexa");
-    expect(b.logo).toMatch(/kaizen-logo\.png$/);
+    // Headlines in GT Flexa (the Osake file holds only the "ads" wordmark letters), body in Helvetica (GT Flexa has no punctuation)
+    expect(b.fonts.display).toBe("GT Flexa");
+    expect(b.fonts.body).toBe("Helvetica");
+    expect(b.logo).toMatch(/^data:image\/png;base64,/);
   });
   it("a partner's look: its kit, its contact, nothing of Kaizen's", () => {
     const b = brandFor({ prepared_by: "ZenChange Marketing", brand: { accent: "#178F92", dark: "#0F1F2E" }, contact: { name: "Diane", role: "Partner contact" } });
