@@ -219,6 +219,10 @@
       "schedule": "9,39 * * * *"
     },
     {
+      "path": "/api/cron/context?step=spend",
+      "schedule": "33 * * * *"
+    },
+    {
       "path": "/api/cron/context?step=integrations",
       "schedule": "54 * * * *"
     },

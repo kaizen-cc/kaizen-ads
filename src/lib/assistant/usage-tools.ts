@@ -14,11 +14,11 @@ export function usageTools(ctx: AssistantCtx): LoopTool[] {
     {
       name: "calls_and_usage",
       description:
-        "The owner's view of the agents: what: usage (this month to date per person and team: calls, chats, minutes, messages, tokens and cost, with the projection to month end) or calls (every call and Kaizen AI chat in a date range, the safety review's flagged ones first with the reason, then by team; optional person and search). Say the headline in a line or two; offer to open the page (open_screen place 'calls and usage' or 'ai usage').",
+        "The owner's view of the agents: what: spend (everything the AI cost each day, people and the background work: today so far, the 7-day average, the month's projection, the cache share, and the places and agents that cost the most today and this week; a day past twice the average is flagged), usage (this month to date per person and team: calls, chats, minutes, messages, tokens and cost, with the projection to month end) or calls (every call and Kaizen AI chat in a date range, the safety review's flagged ones first with the reason, then by team; optional person and search). Say the headline in a line or two; offer to open the page (open_screen place 'calls and usage' or 'ai usage').",
       input_schema: {
         type: "object",
         properties: {
-          what: { type: "string", enum: ["usage", "calls"] },
+          what: { type: "string", enum: ["spend", "usage", "calls"] },
           person: { type: "string", description: "A teammate's name, to narrow it to them" },
           days: { type: "integer", description: "Calls: how many days back (default 7)" },
           search: { type: "string", description: "Calls: words said in the call or chat" },
@@ -30,6 +30,22 @@ export function usageTools(ctx: AssistantCtx): LoopTool[] {
       run: async (input) => {
         const { loadCallLog, loadUsage } = await import("@/lib/calls-usage");
         const name = typeof input.person === "string" ? input.person.trim().toLowerCase() : "";
+        if (input.what === "spend") {
+          const s = await (await import("@/lib/spend")).loadSpend();
+          const line = (l: (typeof s.top7)[number]) => ({ place: l.place, agent: l.agent, background: l.auto, runs: l.runs, cost: dollars(l.cost) });
+          return {
+            today_so_far: dollars(s.todayCost),
+            seven_day_average: dollars(s.avg7),
+            month_to_date: dollars(s.monthToDate),
+            projected_month: dollars(s.projected),
+            cache_share_7_days: `${Math.round(s.cacheHit7 * 100)}%`,
+            spike: s.spike ? { day: s.spike.day, cost: dollars(s.spike.cost), average_before: dollars(s.spike.avg) } : null,
+            today_by_place: s.topToday.map(line),
+            last_7_days_by_place: s.top7.map(line),
+            last_7_days_by_agent: s.byAgent7.slice(0, 12).map((a) => ({ agent: a.agent, runs: a.runs, cost: dollars(a.cost) })),
+            last_14_days: s.days.slice(-14).map((d) => ({ day: d.day, cost: dollars(d.cost) })),
+          };
+        }
         if (input.what === "usage") {
           const u = await loadUsage();
           const people = u.people.filter((p) => !name || p.name.toLowerCase().includes(name)).sort((a, b) => b.cost - a.cost).slice(0, 25);

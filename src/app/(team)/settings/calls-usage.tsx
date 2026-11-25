@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { SafetyPlayer } from "@/app/(team)/safety/[callId]/safety-player";
 import { compact, dollars, groupLog, lengthLabel, PROJECTION_METHOD, sortPeople, teamLabel, TEAMS, USAGE_SORTS, workingDaysLeft, type UsagePerson, type UsageSort } from "@/lib/calls-usage-core";
 import { loadCallDetail, loadCallLog, loadThreadDetail, loadUsage, ownerOnly, type CallLogEntry, type LogFilters, type OwnerWho } from "@/lib/calls-usage";
+import { loadSpend } from "@/lib/spend";
+import { SPIKE_FACTOR, type SpendSummary } from "@/lib/spend-core";
 import { CallFilters } from "./calls-filters";
 
 // Settings › Calls & usage, the owner only (checked here again, on the server, whatever the tab list showed): every
@@ -286,7 +288,7 @@ function Trend({ daily, name }: { daily: UsagePerson["daily"]; name: string }) {
 }
 
 async function UsageView({ sort }: { sort: UsageSort }) {
-  const u = await loadUsage();
+  const [u, spend] = await Promise.all([loadUsage(), loadSpend().catch(() => null)]);
   const people = sortPeople(u.people, sort);
   const daysLeft = workingDaysLeft(u.today);
   const head = (k: UsageSort, label: string, right = true) => (
@@ -299,6 +301,7 @@ async function UsageView({ sort }: { sort: UsageSort }) {
   );
   return (
     <div className="grid gap-5">
+      {spend && <DailySpend s={spend} />}
       <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
         <Tile label="AI cost this month" value={dollars(u.total.cost)} note={`${u.monthStart.slice(5)} to ${u.today.slice(5)}, people's own use`} />
         <Tile label="Projected by month end" value={dollars(u.total.projected)} note={`${daysLeft} working ${daysLeft === 1 ? "day" : "days"} left`} />
@@ -422,6 +425,80 @@ function Tile({ label, value, note }: { label: string; value: string; note: stri
       <p className="text-[12px] text-muted">{label}</p>
       <p className="mt-1 font-heading text-[24px] leading-none">{value}</p>
       <p className="mt-1.5 text-[11.5px] text-faint">{note}</p>
+    </div>
+  );
+}
+
+const shortDay = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+
+/** Everything the AI cost each day (people and the background work), by agent and place, and the projection */
+function DailySpend({ s }: { s: SpendSummary }) {
+  const max = Math.max(1, ...s.days.map((d) => d.cost));
+  const over = s.avg7 > 0 && s.todayCost > SPIKE_FACTOR * s.avg7;
+  return (
+    <section className="grid gap-3 rounded-[22px] border border-line p-4 sm:p-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="text-[11px] uppercase tracking-[0.16em] text-muted">Daily AI spend, everything</h3>
+        <p className="text-[12px] text-faint">People and the background work · New York days</p>
+      </div>
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+        <Tile label="Today so far" value={dollars(s.todayCost)} note={over ? `Over ${SPIKE_FACTOR}x the 7-day average: you're told` : `${s.avg7 ? Math.round((s.todayCost / s.avg7) * 100) : 0}% of an average day`} />
+        <Tile label="7-day average" value={dollars(s.avg7)} note="a day, the 7 full days before today" />
+        <Tile label="Projected this month" value={dollars(s.projected)} note={`${dollars(s.monthToDate)} so far + the average for each day left`} />
+        <Tile label="Read from the cache" value={`${Math.round(s.cacheHit7 * 100)}%`} note="of prompts, last 7 days (higher is cheaper)" />
+      </div>
+      <div className="flex h-24 items-end gap-[3px]" role="img" aria-label={`Spend for the last ${s.days.length} days, ${dollars(s.days.at(-1)?.cost ?? 0)} today`}>
+        {s.days.map((d) => (
+          <div key={d.day} title={`${shortDay(d.day)}: ${dollars(d.cost)}`} className={`min-w-0 flex-1 rounded-t-[3px] ${d.day === s.today ? (over ? "bg-bad" : "bg-brand") : s.avg7 && d.cost > SPIKE_FACTOR * s.avg7 ? "bg-warn" : "bg-faint/50"}`} style={{ height: `${Math.max(2, (d.cost / max) * 100)}%` }} />
+        ))}
+      </div>
+      <div className="flex justify-between text-[11px] text-faint">
+        <span>{shortDay(s.days[0]?.day ?? s.today)}</span>
+        <span>Today</span>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <SpendList title="Today, by place" lines={s.topToday} empty="Nothing yet today." />
+        <SpendList title="Last 7 days, by place" lines={s.top7} empty="Nothing in the last 7 days." />
+      </div>
+      <details className="rounded-2xl bg-surface p-4">
+        <summary className="cursor-pointer text-[13px] text-muted">Last 7 days, by agent</summary>
+        <ul className="mt-2 grid gap-1">
+          {s.byAgent7.map((a) => (
+            <li key={a.agent} className="flex items-baseline justify-between gap-3 text-[13px]">
+              <span className="min-w-0 truncate">{a.agent.replace(/_/g, " ")}</span>
+              <span className="shrink-0 tabular-nums text-muted">
+                {compact(a.runs)} runs · <span className="text-fg">{dollars(a.cost)}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      </details>
+    </section>
+  );
+}
+
+function SpendList({ title, lines, empty }: { title: string; lines: SpendSummary["top7"]; empty: string }) {
+  return (
+    <div className="grid content-start gap-1.5">
+      <p className="text-[12px] text-muted">{title}</p>
+      {lines.length ? (
+        <ul className="grid gap-1">
+          {lines.map((l) => (
+            <li key={l.key} className="flex min-h-9 items-center justify-between gap-3 rounded-xl bg-surface px-3 text-[13px]">
+              <span className="min-w-0 truncate">
+                {l.place}
+                <span className="text-faint"> · {l.agent.replace(/_/g, " ")}{l.auto ? " · background" : ""}</span>
+              </span>
+              <span className="shrink-0 tabular-nums">
+                <span className="text-faint">{compact(l.runs)} · </span>
+                {dollars(l.cost)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-[13px] text-faint">{empty}</p>
+      )}
     </div>
   );
 }
