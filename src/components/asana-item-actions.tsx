@@ -9,6 +9,7 @@ import { quickDue, type TaskDetail } from "@/lib/asana-live-core";
 import { describe } from "@/lib/asana-due";
 import { deferClear } from "@/lib/undo";
 import { TeammatePicker } from "@/components/teammate-picker";
+import { refreshInPlace } from "@/lib/complete-card";
 
 // An Asana task on the Overview, the recap and its sheet (owner, Nov 24 2026: the generic Done / Later / Hand off didn't
 // fit an Asana task). Its own context (project and section, the description, subtasks to tick, who assigned it, the
@@ -61,7 +62,7 @@ export function AsanaItemActions({ itemKey, gid, url, title, clientSlug = null, 
       label: "Completed in Asana",
       commit: async () => {
         const r = await saveAsanaTask(gid, { completed: true });
-        if (r.ok) router.refresh();
+        if (r.ok) refreshInPlace(router);
         return r;
       },
       onUndo: onBack,
@@ -75,7 +76,7 @@ export function AsanaItemActions({ itemKey, gid, url, title, clientSlug = null, 
       setTask(r.task);
       setPanel(null);
       setNote(due ? `Due ${new Date(`${due}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} in Asana` : "No due date in Asana");
-      router.refresh();
+      refreshInPlace(router);
     });
   const post = () =>
     start(async () => {
@@ -97,7 +98,7 @@ export function AsanaItemActions({ itemKey, gid, url, title, clientSlug = null, 
       label: `Reassigned to ${p.name.split(" ")[0]} in Asana`,
       commit: async () => {
         const r = await saveAsanaTask(gid, { assignee: p.email, assigneeName: p.name });
-        if (r.ok) router.refresh();
+        if (r.ok) refreshInPlace(router);
         return r;
       },
       onUndo: onBack,

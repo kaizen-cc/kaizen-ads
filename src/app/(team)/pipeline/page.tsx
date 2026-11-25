@@ -46,7 +46,12 @@ async function ConnectOverviewItem({ me }: { me: Staff }) {
 async function ExecOverview({ db, me, base, allLines = false }: { db: SupabaseClient; me: Staff; base: { greeting: string; firstName: string; today: string }; /** The owner's "All lines" in the step-ins deck (?lines=all) */ allLines?: boolean }) {
   const [{ ExecBlocks }, core, snap] = await Promise.all([import("./views/exec-home"), import("@/lib/exec-overview-core"), todaySnapshot(db, me)]);
   const tabs = Object.fromEntries(core.EXEC_TABS.map((t) => [t, [] as import("@/lib/exec-overview-core").ExecCard[]])) as Record<import("@/lib/exec-overview-core").ExecTab, import("@/lib/exec-overview-core").ExecCard[]>;
-  for (const i of snap.today.items) if (i.exec && i.exec.tab in tabs) tabs[i.exec.tab].push(i.exec);
+  // Every item in an exec topic gets its card (a routine's finding has none of its own), so Needs me here counts what the
+  // recap and the hero count (src/lib/today-counts.ts countLooks)
+  for (const i of snap.today.items) {
+    const c = i.exec ?? (core.isExecTab(i.topic) ? itemCard(i) : null);
+    if (c && c.tab in tabs) tabs[c.tab].push(c);
+  }
   tabs.needs = core.sortNeeds(tabs.needs);
   for (const t of ["escalated", "accounts", "system"] as const) tabs[t] = core.sortCards(tabs[t]);
   const owner = Boolean(me.canViewAs);

@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import { moveWidget, type Widget, type WidgetId } from "@/lib/widgets-core";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { saveWidgets } from "../widget-actions";
+import { refreshInPlace } from "@/lib/complete-card";
 
 // "Add widget" (owner, Nov 24 2026): the gallery of what this person can add to their Overview, grouped; add, remove
 // and move up or down, saved at once. Open in the address (?widgets=1), so Back closes it. Full screen on a phone.
@@ -25,7 +26,7 @@ export function WidgetGallery({ groups, chosen }: { groups: { group: string; wid
         setIds(was);
         return setError(r.error);
       }
-      router.refresh();
+      refreshInPlace(router);
     });
   };
   const all = groups.flatMap((g) => g.widgets);

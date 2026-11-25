@@ -24,6 +24,10 @@ const ITEMS: TodayItem[] = [
   item({ key: "k1", topic: "accounts", tier: "critical", score: 84, client: "Nectr", stat: { value: "35%", label: "over target per purchase" }, title: "Nectr is off target", story: "Last 7 days: $60.93 per purchase against a $45 target, on $8,240 spent.", why: "A high-priority account, off target", evidence: ["#1 problem (sheet): one UGC ad carries 25% of spend", "Spending ahead of its monthly budget"], carried: true, state: "saved" }),
   item({ key: "b1", topic: "briefs", tier: "high", score: 62, client: "Sierra Dreams", stat: { value: "8", label: "pieces in the brief" }, title: "BFCM statics: the offer, three ways", story: "Two winners are tiring a week before Black Friday; the strategist wrote the refresh.", why: "A brief waiting on a decision" }),
   item({ key: "a1", topic: "allotments", tier: "high", score: 64, client: "Best Tickets", stat: { value: "8/5", label: "videos this month" }, title: "Best Tickets is over their creative allotment", story: "8 made or in production against 5 a month, with 63% of the month gone. Hold new requests or talk about an upgrade.", why: "Making more than they pay for" }),
+  // An exec's Needs me: five Team items, counted one by one (Later and Done take each off at once)
+  ...["List native integrations missing consent sync", "Answer the agent: which BFCM offer leads", "Approve the Q1 hiring plan", "Reply to the Slack thread on reporting", "Sign off the new client checklist"].map((title, n) =>
+    item({ key: `n${n}`, topic: "needs", tier: n === 0 ? "critical" : "high", score: 80 - n, client: "Team", stat: { value: `${n + 1}d`, label: "waiting on you" }, title, story: "From your day.", why: "Only you can do it" }),
+  ),
   item({ key: "f1", topic: "ads", tier: "normal", score: 46, client: "Crust Pizza Co.", stat: { value: "Tiring", label: "against its last three weeks" }, title: "Free garlic knots bounce-back", story: "Crust Pizza Co.'s ad is starting to slip.", why: "Early signs of wear" }),
 ];
 

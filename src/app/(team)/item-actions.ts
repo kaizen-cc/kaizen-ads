@@ -22,7 +22,8 @@ export async function doneQuickItem(key: string, snap: QuickSnap) {
 /** Snooze to tomorrow: gone from this person's day until tomorrow, then back on its own */
 export async function snoozeQuickItem(key: string, snap: QuickSnap): Promise<{ ok: true; until: string }> {
   const me = await requireStaff();
-  const until = await snoozeItem(await createClient(), me.id, key, snap);
+  // No page-wide redraw (the screen already took it off)
+  const until = await snoozeItem(await createClient(), me.id, key, snap, undefined, false);
   return { ok: true, until };
 }
 
@@ -40,7 +41,7 @@ export async function delegateQuickItem(input: { key: string; snap: QuickSnap; t
   const title = [input.snap.client, input.snap.title].filter(Boolean).join(": ") || "An item from my day";
   const r = await delegateItem(createAdminClient(), { id: me.id, fullName: me.fullName, role: me.role, isExec: me.isExec }, { ref: `item:${stableKeyOf(input.key)}`.slice(0, 200), clientId: input.snap.clientId, title, to: input.to, note: input.note ?? null, due: input.due ?? null, why: null });
   if (!r.ok) return r;
-  await markItem(db, me.id, input.key, "dismissed", input.snap, { label: `Delegated to ${r.to}: ${title}`.slice(0, 300), href: input.href ?? null });
+  await markItem(db, me.id, input.key, "dismissed", input.snap, { label: `Delegated to ${r.to}: ${title}`.slice(0, 300), href: input.href ?? null, revalidate: false });
   return { ok: true, to: r.to };
 }
 
@@ -65,7 +66,7 @@ export async function transferQuickItem(input: { key: string; snap: TaskSnap; to
   if (input.to === me.id) return { ok: false, error: "It's already yours." };
   const { transferItem } = await import("@/lib/item-owners");
   const r = await transferItem(createAdminClient(), { id: me.id, name: me.fullName }, { key: input.key, to: input.to, snapshot: snapOf(input.snap), note: input.note ?? null });
-  if (r.ok) revalidateDay();
+  // No page-wide redraw: the screen already took it off and refreshes in place (a redraw jumped the page to the top)
   return r;
 }
 
@@ -76,7 +77,7 @@ export async function dueQuickItem(input: { key: string; snap: TaskSnap; due: st
   if (input.due && !/^\d{4}-\d{2}-\d{2}$/.test(input.due)) return { ok: false, error: "Pick a date." };
   const { setItemDue } = await import("@/lib/item-owners");
   const r = await setItemDue(createAdminClient(), { id: me.id }, { key: input.key, due: input.due, snapshot: snapOf(input.snap) });
-  if (r.ok) revalidateDay();
+  // The screen refreshes in place (no page-wide redraw)
   return r;
 }
 

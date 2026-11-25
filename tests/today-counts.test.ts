@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyMarks, bucketKey, bucketsOf, countLooks, hideKeyOf, lookChip, lookHeadline, openOf, recapKeysOf, rowStat, topicGroups, withLooks } from "@/lib/today-counts";
+import { applyMarks, bucketKey, bucketsOf, countLooks, hideKeyOf, isOpenMark, lookChip, lookHeadline, openOf, recapKeysOf, rowStat, topicGroups, withLooks } from "@/lib/today-counts";
 import type { Tier, TodayItem, TopicKey } from "@/lib/today";
 
 const tierOf = (score: number): Tier => (score >= 80 ? "critical" : score >= 60 ? "high" : "normal");
@@ -121,5 +121,25 @@ describe("a client's row and its overview", () => {
     expect(rowStat(left, b.items[0])).toEqual(other.stat);
     // Saved for later is still open; set aside is not
     expect(openOf(b.items, { [late.key]: "saved", [other.key]: "dismissed" }).map((i) => i.key)).toEqual([late.key]);
+  });
+
+  // Owner, Nov 25 2026: Later left the item in the list as "Saved for later" and "5 open" never moved
+  it("Later (snoozed) leaves the open list and every count at once; Undo puts it back", () => {
+    const a = item("promises", "Granite-Plus", 92, { value: "7", label: "days" });
+    const b = item("promises", "Granite-Plus", 80, { value: "2", label: "days" });
+    const c = item("promises", "Other Co", 70, { value: "1", label: "day" });
+    const all = [a, b, c];
+    const before = countLooks(all.filter((i) => isOpenMark(undefined)));
+    expect(before.byTopic.promises.n).toBe(2);
+    const marks: Record<string, string> = { [a.key]: "snoozed" };
+    const [g] = bucketsOf([a, b]);
+    expect(openOf(g.items, marks).map((i) => i.key)).toEqual([b.key]);
+    // The topic count drops when a client's last open item goes to Later
+    marks[b.key] = "snoozed";
+    expect(openOf(g.items, marks)).toHaveLength(0);
+    expect(countLooks(all.filter((i) => isOpenMark(marks[i.key]))).byTopic.promises.n).toBe(1);
+    // Undo: back to how it was, counted again
+    delete marks[a.key];
+    expect(countLooks(all.filter((i) => isOpenMark(marks[i.key]))).byTopic.promises.n).toBe(2);
   });
 });

@@ -19,7 +19,7 @@ export type MarkSnapshot = { topic?: string; client?: string; title?: string; cl
  * Done and set aside (dismissed) are kept under all of its recap keys and, where the Overview shows it, as cleared
  * off their board too (how: done or dismissed), so it leaves both at once.
  */
-export async function markItem(db: SupabaseClient, meId: string, key: string, status: MarkStatus, snap: MarkSnapshot = {}, overview?: { label?: string; href?: string | null; skip?: boolean }): Promise<MarkStatus> {
+export async function markItem(db: SupabaseClient, meId: string, key: string, status: MarkStatus, snap: MarkSnapshot = {}, overview?: { label?: string; href?: string | null; skip?: boolean; /** false: the screen already shows it (an item action); no page-wide redraw that would jump it to the top */ revalidate?: boolean }): Promise<MarkStatus> {
   const now = new Date().toISOString();
   const keys = recapKeysOf(key);
   const recapKey = keys.includes(key) ? key : keys[0];
@@ -55,7 +55,7 @@ export async function markItem(db: SupabaseClient, meId: string, key: string, st
     );
   }
   // Seen changes nothing either screen shows; the rest redraw both
-  if (next !== "seen" || status !== "seen") revalidateDay();
+  if ((next !== "seen" || status !== "seen") && overview?.revalidate !== false) revalidateDay();
   return next;
 }
 
@@ -71,9 +71,10 @@ export async function unmarkItem(db: SupabaseClient, meId: string, key: string) 
  * Something closed for everyone (a reply sent, a promise done, a brief decided, an ad set aside): every review saved
  * today is due a re-check, so the next look at anyone's Overview or recap rebuilds it rather than waiting its turn.
  */
-export async function reviewsChanged() {
+export async function reviewsChanged(o: { revalidate?: boolean } = {}) {
   if (adminConfigured()) await createAdminClient().from("today_snapshots").update({ computed_at: new Date(0).toISOString() }).eq("day", reviewDay());
-  revalidateDay();
+  // An item action already moved it on screen: no page-wide redraw (it jumped the page to the top)
+  if (o.revalidate !== false) revalidateDay();
 }
 
 export function revalidateDay() {
@@ -93,7 +94,7 @@ export function tomorrowNY(now = new Date()): string {
  * Snooze to tomorrow: the item leaves this person's Overview and recap (under every key it has there) and comes back on
  * its own the next day. Nothing about the item itself changes for anyone else.
  */
-export async function snoozeItem(db: SupabaseClient, meId: string, key: string, snap: MarkSnapshot = {}, until = tomorrowNY()) {
+export async function snoozeItem(db: SupabaseClient, meId: string, key: string, snap: MarkSnapshot = {}, until = tomorrowNY(), revalidate = true) {
   const now = new Date().toISOString();
   const keys = recapKeysOf(key);
   const { data: cur } = await db.from("daily_items").select("key, status, topic, client_id, snapshot").eq("profile_id", meId).in("key", keys);
@@ -116,6 +117,6 @@ export async function snoozeItem(db: SupabaseClient, meId: string, key: string, 
     }),
     { onConflict: "profile_id,key" },
   );
-  revalidateDay();
+  if (revalidate) revalidateDay();
   return until;
 }

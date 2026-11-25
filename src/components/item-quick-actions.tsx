@@ -7,6 +7,7 @@ import { delegateQuickItem, doneQuickItem, dueQuickItem, snoozeQuickItem, takeOv
 import { CommentButton } from "./item-comments";
 import { deferClear } from "@/lib/undo";
 import { TeammatePicker } from "@/components/teammate-picker";
+import { refreshInPlace } from "@/lib/complete-card";
 
 // The quick actions on every Overview and Today item, kept simple (Nov 22 2026: too many choices per item): only Done and
 // Later show; everything else (Hand off, Comment, and whatever the item adds, like the client page or "Not for me") sits
@@ -57,7 +58,7 @@ export function ItemQuickActions({
       label,
       commit: async () => {
         const r = await fn();
-        router.refresh();
+        refreshInPlace(router);
         return r;
       },
       onUndo: onBack,
@@ -226,7 +227,7 @@ function TaskControls({ item, tone = "auto", clear }: { item: QuickItem; tone?: 
                   if (!r.ok) return setError(r.error);
                   setOpen(null);
                 }
-                router.refresh();
+                refreshInPlace(router);
               })
             }
             className="h-11 rounded-full bg-fg px-4 text-[13px] font-medium text-bg disabled:opacity-50 sm:h-9"

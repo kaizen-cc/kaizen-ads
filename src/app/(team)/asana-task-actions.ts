@@ -1,6 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { requireStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -52,7 +51,7 @@ async function saveAsanaTaskInner(gid: string, patch: AsanaPatch): Promise<R<{ t
   } catch (e) {
     return failed(e, e instanceof Error ? e.message.replace(/^Asana: /, "Asana said: ") : "Asana didn't take it. Try again.");
   }
-  revalidatePath("/pipeline");
+  // No page-wide redraw: the card refreshes in place (src/lib/complete-card.ts refreshInPlace)
   return { ok: true, task: await taskDetail(gid) };
 }
 

@@ -8,9 +8,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { SuggestionSheet } from "@/app/(team)/pipeline/views/suggested-briefs";
 import { BriefPreviewButton } from "@/components/quick-brief-sheet";
 import type { Resolved, Tier, TodayItem, TopicKey } from "@/lib/today";
-import { bucketsOf, countLooks, EXEC_TOPICS, isOpenMark, lookHeadline, openOf, QUIET_TOPIC, rowStat, topicGroups, TIER_ORDER, type Bucket } from "@/lib/today-counts";
+import { bucketsOf, countLooks, EXEC_TOPICS, isOpenMark, ITEM_TOPICS, lookHeadline, openOf, QUIET_TOPIC, rowStat, topicGroups, TIER_ORDER, type Bucket } from "@/lib/today-counts";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { acknowledge, setItem } from "./actions";
+import { snoozeQuickItem } from "@/app/(team)/item-actions";
 import { DoneBurst } from "@/components/done-burst";
 import { ItemContext } from "@/components/item-context";
 import { SubItems } from "@/components/sub-items";
@@ -27,7 +28,8 @@ import type { Scorecard } from "@/lib/production";
 // dive through them one by one. Topics play most critical first; any topic can be jumped to. Arrows or space move on.
 
 type Card = { kind: "intro" } | { kind: "score" } | { kind: "resolved"; rs: Resolved[] } | { kind: "topic"; topic: TopicKey; items: TodayItem[]; more?: number } | { kind: "end" };
-type Mark = "seen" | "saved" | "done" | "dismissed";
+// "snoozed": Later, gone from the lists and counts until tomorrow (owner, Nov 25 2026)
+type Mark = "seen" | "saved" | "done" | "dismissed" | "snoozed";
 
 const TIER: Record<Tier, { label: string; glow: string; accent: string; chip: string }> = {
   critical: { label: "Critical", glow: "rgba(200,16,46,0.55)", accent: "#ff4d5e", chip: "bg-[#c8102e] text-white" },
@@ -126,15 +128,18 @@ export function Story({
   };
   // At once on screen (Save for later on something already saved puts it back to plain seen); written once the Undo
   // window closes (src/lib/undo.ts), and Undo puts each back as it was with nothing written
+  // Later ("saved" from the buttons) leaves the list and every count at once and comes back tomorrow (a snooze), the
+  // same as Later on the Overview; owner, Nov 25 2026: a "Saved for later" item that stayed in the list looked broken
   const choose = (i: TodayItem, status: "saved" | "done" | "dismissed", label?: string) => {
     const prev = mine[i.key];
-    const optimistic: Mark = status === "saved" && prev === "saved" ? "seen" : status;
+    const optimistic: Mark = status === "saved" ? "snoozed" : status;
     setMine((m) => ({ ...m, [i.key]: optimistic }));
     if (demo) return;
     deferClear({
-      keys: status === "saved" ? [] : [i.key],
-      label: label ?? (status === "done" ? "Marked done" : status === "dismissed" ? "Set aside" : optimistic === "seen" ? "Back on your list" : "Saved for later"),
+      keys: [i.key],
+      label: label ?? (status === "done" ? "Marked done" : status === "dismissed" ? "Set aside" : "Later · back tomorrow"),
       commit: async () => {
+        if (status === "saved") return snoozeQuickItem(i.key, snap(i));
         const next = await setItem(i.key, status, snap(i));
         if (next && next !== optimistic) setMine((m) => ({ ...m, [i.key]: next as Mark }));
         return next;
@@ -144,16 +149,16 @@ export function Story({
   };
   // Save all for later: one Undo for the lot
   const saveAll = (list: TodayItem[]) => {
-    const todo = list.filter((i) => mine[i.key] !== "saved");
+    const todo = list.filter((i) => isOpenMark(mine[i.key]));
     if (!todo.length) return;
     const prev = Object.fromEntries(todo.map((i) => [i.key, mine[i.key]]));
-    setMine((m) => ({ ...m, ...Object.fromEntries(todo.map((i) => [i.key, "saved" as Mark])) }));
+    setMine((m) => ({ ...m, ...Object.fromEntries(todo.map((i) => [i.key, "snoozed" as Mark])) }));
     if (demo) return;
     deferClear({
-      keys: [],
-      label: `${todo.length} saved for later`,
+      keys: todo.map((i) => i.key),
+      label: `${todo.length} for later · back tomorrow`,
       commit: async () => {
-        for (const i of todo) await setItem(i.key, "saved", snap(i));
+        for (const i of todo) await snoozeQuickItem(i.key, snap(i));
       },
       onUndo: () => setMine((m) => ({ ...m, ...Object.fromEntries(todo.map((i) => [i.key, (prev[i.key] ?? "seen") as Mark])) })),
     });
@@ -177,7 +182,7 @@ export function Story({
   });
 
   const byTopic = allGroups.map((g) => [g.topic, looks.byTopic[g.topic]] as [TopicKey, { n: number; critical: number }]);
-  const saved = items.filter((i) => mine[i.key] === "saved");
+  const saved = items.filter((i) => mine[i.key] === "snoozed");
   const acted = items.filter((i) => mine[i.key] === "done").length;
   const allClear = card.kind === "topic" && card.items.every((i) => !isOpenMark(mine[i.key]));
   const tone = allClear || card.kind === "resolved" ? { glow: "rgba(40,180,120,0.35)", accent: "#5be3a5" } : card.kind === "topic" ? TIER[card.items[0].tier] : { glow: "rgba(200,16,46,0.35)", accent: "#ff4d5e" };
@@ -210,7 +215,7 @@ export function Story({
 
   return (
     // Phones: a column (progress, the screen, then back and next within thumb reach); desktop as it was
-    <div className="force-dark fixed inset-0 z-40 flex flex-col overflow-hidden bg-[#07060a] text-white [color-scheme:dark] md:block">
+    <div className="force-dark fixed inset-0 z-40 flex flex-col overflow-clip bg-[#07060a] text-white [color-scheme:dark] md:block">
       <style>{`@keyframes card-in { from { opacity: 0; transform: translateY(18px) scale(.985) } to { opacity: 1; transform: none } } @keyframes card-out { to { opacity: 0; transform: translateX(14px) } } @keyframes glow { 0%,100% { transform: translate(-10%,-10%) scale(1) } 50% { transform: translate(6%,4%) scale(1.15) } }`}</style>
       {/* The colour of what's on screen: red for critical, amber for important, blue for the rest, green for done */}
       <div aria-hidden className="pointer-events-none absolute -left-1/4 -top-1/4 h-[90vh] w-[90vh] rounded-full blur-[140px] transition-colors duration-700" style={{ background: tone.glow, animation: "glow 14s ease-in-out infinite" }} />
@@ -344,6 +349,7 @@ export function Story({
               key={card.topic}
               topic={card.topic}
               list={card.items}
+              more={card.more ?? 0}
               mine={mine}
               label={topics[card.topic].label}
               onChoose={(i, s) => void choose(i, s)}
@@ -364,7 +370,7 @@ export function Story({
                 <p className="text-sm uppercase tracking-[0.24em] text-white/50">That&apos;s today</p>
                 <h2 className="font-display text-5xl leading-tight tracking-tight md:text-7xl">{acted ? `${acted} handled.` : "All caught up."}</h2>
                 <p className="text-lg text-white/70">
-                  {saved.length ? `${saved.length} saved for later. They're on your list below and on your home page, and come back tomorrow if they're still open.` : "Nothing saved for later."}
+                  {saved.length ? `${saved.length} for later. They're off your lists today and come back tomorrow if they're still open.` : "Nothing saved for later."}
                 </p>
               </div>
               {saved.length > 0 && (
@@ -453,9 +459,12 @@ function TopicScreen({
   onAct,
   onSaveAll,
   onNext,
+  more = 0,
 }: {
   topic: TopicKey;
   list: TodayItem[];
+  /** An exec's tab past its first 5: still counted, so the number matches the hero and the Overview */
+  more?: number;
   mine: Record<string, Mark>;
   label: string;
   onChoose: (i: TodayItem, s: "saved" | "done" | "dismissed") => void;
@@ -465,6 +474,7 @@ function TopicScreen({
 }) {
   const open = (i: TodayItem) => isOpenMark(mine[i.key]);
   const live = list.filter(open);
+  const byItem = ITEM_TOPICS.includes(topic);
   const buckets = useMemo(() => bucketsOf(list), [list]);
   const liveBuckets = buckets.filter((b) => b.items.some(open));
   // A client whose last open item was just marked done: a check plays where it was, then it leaves the list
@@ -502,7 +512,7 @@ function TopicScreen({
   // An old link may name an item rather than its client: open the client it belongs to
   const current = dive != null ? liveBuckets[Math.min(dive, liveBuckets.length - 1)] : (liveBuckets.find((b) => b.key === selected || b.items.some((i) => i.key === selected)) ?? null);
   // Live: the clients still waiting (cleared ones leave the numbers at once)
-  const critical = liveBuckets.filter((b) => b.tier === "critical").length;
+  const critical = byItem ? live.filter((i) => i.tier === "critical").length : liveBuckets.filter((b) => b.tier === "critical").length;
   const clear = liveBuckets.length === 0;
   const t = clear ? { glow: "rgba(40,180,120,0.35)", accent: "#5be3a5" } : TIER[list[0].tier];
   // Cleared the last one while looking at it: a moment to enjoy it, then on to the next topic by itself
@@ -518,7 +528,8 @@ function TopicScreen({
     const timer = setTimeout(() => nextRef.current(), 2600);
     return () => clearTimeout(timer);
   }, [clear]);
-  const allSaved = live.length > 0 && live.every((i) => mine[i.key] === "saved");
+  // Set for later today: folded under the list, back tomorrow
+  const later = list.filter((i) => mine[i.key] === "snoozed");
   const closeOverview = () => {
     setHere({ pick: null, dive: null });
     closeParams(dive != null ? "dive" : "pick", "pick", "dive");
@@ -547,11 +558,12 @@ function TopicScreen({
               </>
             ) : (
               <>
-                <span style={{ color: t.accent }}>{liveBuckets.length}</span> {lookHeadline(topic, liveBuckets.length).replace(/^\d+\s/, "")}
+                {/* An exec's tab counts items, everyone else's counts clients (src/lib/today-counts.ts countLooks) */}
+                <span style={{ color: t.accent }}>{byItem ? live.length + more : liveBuckets.length}</span> {lookHeadline(topic, byItem ? live.length + more : liveBuckets.length).replace(/^\d+\s/, "")}
               </>
             )}
           </h2>
-          {live.length > buckets.length && <p className="text-sm text-white/50">{live.length} items in all, gathered by client so each one is a single look.</p>}
+          {!byItem && live.length > buckets.length && <p className="text-sm text-white/50">{live.length} items in all, gathered by client so each one is a single look.</p>}
         </div>
         <ul className="grid gap-1.5" data-own-keys>
           {buckets
@@ -564,7 +576,6 @@ function TopicScreen({
               const lead = rest[0] ?? b.items[0];
               const stat = rowStat(rest, lead);
               const on = current?.key === b.key;
-              const savedAll = rest.length > 0 && rest.every((i) => mine[i.key] === "saved");
               return (
                 <li key={b.key} className={gone ? "pointer-events-none" : ""} style={gone ? { animation: "card-out .35s ease 1.35s both" } : undefined}>
                   <button
@@ -584,7 +595,6 @@ function TopicScreen({
                     <span className="grid min-w-0 gap-0.5">
                       <span className="flex items-center gap-2">
                         <span className="truncate text-[15px] font-medium">{b.client}</span>
-                        {savedAll && <span className="shrink-0 rounded-full bg-white/15 px-1.5 py-px text-[10px]">Saved</span>}
                         {gone && handled && <span className="shrink-0 rounded-full bg-[#5be3a5]/20 px-1.5 py-px text-[10px] text-[#5be3a5]">Handled</span>}
                         {b.items.some((i) => i.carried) && <span className="shrink-0 text-[10px] text-white/45">from before</span>}
                       </span>
@@ -604,6 +614,22 @@ function TopicScreen({
               );
             })}
         </ul>
+        {/* Later today: folded away, back tomorrow (Undo brings one straight back) */}
+        {later.length > 0 && (
+          <details className="group rounded-[16px] border border-white/10 bg-white/[0.02]">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 px-4 text-sm text-white/60 hover:text-white">
+              <span aria-hidden className="transition-transform group-open:rotate-90">›</span>
+              Later ({later.length}) · back tomorrow
+            </summary>
+            <ul className="grid gap-1 px-4 pb-3">
+              {later.map((i) => (
+                <li key={i.key} className="truncate text-[13px] text-white/50">
+                  {i.client} · {i.title}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
         <div className="flex flex-wrap items-center gap-2.5">
           {liveBuckets.length > 0 && (
             <button type="button" onClick={() => setDive(0)} className="inline-flex h-12 w-full items-center justify-center rounded-full bg-white px-6 text-[15px] font-semibold text-black hover:bg-white/90 md:w-auto md:justify-start">
@@ -611,8 +637,8 @@ function TopicScreen({
             </button>
           )}
           {live.length > 0 && (
-            <button type="button" onClick={onSaveAll} disabled={allSaved} className={`h-12 flex-1 rounded-full border px-5 text-sm md:flex-none ${allSaved ? "border-white bg-white/15" : "border-white/25 text-white/85 hover:bg-white/10"}`}>
-              {allSaved ? "All saved ✓" : `Save ${liveBuckets.length === 1 ? "it" : `all ${liveBuckets.length}`} for later`}
+            <button type="button" onClick={onSaveAll} className="h-12 flex-1 rounded-full border border-white/25 px-5 text-sm text-white/85 hover:bg-white/10 md:flex-none">
+              {live.length === 1 ? "Later" : `All ${live.length} later`}
             </button>
           )}
           <button type="button" onClick={onNext} className="h-12 rounded-full px-4 text-sm text-white/60 hover:text-white">
@@ -652,10 +678,9 @@ function TopicScreen({
               dive={dive != null ? { at: Math.min(dive, liveBuckets.length - 1) + 1, of: liveBuckets.length } : null}
               onChoose={(i, s) => {
                 onChoose(i, s);
-                if (s === "saved") return;
-                // The client's last open item: it leaves the list (and the deep dive moves on)
+                // The client's last open item: it leaves the list (and the deep dive moves on); Later leaves it too
                 if (!current.items.some((x) => x.key !== i.key && open(x))) {
-                  finish(current, i, s);
+                  finish(current, i, s === "saved" ? "dismissed" : s);
                   if (dive != null) nextInDive();
                 }
               }}
@@ -703,7 +728,7 @@ function Overview({ b, mine, dive, onChoose, onAct, onNext }: { b: Bucket; mine:
   /** The next item to open after this one: the next still-open, unsaved one below it, else above, else none */
   const nextAfter = (key: string) => {
     const at = b.items.findIndex((x) => x.key === key);
-    const waiting = (x: TodayItem) => x.key !== key && isOpenMark(mine[x.key]) && mine[x.key] !== "saved";
+    const waiting = (x: TodayItem) => x.key !== key && isOpenMark(mine[x.key]);
     return b.items.slice(at + 1).find(waiting)?.key ?? b.items.slice(0, at).reverse().find(waiting)?.key ?? null;
   };
   const mark = (i: TodayItem, s: "saved" | "done" | "dismissed") => {
@@ -717,9 +742,9 @@ function Overview({ b, mine, dive, onChoose, onAct, onNext }: { b: Bucket; mine:
     setTimeout(() => setGone((g) => new Set(g).add(i.key)), 1100);
   };
   const single = b.items.length === 1;
-  const unsaved = openItems.filter((i) => mine[i.key] !== "saved");
+  const unsaved = openItems;
   return (
-    <div className="relative grid gap-5 overflow-hidden rounded-[28px] border border-white/12 bg-black/40 p-5 pt-3 backdrop-blur-xl md:p-8" style={{ animation: "card-in .35s cubic-bezier(.2,.8,.2,1) both" }}>
+    <div className="relative grid gap-5 overflow-clip rounded-[28px] border border-white/12 bg-black/40 p-5 pt-3 backdrop-blur-xl md:p-8" style={{ animation: "card-in .35s cubic-bezier(.2,.8,.2,1) both" }}>
       <span aria-hidden className="pointer-events-none absolute -right-20 -top-24 h-[240px] w-[240px] rounded-full blur-[80px]" style={{ background: t.glow }} />
       <div className="relative flex flex-wrap items-center gap-2">
         <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] ${t.chip}`}>{t.label}</span>
@@ -745,7 +770,7 @@ function Overview({ b, mine, dive, onChoose, onAct, onNext }: { b: Bucket; mine:
           <ul className="relative grid gap-2">
             {b.items.filter((i) => !gone.has(i.key) && (!confirming[i.key] ? isOpenMark(mine[i.key]) || !openItems.length : true)).map((i) => {
               const m = mine[i.key];
-              const closed = m === "done" || m === "dismissed";
+              const closed = !isOpenMark(m);
               const conf = confirming[i.key];
               if (conf)
                 // The confirmation: the item turns green (handled) or fades (not for me), then leaves
@@ -779,7 +804,7 @@ function Overview({ b, mine, dive, onChoose, onAct, onNext }: { b: Bucket; mine:
                     <span className="grid min-w-0 gap-0.5">
                       <span className={`text-[14.5px] leading-snug ${isOpen ? "" : "truncate"}`}>{i.title}</span>
                       <span className="truncate text-[11px] text-white/45">
-                        {m === "done" ? "Handled" : m === "dismissed" ? "Set aside" : m === "saved" ? "Saved for later" : i.stat.label}
+                        {m === "done" ? "Handled" : m === "dismissed" ? "Set aside" : m === "snoozed" ? "Later · back tomorrow" : i.stat.label}
                       </span>
                     </span>
                     <span className="tabular font-display text-xl leading-none" style={{ color: it.accent }}>

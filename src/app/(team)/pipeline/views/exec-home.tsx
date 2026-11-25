@@ -23,6 +23,7 @@ import { asanaSummary, orderAsana } from "@/lib/asana-due";
 import { closeLocally, useClosed } from "@/lib/closed-items";
 import { deferClear } from "@/lib/undo";
 import { TeammatePicker } from "@/components/teammate-picker";
+import { refreshInPlace } from "@/lib/complete-card";
 
 // The executive Overview's blocks (owner, Nov 23 2026), under the Wrapped hero: Needs me, Escalated, Accounts, Pulse
 // and (the owner) System, each a designed block with its own color, a big number, one line and its sub-chips. A tap
@@ -481,7 +482,7 @@ function Extras({ card, onTaken }: { card: ExecCard; onTaken: () => void }) {
               label: "Taken: it's yours now",
               commit: async () => {
                 const r = await takeItOver(card.nudgeIds ?? []);
-                if (r.ok) router.refresh();
+                if (r.ok) refreshInPlace(router);
                 return r;
               },
               onError: setError,
@@ -524,7 +525,7 @@ function Reassign({ card, pill }: { card: ExecCard; pill: string }) {
       label: `Reassigned to ${name}`,
       commit: async () => {
         const r = await transferQuickItem({ key: card.itemKey ?? card.key, snap: { topic: "needs", client: card.client ?? "", title: card.title, clientId: card.clientId, href: card.action.href }, to });
-        if (r.ok) router.refresh();
+        if (r.ok) refreshInPlace(router);
         return r;
       },
     });
@@ -567,7 +568,7 @@ function Compose({ card, onSent }: { card: ExecCard; onSent: () => void }) {
               const r = await nudgeLead({ nudgeIds: card.nudgeIds ?? [], leadId: card.lead?.id ?? "", text, client: card.client });
               if (!r.ok) return setNote(r.error);
               setNote("Sent. It's on their Overview and bell.");
-              router.refresh();
+              refreshInPlace(router);
               setTimeout(onSent, 1200);
             })
           }

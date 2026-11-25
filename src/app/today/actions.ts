@@ -24,7 +24,8 @@ export async function setItem(key: string, status: Status, snap: ItemSnapshot) {
   const db = await createClient();
   // Your own message or promise is closed for everyone below, so there's nothing to clear off your board as well
   const own = /^(owed2?|said2?|callp):/.test(key);
-  const next = await markItem(db, me.id, key, status, snap, { skip: own });
+  // No page-wide redraw: the screen already took it off (a redraw jumped the page to the top)
+  const next = await markItem(db, me.id, key, status, snap, { skip: own, revalidate: false });
   // A message marked done (handled another way) or set aside as not needing a reply stops being chased (only the
   // person it's on can do that)
   if ((next === "dismissed" || next === "done") && /^owed2?:/.test(key)) await closeOwed(key.split(":")[1], me.id, next === "done" ? "done" : "not_needed");
@@ -103,7 +104,7 @@ export async function sendReply(id: string, text: string): Promise<{ ok: true } 
   await admin.from("owed_replies").update({ draft: body.slice(0, 4000) }).eq("id", id);
   // Answered: done in the recap too, and every review re-checked
   await markItem(await createClient(), me.id, `owed:${id}`, "done", {}, { skip: true });
-  await reviewsChanged();
+  await reviewsChanged({ revalidate: false });
   return { ok: true };
 }
 
@@ -111,7 +112,7 @@ async function closeOwed(id: string, meId: string, how: "done" | "not_needed") {
   if (!adminConfigured()) return;
   const { closeByHand } = await import("@/lib/owed-replies");
   await closeByHand(createAdminClient(), id, meId, how);
-  await reviewsChanged();
+  await reviewsChanged({ revalidate: false });
 }
 
 /** A promise from Slack or email closed by the person who made it: done, or not happening after all. */
@@ -129,7 +130,7 @@ async function closeSaid(id: string, meId: string, how: "done" | "dropped") {
   if (how === "done") {
     const { mayAct, resolveNotice } = await import("@/lib/notice-resolve");
     if (await mayAct(admin, "said", id, meId)) await resolveNotice(admin, { kind: "said", id, profileId: meId, how: "done", via: "app" });
-    await reviewsChanged();
+    await reviewsChanged({ revalidate: false });
     return;
   }
   await admin
@@ -139,7 +140,7 @@ async function closeSaid(id: string, meId: string, how: "done" | "dropped") {
     .eq("owner_id", meId)
     .in("status", ["open", "overdue", "escalated"]);
   await admin.from("notifications").update({ cleared_at: now }).in("key", [`said:${id}`, `said2:${id}`]).eq("profile_id", meId).is("cleared_at", null);
-  await reviewsChanged();
+  await reviewsChanged({ revalidate: false });
 }
 
 /** A "taken care of" card has been read: it doesn't come back. */
@@ -178,7 +179,7 @@ export async function sendPromiseUpdate(id: string, text: string, delivered = fa
   if (!sent.ok) return sent;
   await admin.from("message_promises").update({ draft: body.slice(0, 4000) }).eq("id", id);
   if (delivered) await closeSaidPromise(id, "done");
-  else await reviewsChanged();
+  else await reviewsChanged({ revalidate: false });
   return { ok: true };
 }
 
@@ -203,7 +204,7 @@ export async function closeCallPromise(id: string, how: "done" | "dropped") {
     .eq("id", id)
     .in("status", ["open", "briefed", "in_motion"]);
   await markItem(await createClient(), me.id, `callp:${id}`, how === "done" ? "done" : "dismissed", {}, { skip: true });
-  await reviewsChanged();
+  await reviewsChanged({ revalidate: false });
 }
 
 /**
@@ -214,7 +215,7 @@ export async function closeSubItem(key: string, how: "done" | "dismissed"): Prom
   const me = await requireStaff();
   if (me.viewAs) return { ok: false, error: "You're viewing as someone else: nothing changes." };
   // Marked on their day too, so the saved day drops it and its group recounts on the next read (today-counts applyMarks)
-  const mark = async () => markItem(await createClient(), me.id, key, how, { topic: "needs", client: "", title: "", clientId: null }, {});
+  const mark = async () => markItem(await createClient(), me.id, key, how, { topic: "needs", client: "", title: "", clientId: null }, { revalidate: false });
   if (key.startsWith("safety:")) {
     const { dismissSafetyAlert } = await import("@/app/(team)/safety/[callId]/actions");
     const r = await dismissSafetyAlert(key.slice("safety:".length), how === "done" ? "Reviewed from the Overview" : undefined);

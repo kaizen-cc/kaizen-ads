@@ -8,6 +8,7 @@ import type { Flagged } from "@/lib/stepins/flagged";
 import { FlaggedList } from "./flagged-list";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { assignStepin, commentOnStepin, handleStepin, refreshStepins, reopenStepin } from "@/app/(team)/stepins/actions";
+import { refreshInPlace } from "@/lib/complete-card";
 
 // The executives' step-ins: a hero banner in the Wrapped language (dark glow, big display number, the handwritten
 // accent), but in its own violet so it isn't the "Your day" hero, over a deck of client cards that swipes on a phone
@@ -31,7 +32,7 @@ function useAct() {
       setMsg(r.ok ? { ok: true, text: r.message ?? "Saved." } : { ok: false, text: r.error });
       if (r.ok) {
         after?.();
-        router.refresh();
+        refreshInPlace(router);
       }
     });
   return { pending, msg, run };

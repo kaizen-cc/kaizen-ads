@@ -8,6 +8,7 @@ import { closeSubItem } from "@/app/today/actions";
 import { useClosed } from "@/lib/closed-items";
 import { deferClear } from "@/lib/undo";
 import { pushParams, useParam } from "@/lib/url-state";
+import { refreshInPlace } from "@/lib/complete-card";
 
 // A group card's own items, each reviewed on its own (owner, Nov 24 2026: "4 call safety reviews" should open to each
 // call; each "- line" of a reminder's follow-ups is its own item): who, when, what, its own page, and Done or Dismiss
@@ -36,7 +37,7 @@ export function SubItems({ id, subs, dark = false, noun = "items" }: { id: strin
       label: last ? "Done, and its reminder with it" : how === "done" ? "Marked done" : "Dismissed",
       commit: async () => {
         const r = await closeSubItem(key, how);
-        if (r.ok) router.refresh();
+        if (r.ok) refreshInPlace(router);
         return r;
       },
       onError: setError,

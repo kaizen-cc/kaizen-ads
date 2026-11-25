@@ -11,6 +11,8 @@ export const TIER_ORDER: Tier[] = ["critical", "high", "normal"];
 export const TOPIC_KEYS: TopicKey[] = ["fire", "mine", "radar", "promises", "onboarding", "accounts", "email", "social", "work", "briefs", "ads", "allotments", "elsewhere", "needs", "escalated", "pulse", "system", "team", "asana"];
 /** An exec's day plays in its tabs' order, whatever is most critical: Needs me, Escalated, Accounts, Pulse, System */
 export const EXEC_TOPICS: TopicKey[] = ["needs", "escalated", "accounts", "asana", "pulse", "system"];
+/** An exec's tabs that count items, one card each, like their Overview block (the rest count client rows) */
+export const ITEM_TOPICS: TopicKey[] = ["needs", "escalated", "system"];
 /** Everyone's blocks, in the order their Overview and recap show them (owner, Nov 23 2026) */
 export const BLOCK_ORDER: TopicKey[] = ["needs", "escalated", "team", "work", "accounts", "briefs", "asana", "pulse", "system"];
 const execRank = (t: TopicKey) => (BLOCK_ORDER.includes(t) ? BLOCK_ORDER.indexOf(t) : 99);
@@ -77,17 +79,26 @@ export function countLooks(items: Countable[]): Looks {
         byTopic[g.topic].n++;
         continue;
       }
-      total++;
-      byTier[b.tier]++;
-      byTopic[g.topic].n++;
-      if (b.tier === "critical") byTopic[g.topic].critical++;
+      // An exec's tabs count items, one card each, the same number their Overview block shows (owner, Nov 25 2026:
+      // the hero said 2, the recap 1 and the list 5); every other topic counts client rows
+      const each = ITEM_TOPICS.includes(g.topic) ? b.items : [b];
+      for (const x of each) {
+        total++;
+        byTier[x.tier]++;
+        byTopic[g.topic].n++;
+        if (x.tier === "critical") byTopic[g.topic].critical++;
+      }
     }
   }
   return { total, byTier, byTopic };
 }
 
-/** Still open for this person: not done and not set aside (saved for later is still open). */
-export const isOpenMark = (m: string | null | undefined) => m !== "done" && m !== "dismissed";
+/**
+ * Still open for this person: not done, not set aside, and not put off until tomorrow (Later). One rule for every
+ * list and count, so a Later leaves them all at once (owner, Nov 25 2026). A "saved" item from an earlier day is back
+ * and open again.
+ */
+export const isOpenMark = (m: string | null | undefined) => m !== "done" && m !== "dismissed" && m !== "snoozed";
 
 /** A client row's open items, the one count its row, its overview and its pill all show. */
 export function openOf<T extends { key: string }>(items: T[], marks: Record<string, string | undefined>): T[] {
