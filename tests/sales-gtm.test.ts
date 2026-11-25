@@ -75,3 +75,12 @@ describe("go-to-market engine: the documents", () => {
     expect(shortName("Glow Med Spa")).toBe("Glow Med Spa");
   });
 });
+
+describe("GTM text: encoding", () => {
+  it("puts back text that went through a Latin-1 round trip, and leaves clean text alone", async () => {
+    const { demojibake } = await import("@/lib/sales-gtm-core");
+    expect(demojibake("Days 1-14 Â· Foundation")).toBe("Days 1-14 · Foundation");
+    expect(demojibake("Days 1â€“14 Â· Launch â€” test")).toBe("Days 1–14 · Launch — test");
+    expect(demojibake("Days 1–14 · Foundation")).toBe("Days 1–14 · Foundation");
+  });
+});

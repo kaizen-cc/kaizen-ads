@@ -27,7 +27,21 @@ export type GtmContent = {
 export type Claim = { text: string; tag: "certain" | "likely" | "guessing" };
 export type GtmNotes = { headline: string; flags: Claim[]; decisions: Claim[]; caveats: Claim[]; risks: Claim[]; facts: Claim[]; partner_label: string | null };
 
-const s = (v: unknown, n = 1200) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
+/** Text that went through a Latin-1 round trip ("Days 1-14 Â·", "â€“"): the characters put back */
+export function demojibake(t: string): string {
+  if (!/[ÂÃâ]/.test(t)) return t;
+  return t
+    .replace(/â€“/g, "–")
+    .replace(/â€”/g, "—")
+    .replace(/â€™/g, "’")
+    .replace(/â€˜/g, "‘")
+    .replace(/â€œ/g, "“")
+    .replace(/â€\u009d/g, "”")
+    .replace(/â€¦/g, "…")
+    .replace(/â€¢/g, "•")
+    .replace(/Â([\u00a0-\u00bf])/g, "$1");
+}
+const s = (v: unknown, n = 1200) => demojibake(String(v ?? "")).replace(/\s+/g, " ").trim().slice(0, n);
 const list = (v: unknown, n = 10, len = 600) => (Array.isArray(v) ? v.map((x) => s(x, len)).filter(Boolean).slice(0, n) : []);
 const table = (v: unknown, maxRows = 10): Table => {
   const t = (v ?? {}) as Record<string, unknown>;

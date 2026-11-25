@@ -110,6 +110,39 @@ export async function autoGtm(admin: Admin, o: { prospectId: string; profileId: 
 
 const today = () => new Date().toLocaleDateString("en-US", { timeZone: "America/New_York", month: "long", year: "numeric" });
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/**
+ * Real search demand for the strategy: Google Keyword Planner (through any Google Ads account under Kaizen's manager
+ * account), seeded by what the prospect sells and its site, in its area (else the US). Average monthly searches, the
+ * top-of-page bid range advertisers pay, and the last 12 months. Null when Keyword Planner isn't reachable: the
+ * strategy then labels its search numbers as estimates.
+ */
+export async function prospectKeywordData(admin: Admin, p: { website: string | null; location: string | null; industry: string | null }, brief: ProspectBrief): Promise<string | null> {
+  try {
+    const ga = await import("@/lib/context/google-ads");
+    if (!ga.googleAdsConfigured()) return null;
+    const { data: acct } = await admin.from("kpi_targets").select("ad_account_id").eq("platform", "google").eq("active", true).not("ad_account_id", "is", null).limit(1).maybeSingle();
+    const planner = acct?.ad_account_id ? String(acct.ad_account_id).replace(/\D/g, "") : null;
+    if (!planner) return null;
+    const geoHit = p.location ? (await ga.suggestGeo([p.location]).catch(() => []))[0] ?? null : null;
+    const seeds = [p.industry, ...brief.sells.split(/[,;·]| and /)].map((x) => String(x ?? "").trim().toLowerCase()).filter((x) => x.length >= 3 && x.length <= 60).slice(0, 10);
+    const url = p.website ? (/^https?:\/\//i.test(p.website) ? p.website : `https://${p.website}`) : null;
+    const opts = { url, geo: geoHit ? [geoHit.geo] : undefined };
+    const raw = await ga.keywordIdeas(planner, seeds, opts).catch(() => (seeds.length ? ga.keywordIdeas(planner, seeds, { geo: opts.geo }) : []));
+    const ideas = raw.filter((r) => r.searches > 0).sort((a, b) => b.searches - a.searches).slice(0, 30);
+    if (!ideas.length) return null;
+    // The last 12 months, oldest first (Keyword Planner's order): the month each one ends on
+    const now = new Date();
+    const monthName = (i: number, n: number) => MONTHS[(now.getMonth() - (n - i) + 24) % 12];
+    const lines = ideas.map((r) => `${r.text} | ${r.searches}/mo | top-of-page bid $${r.bidLow.toFixed(2)}-$${r.bidHigh.toFixed(2)} | ${r.competition} | ${r.months.length ? r.months.map((m, i) => `${monthName(i, r.months.length)} ${m}`).join(", ") : ""}`);
+    return `<keyword_data source="Google Keyword Planner" read="${today()}" area="${geoHit?.name ?? "United States"}">\nkeyword | avg monthly searches | top-of-page bid range | competition | last 12 months\n${lines.join("\n")}\n</keyword_data>`;
+  } catch (e) {
+    console.error("[gtm] keyword planner", e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
 /** Runs one queued GTM (claimed first, so two runners never run the same one) */
 export async function runGtm(admin: Admin, id: string): Promise<{ ran: boolean; ok?: boolean }> {
   // Claimed with its stage kept ("researched" means this pass writes), so the research never runs twice for one job
@@ -154,7 +187,8 @@ export async function runGtm(admin: Admin, id: string): Promise<{ ran: boolean; 
     const [rates, { data: studies }] = await Promise.all([rateCardText(admin), admin.from("sales_case_studies").select("key, name, vertical, fits, services, results, connection").eq("active", true).order("sort_order")]);
     const by = partner ? partner.prepared_by : "Kaizen Marketing";
     const short0 = shortName(p.name);
-    const material = `<prospect name="${p.name.replace(/"/g, "'")}" short_name_guess="${short0}" site="${p.website ?? ""}" industry="${p.industry ?? ""}" location="${p.location ?? ""}">\n${briefText(p.name, brief)}\n</prospect>\n\n<business_research>\n${String(raw.notes ?? "").slice(0, 30_000)}\n</business_research>\n\n<market_research>\n${String(raw.market_notes ?? "").slice(0, 30_000)}\n</market_research>${job.ask ? `\n\n<asked>${job.ask}</asked>` : ""}`;
+    const keywordData = await prospectKeywordData(admin, p, brief);
+    const material = `<prospect name="${p.name.replace(/"/g, "'")}" short_name_guess="${short0}" site="${p.website ?? ""}" industry="${p.industry ?? ""}" location="${p.location ?? ""}">\n${briefText(p.name, brief)}\n</prospect>\n\n<business_research>\n${String(raw.notes ?? "").slice(0, 30_000)}\n</business_research>\n\n<market_research>\n${String(raw.market_notes ?? "").slice(0, 30_000)}\n</market_research>\n\n${keywordData ?? '<keyword_data unavailable="true">Keyword Planner could not be read for this draft.</keyword_data>'}${job.ask ? `\n\n<asked>${job.ask}</asked>` : ""}`;
 
     // 2. The strategy
     await set({ stage: "writing" });
@@ -170,13 +204,14 @@ Structure (every section is filled; tables are {head, rows, note}, rows as array
 - exec: lede (2-3 sentences: what they already have, what they lack); stats: exactly 3 tiles, each a real number from the research with a short label that says its source or date; opportunity (one paragraph); recommend: 3-5 {lead, text} (the front-door offer, the wedge competitors can't copy, the high-intent coverage, the recommended budget with a launch option and when to launch); why_now (seasonality, click-price timing, deadlines).
 - who: title (their strongest marketing asset as a headline), lede, table head ["What we found", "Why it matters for marketing"] 4-7 rows of firm facts (credentials, network, footprint, rare capabilities, industries served); sources (where the facts came from).
 - footprint: title "Where the pipeline is leaking today", lede, table head ["Area", "Current state", "Fix before or at launch"] 5-8 rows (paid social, paid search, reviews, conversion path, landing pages, proof, language, content, email capture), bottom_line.
-- market: title (a headline about the market), lede, stats: exactly 3 market numbers with sources, avatar (the local buyer: area, income, demographics; or the US-wide avatar), tam (the estimate and how it was made, labelled an estimate), implications: 3 {lead, text}, competitors: table head ["Competitor type", "How they win", "Where ${short0} wins"] 3 rows by TYPE (never name a competitor in this document), trends: table head ["Search theme", "Typical CPC", "Monthly volume", "Note"], sources.
+- market: title (a headline about the market), lede, stats: exactly 3 market numbers with sources, avatar (the local buyer: area, income, demographics; or the US-wide avatar), tam (the estimate and how it was made, labelled an estimate), implications: 3 {lead, text}, competitors: table head ["Competitor type", "How they win", "Where ${short0} wins"] 3 rows by TYPE (never name a competitor in this document), trends: table head ["Search theme", "Typical CPC", "Monthly volume", "Note"] (see Search numbers below), sources.
 - positioning: title, lede, services table head ["Service line", "Typical Google CPC*", "Client value", "Competition", "Role in plan"] with each service line's role (front door, wedge, always-on, upsell, excluded) and note "*Directional ranges from …(source)", core (a short quoted positioning line + one paragraph), offer {name, text, why} (a named, specific, easy-yes front-door offer), pillars: 4 {lead, text}.
 - channels: title, lede (how the channels work together), google table head ["Campaign", "Example search themes", "Landing page"] 3-5 rows incl. brand defense when relevant, google_note (guardrails: targeting, negatives, bidding on qualified conversions), meta table head ["Lane", "Who it reaches", "Creative angle"] 2-4 rows incl. retargeting, creative {title, text}: the creative package; the basic package is the "310": ${BASIC_CREATIVE.images} images + ${BASIC_CREATIVE.videos} videos a month, attached to Meta; follow the vertical's advertising rules.
 - investment: title, lede (ad spend paid directly to the platforms; projections are planning ranges, not guarantees, replaced by real results within 30-45 days), tiers table: first head cell "" then three tiers (e.g. "Launch", "Recommended", "Accelerate", or the tier names below), rows for each channel's monthly spend, total monthly ad spend, projected leads/month, projected qualified consultations or sales/month, ${partner && !partner.show_fees ? "" : "management + creative fees/month, "}best for. ${fees} Use these tiers, weighted for a ${vertical} business (lead with ${VERTICAL_FOCUS[vertical].lead.join(", ")}): ${tierPlan(vertical).map((t) => `${t.name} = ${t.services.join(" + ")}`).join("; ")}. assumptions (the CPC, conversion rate, CPL and qualification rate behind the projections, and a published spend reference if any), benchmarks: table head ["Metric", then 2-3 columns of sourced categories], rows CTR, CPC, conversion rate, cost per lead (CPM when available), benchmarks_note (the source with its year; say when the industry isn't broken out and an adjacent category stands in), math (the math that matters: how few customers cover the media, using their customer value).
 - plan: title "What happens after ${short0} says yes", ninety table head ["Phase", "What we do", "What ${short0} sees"] rows Days 1-14 Foundation, Days 15-45 Launch & test, Days 46-90 Optimize & scale; calendar table head ["Window", "Market reality", "Campaign focus"] 4-6 rows across 12 months (their seasonality, deadlines, cheapest and most expensive click months).
 - measure: title "How we'll judge success", table head ["Checkpoint", "What we measure", "What \\"on track\\" looks like"] rows Day 30, Day 60, Day 90; note (their sales cycle), needs (5-8 things we need from them), next: 4 {lead, text}, one_line (the opportunity in one line).
 - sources: every source cited (publication, title, date).
+Search numbers (the trends table, the services table's CPC column, CPC assumptions and the calendar's click-price months): when <keyword_data> has rows, use them exactly (CPC as the top-of-page bid range, e.g. "$4.10-$12.80"; volume as average monthly searches, summed per theme), say in the table note "Google Keyword Planner, <area>, read <month year>", and name the busiest and quietest months from its 12-month searches. When it's unavailable, give ranges from published benchmarks and mark every such cell "[estimated]", with a note that says plainly they're estimates from <source> and that Keyword Planner numbers for the area replace them in week 1. Never write "pulled in week 1" in a cell, and never say anything is "confirmed" that isn't in the data.
 Rules: every number comes from the research or is clearly an estimate; never invent a statistic, review count or quote; never name a competitor; no case studies (the proposal carries those); the vertical's advertising rules apply (licensing boards, health or financial claims, Meta special ad categories).`,
       prompt: `${material}\n\n<pricing_reference note="${partner && !partner.show_fees ? "for your understanding only: do NOT show fees" : "exact fees"}">\n${rates}\n</pricing_reference>`,
     });
