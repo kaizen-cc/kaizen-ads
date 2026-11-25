@@ -1,6 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { isTrackingRequest, SOURCE_LABEL, trackingTaskTitle } from "@/lib/tracking-requests-core";
+import { askingSentence, clientFor, isTrackingRequest, sameText, SOURCE_LABEL, trackingTaskTitle } from "@/lib/tracking-requests-core";
 import { createItemIfNew } from "@/lib/reality-check";
 
 // Requests about a landing page, a tracking setup or a fix, said in Slack, Gmail, Asana, on a call or in Gemini meeting notes
@@ -32,11 +32,22 @@ export async function trackingRequests(admin: SupabaseClient, now = new Date()):
     if (isTrackingRequest(text)) found.push({ ref: `trk:call:${c.id}`, clientId: (c.client_id as string | null) ?? null, text: String(c.what), source: "call", url: null });
   }
   if (!found.length) return { made: 0 };
+  // The same message seen in several places (an email cc'd across accounts, a thread quoted twice) is one request,
+  // filed under the client it names, else under none rather than the wrong one (Nov 25 2026 safety check)
+  const groups = new Map<string, typeof found>();
+  for (const f of found) groups.set(sameText(f.text), [...(groups.get(sameText(f.text)) ?? []), f]);
+  const ids = [...new Set(found.map((f) => f.clientId).filter((x): x is string => Boolean(x)))];
+  const { data: names } = ids.length ? await admin.from("clients").select("id, name").in("id", ids) : { data: [] };
+  const nameOf = new Map(((names ?? []) as { id: string; name: string }[]).map((c) => [c.id, c.name]));
+  const one = [...groups.values()].map((g) => {
+    const cands = [...new Set(g.map((f) => f.clientId).filter((x): x is string => Boolean(x)))].map((id) => ({ id, name: nameOf.get(id) ?? "" }));
+    return { ...g[0], clientId: clientFor(g[0].text, cands), refs: g.map((f) => f.ref) };
+  });
   const { data: have } = await admin.from("agent_asks").select("source_ref").in("source_ref", found.map((f) => f.ref));
   const done = new Set((have ?? []).map((h) => h.source_ref as string));
   let made = 0;
-  for (const f of found.slice(0, 30)) {
-    if (done.has(f.ref)) continue;
+  for (const f of one.slice(0, 30)) {
+    if (f.refs.some((r) => done.has(r))) continue;
     // Dedupe against reality (owner, Nov 24 2026): already done or in motion anywhere, nothing new is made
     const r = await createItemIfNew(admin, {
       kind: "task",
@@ -44,7 +55,8 @@ export async function trackingRequests(admin: SupabaseClient, now = new Date()):
       asked_by: owner,
       client_id: f.clientId,
       title: trackingTaskTitle(f.text).slice(0, 300),
-      detail: `Asked in ${SOURCE_LABEL[f.source] ?? f.source}: "${f.text.replace(/\s+/g, " ").slice(0, 600)}"${f.url ? `\n${f.url}` : ""}`.slice(0, 2000),
+      // The sentence that asks, then the message around it
+      detail: `Asked in ${SOURCE_LABEL[f.source] ?? f.source}: "${askingSentence(f.text).slice(0, 300)}"\n\n${f.text.replace(/\s+/g, " ").slice(0, 500)}${f.url ? `\n${f.url}` : ""}`.slice(0, 2000),
       source_ref: f.ref,
     });
     if (r.id && r.state === "new") made++;
