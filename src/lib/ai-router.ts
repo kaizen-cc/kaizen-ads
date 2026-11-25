@@ -12,8 +12,8 @@ export type Route = { level: Level; research: boolean; why: string; model: Model
 
 const LEVEL: Record<Level, { model: ModelKey; effort: Effort }> = {
   quick: { model: "sonnet", effort: "low" },
-  standard: { model: "opus", effort: "medium" },
-  deep: { model: "opus", effort: "high" },
+  standard: { model: "sonnet", effort: "medium" }, // advice on one account: Sonnet; Opus only for real strategy
+  deep: { model: "opus", effort: "medium" }, // Opus only at medium (the owner's rule)
 };
 const MODEL_RANK: Record<ModelKey, number> = { haiku: 0, sonnet: 1, opus: 2 };
 const EFFORT_RANK: Record<Effort, number> = { low: 0, medium: 1, high: 2 };

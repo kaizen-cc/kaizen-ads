@@ -117,7 +117,10 @@ export async function writeShotList(admin: SupabaseClient, clientId: string, by:
       delivered: null,
     })),
   };
-  const row = { client_id: clientId, month: start.toISOString().slice(0, 10), list, created_by: by, auto: Boolean(opts.auto), cycle_start: opts.cycleStart ?? null };
+  // created_by is a person (a uuid): the scheduled run passes a description, which used to fail every save and so
+  // wrote the same list again every hour
+  const person = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(by) ? by : null;
+  const row = { client_id: clientId, month: start.toISOString().slice(0, 10), list, created_by: person, auto: Boolean(opts.auto), cycle_start: opts.cycleStart ?? null };
   const { data, error } = await admin.from("shot_lists").insert(row).select("id, created_at").single();
   if (error) throw new Error(error.message);
   return { id: data?.id as string, list, createdAt: data?.created_at as string };

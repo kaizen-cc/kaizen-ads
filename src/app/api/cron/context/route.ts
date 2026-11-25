@@ -134,6 +134,7 @@ function due(step: string | null) {
   if (step === "bible_upkeep") return true; // hourly (vercel.json): links, website issues, creative packages with nothing made
   if (step === "learnings") return true; // nightly (vercel.json): the team's learnings classified, merged, settled and retired
   if (step === "drift") return true; // weekly (vercel.json): replay what the week's learning changes did to each agent
+  if (step === "evals") return true; // every 30 minutes (vercel.json): agent tests queued without anyone waiting (model and effort changes weighed for cost)
   if (step === "floating") return true; // every 30 minutes (vercel.json): every person's open items, closed when done or marked in motion elsewhere
   if (step === "routines") return true; // every 5 minutes (vercel.json): each person's routines at their own times (recaps, sweeps, the nightly agent)
   if (step === "done") return hour >= 7 && hour <= 23; // hourly (vercel.json), 7am to 11pm: items on anyone's day closed when Slack, Gmail or call notes show them done
@@ -523,6 +524,7 @@ export async function GET(request: Request) {
     if (step === "ledger") return Response.json(await (await import("@/lib/ledger")).runLedger(admin, 300_000));
     if (step === "learnings") return Response.json(await (await import("@/lib/learnings")).consolidateLearnings(admin));
     if (step === "drift") return Response.json(await (await import("@/lib/agent-evals")).driftCheck(admin));
+    if (step === "evals") return Response.json(await (await import("@/lib/agent-evals")).runQueuedEvals(admin));
     if (step === "patterns") {
       // Only groups not done this week
       const { data: st } = await admin.from("sync_state").select("last_result").eq("source", "patterns").maybeSingle();

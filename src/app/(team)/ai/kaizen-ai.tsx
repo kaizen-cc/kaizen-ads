@@ -37,8 +37,8 @@ type Pending = { key: string; name: string; kind: AttachmentKind; status: "uploa
 type Live = { thread: string | null; text: string; tools: ToolRun[]; cards: Card[]; agent: { label: string; why: string } | null; error: string | null; busy: boolean };
 
 const MODELS: { key: AiModel; label: string; note: string }[] = [
-  { key: "opus", label: "Opus 5.5", note: "Deepest thinking, long context" },
-  { key: "sonnet", label: "Sonnet 5.5", note: "Faster, for everyday asks" },
+  { key: "sonnet", label: "Sonnet 5.5", note: "For almost everything: fast and sharp" },
+  { key: "opus", label: "Opus 5.5", note: "For real strategy: deeper thinking, costs about twice as much" },
 ];
 const MAX_FRAMES = 48;
 
@@ -104,7 +104,7 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThre
   const [text, setText] = useState("");
   const [files, setFiles] = useState<Pending[]>([]);
   const [editing, setEditing] = useState<string | null>(null);
-  const [draft, setDraft] = useState<{ model: AiModel; agent: ChatAgent | null; client: ClientOpt | null }>({ model: "opus", agent: null, client: null });
+  const [draft, setDraft] = useState<{ model: AiModel; agent: ChatAgent | null; client: ClientOpt | null }>({ model: "sonnet", agent: null, client: null });
   const [notice, setNotice] = useState<string | null>(null);
   // Connectors switched on before the first message (null: every connected one); a thread keeps its own
   const [draftConnectors, setDraftConnectors] = useState<string[] | null>(null);

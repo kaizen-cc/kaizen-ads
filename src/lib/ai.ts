@@ -36,41 +36,43 @@ export type AgentConfig = {
   spine: string;
 };
 
+// The owner's rule (Nov 25 2026, docs/API-COST.md): the lowest model and effort that keeps quality. Opus only for
+// genuinely strategic thinking and only at medium effort; everything else Sonnet or Haiku at the lowest effort that works.
 const DEFAULTS: Record<AgentKey, Pick<AgentConfig, "model" | "effort">> = {
   suggest: { model: "sonnet", effort: "low" }, // someone is waiting on it
-  auditor: { model: "opus", effort: "high" }, // a real audit the buyer acts on
-  google_auditor: { model: "opus", effort: "high" }, // the Google account audit and its sprint checks
-  google_launcher: { model: "opus", effort: "high" },
-  review: { model: "opus", effort: "medium" }, // judgement matters
+  auditor: { model: "opus", effort: "medium" }, // a real audit the buyer acts on: the account's strategy
+  google_auditor: { model: "opus", effort: "medium" }, // the Google account audit and its sprint checks
+  google_launcher: { model: "sonnet", effort: "medium" }, // names and settings from an approved plan, by the rules
+  review: { model: "sonnet", effort: "medium" }, // checks a finished brief against its rules
   briefing: { model: "haiku", effort: "low" }, // gathering and summarizing
   copy: { model: "sonnet", effort: "medium" },
-  launcher: { model: "opus", effort: "high" },
+  launcher: { model: "sonnet", effort: "medium" }, // names and settings from an approved ad, by the rules (pushed paused)
   fatigue: { model: "haiku", effort: "low" },
-  scripts: { model: "opus", effort: "medium" },
-  brandbible: { model: "opus", effort: "high" },
+  scripts: { model: "sonnet", effort: "medium" }, // writing, like the copywriter
+  brandbible: { model: "opus", effort: "medium" }, // the client's strategy document (its web research runs on Sonnet)
   creativecheck: { model: "sonnet", effort: "low" }, // runs while the upload is staged, someone is waiting
-  creativereview: { model: "opus", effort: "medium" }, // reads small text in images; judgement matters
-  lab: { model: "opus", effort: "high" }, // the Ads Lab round table
+  creativereview: { model: "sonnet", effort: "medium" }, // reads small text in images; judgement matters
+  lab: { model: "opus", effort: "medium" }, // the Ads Lab round table
   calls: { model: "sonnet", effort: "low" }, // reads call notes and watches what was promised
   market: { model: "sonnet", effort: "low" }, // reads the live ads Motion pulls from the market
   winners: { model: "sonnet", effort: "low" }, // reads why each winning ad works, from its numbers and the creative
-  verticals: { model: "opus", effort: "medium" }, // the verticals and sub-verticals we serve, and their benchmarks
-  gtm: { model: "opus", effort: "high" }, // the Meta go-to-market strategy at onboarding (research, then the document)
+  verticals: { model: "sonnet", effort: "medium" }, // the verticals and sub-verticals we serve, and their benchmarks
+  gtm: { model: "opus", effort: "medium" }, // the Meta go-to-market strategy at onboarding (research, then the document)
   industry: { model: "sonnet", effort: "low" }, // sorts clients into industries from everything known about them
   strategist: { model: "opus", effort: "medium" }, // suggests briefs to execs and leads from the data
   reporter: { model: "opus", effort: "medium" }, // the weekly and monthly client report for a Meta account, in the buyer's voice
   google_reporter: { model: "opus", effort: "medium" }, // the same for a Google Ads account
-  report_qa: { model: "opus", effort: "high" }, // checks every report's numbers and claims before the buyer sees it
+  report_qa: { model: "opus", effort: "medium" }, // checks every report's numbers and claims before the buyer sees it
   // The TikTok Ads Buyer's skills: shells, offline until an exec brings the agent online (never called before then)
-  tiktok_auditor: { model: "opus", effort: "high" },
-  tiktok_launcher: { model: "opus", effort: "high" },
+  tiktok_auditor: { model: "opus", effort: "medium" },
+  tiktok_launcher: { model: "sonnet", effort: "medium" },
   tiktok_reporter: { model: "opus", effort: "medium" },
   // The email agents skills (Sonnet: the team is waiting on them): account audit and sprint checks, campaign suggestions, subject lines, the client chat
   email_audit: { model: "sonnet", effort: "medium" },
   email_calendar: { model: "sonnet", effort: "medium" },
   email_copy: { model: "sonnet", effort: "low" },
   email_desk: { model: "sonnet", effort: "medium" },
-  email_design_brief: { model: "opus", effort: "medium" }, // Kaizen AI's email design studio: finished HTML emails on the client's brand
+  email_design_brief: { model: "sonnet", effort: "medium" }, // Kaizen AI's email design studio: finished HTML emails on the client's brand
   // The Social Strategist's skills (Sonnet: the team is waiting on them): the social audit and its sprint checks, the client desk
   social_audit: { model: "sonnet", effort: "medium" },
   social_desk: { model: "sonnet", effort: "medium" },
@@ -83,7 +85,7 @@ const DEFAULTS: Record<AgentKey, Pick<AgentConfig, "model" | "effort">> = {
   sales_desk: { model: "sonnet", effort: "medium" },
   // The assistant and every agent on a call or in the assistant's chat (each answer). Sonnet at medium: the owner's call
   assistant_talk: { model: "sonnet", effort: "medium" },
-  coach: { model: "opus", effort: "medium" }, // talking to an agent (its page) or one skill: edits its core and playbooks from feedback
+  coach: { model: "sonnet", effort: "medium" }, // talking to an agent (its page) or one skill: edits its core and playbooks from feedback
 };
 
 export const aiEnabled = () => Boolean(process.env.ANTHROPIC_API_KEY);
@@ -139,6 +141,8 @@ export async function getAgent(key: AgentKey): Promise<AgentConfig> {
       admin.from("ai_spine").select("body").eq("id", 1).maybeSingle(),
     ]);
     if (a) Object.assign(config, { model: a.model, effort: a.effort, instructions: a.instructions ?? "", sources: (a.sources ?? {}) as Sources });
+    // Opus runs at medium at most (the owner's rule): high effort on Opus costs about half again for little gain
+    if (config.model === "opus" && config.effort === "high") config.effort = "medium";
     config.role = (a?.ai_roles as unknown as { label: string; core: string } | null) ?? null;
     config.spine = spine?.body ?? "";
     config.knowledge = (k ?? []).map((x) => ({ kind: x.kind, title: x.title, body: x.body }));
@@ -147,13 +151,16 @@ export async function getAgent(key: AgentKey): Promise<AgentConfig> {
   return config;
 }
 
+type AgentMaterial = Pick<AgentConfig, "instructions" | "knowledge"> & Partial<Pick<AgentConfig, "role" | "spine">>;
+
 /**
- * What the call reads, in order: the task's own system prompt, Kaizen's strategy spine, the agent's core (the role
- * this skill belongs to), the skill's own instructions, then its skills, knowledge and examples (and the shared ones).
+ * The agent's own material, the same on every call it makes anywhere in the app: Kaizen's strategy spine, the agent's
+ * core (the role this skill belongs to), the skill's own instructions, then its skills, knowledge and examples (and the
+ * shared ones). It comes first so every call site of the agent shares one prompt-cache entry for it.
  */
-export function withAgent(system: string, a: Pick<AgentConfig, "instructions" | "knowledge"> & Partial<Pick<AgentConfig, "role" | "spine">>) {
-  const parts = [system];
-  if (a.spine?.trim()) parts.push(`<kaizen_strategy note="the agency's non-negotiables; they win over anything below">
+export function agentPart(a: AgentMaterial) {
+  const parts: string[] = [];
+  if (a.spine?.trim()) parts.push(`<kaizen_strategy note="the agency's non-negotiables; they win over anything else in these instructions">
 ${a.spine.trim()}
 </kaizen_strategy>`);
   if (a.role?.core.trim()) parts.push(`<agent_core agent="${a.role.label}">
@@ -166,6 +173,11 @@ ${a.role.core.trim()}
       parts.push(`<${kind}s>\n${items.map((k) => `<${kind} title="${k.title.replace(/"/g, "'")}">\n${k.body.trim()}\n</${kind}>`).join("\n")}\n</${kind}s>`);
   }
   return parts.join("\n\n");
+}
+
+/** What the call reads: the agent's own material (agentPart), then the task's own system prompt */
+export function withAgent(system: string, a: AgentMaterial) {
+  return [agentPart(a), system].filter((x) => x.trim()).join("\n\n");
 }
 
 /**
@@ -266,11 +278,27 @@ export class AiPaused extends AiUnavailable {}
 const paused = (e: unknown) => e instanceof Anthropic.RateLimitError || (e instanceof Anthropic.APIError && e.status === 529);
 
 /**
- * The system prompt as a cached block: an agent's core, skills and playbook are the same on every call, so after the
- * first call within five minutes they're read from Anthropic's prompt cache (about a tenth of the price) instead of
- * being paid for again.
+ * The system prompt as a cached block: read from Anthropic's prompt cache (a twentieth of the input price on these
+ * models) by the next call with the same start within five minutes, instead of being paid for again.
  */
 const cached = (text: string) => [{ type: "text" as const, text, cache_control: { type: "ephemeral" as const } }];
+/** Kept an hour: an agent's material is shared by every call it makes, which are often more than five minutes apart */
+const HOUR = { type: "ephemeral" as const, ttl: "1h" as const };
+/**
+ * An agent call's system prompt as two cached blocks: the agent's material (the same for every call the agent makes,
+ * kept an hour) and then the task's own instructions (kept five minutes, for a burst of calls from one place). An
+ * hour-long entry has to come before a five-minute one, which this order keeps.
+ */
+export function agentSystem(task: string, a: AgentMaterial, opts: { markTask?: boolean } = {}) {
+  const mine = agentPart(a);
+  if (!mine.trim()) return cached(task);
+  const markTask = opts.markTask ?? true;
+  if (!task.trim()) return [{ type: "text" as const, text: mine, cache_control: HOUR }];
+  return [
+    { type: "text" as const, text: mine, cache_control: HOUR },
+    markTask ? { type: "text" as const, text: task, cache_control: { type: "ephemeral" as const } } : { type: "text" as const, text: task },
+  ];
+}
 /** Tokens a call used, including what it wrote to and read from the prompt cache */
 const usageOf = (u: { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null }) => ({
   input_tokens: u.input_tokens,
@@ -324,6 +352,7 @@ export async function askJson<T>({
   await assertOnline(agent);
   const base = await getAgent(agent);
   const cfg = { ...base, model: override?.model ?? base.model, effort: override?.effort ?? base.effort };
+  if (cfg.model === "opus" && cfg.effort === "high") cfg.effort = "medium";
   if (!bare) prompt = await withKnowledge(agent, label, prompt, clientId);
   prompt = wellFormed(prompt);
   system = wellFormed(system);
@@ -331,7 +360,7 @@ export async function askJson<T>({
   const request = {
     model: MODEL_IDS[cfg.model],
     max_tokens: maxTokens,
-    system: cached(systemOverride ?? (bare ? system : withAgent(system, cfg))),
+    system: systemOverride ? cached(systemOverride) : bare ? cached(system) : agentSystem(system, cfg),
     output_config: { effort: cfg.effort, format: { type: "json_schema" as const, schema } },
     messages: [
       {
@@ -469,7 +498,7 @@ export async function askJsonWithTools<T>({
   const defs = tools.map(({ name, description, input_schema }) => ({ name, description, input_schema: input_schema as Anthropic.Tool.InputSchema }));
   // Set when the API can't compile the answer format: the format goes in the instructions instead
   let plain = false;
-  const sys = () => (plain ? `${withAgent(system, cfg)}\n\n${formatInstruction(schema)}` : withAgent(system, cfg));
+  const sys = () => agentSystem(plain ? `${system}\n\n${formatInstruction(schema)}` : system, cfg);
   try {
     for (let round = 0; ; round++) {
       // The last round has no tools: whatever was found, it answers now
@@ -479,9 +508,14 @@ export async function askJsonWithTools<T>({
           .messages.stream({
             model: MODEL_IDS[cfg.model],
             max_tokens: maxTokens,
-            system: cached(sys()),
+            system: sys(),
             output_config: plain ? { effort: cfg.effort } : { effort: cfg.effort, format: { type: "json_schema" as const, schema } },
-            ...(last ? {} : { tools: defs }),
+            // The tools stay on the last round with no more calls allowed: they come first in the cached prompt, so
+            // dropping them made the last (and largest) round miss the cache altogether
+            tools: defs,
+            ...(last ? { tool_choice: { type: "none" as const } } : {}),
+            // Each round caches the conversation so far, so the next round reads the lookups from the cache
+            cache_control: { type: "ephemeral" as const },
             messages,
           })
           .finalMessage();
@@ -579,7 +613,8 @@ export async function researchWeb({ agent, label, system, prompt, maxSearches = 
       const res = await anthropic().messages.create({
         model: MODEL_IDS[cfg.model],
         max_tokens: 16000,
-        system: cached(withAgent(system, cfg)),
+        // The task's own block isn't marked: the moving mark below covers it, and server tools add marks of their own
+        system: agentSystem(system, cfg, { markTask: false }),
         // The conversation grows every round (searches, pages read); this caches it too, so each round reads the
         // last one's tokens from the cache instead of paying for them again
         cache_control: { type: "ephemeral" },
@@ -1400,6 +1435,8 @@ Use only what's in the brief and the client context; don't invent offers, number
 export const anthropicClient = () => anthropic();
 /** A system prompt block kept in Anthropic's prompt cache */
 export const cachedBlock = (text: string) => cached(text)[0];
+/** A cached block kept an hour (an hour-long block goes before any five-minute one) */
+export const hourBlock = (text: string) => ({ type: "text" as const, text, cache_control: HOUR });
 /** Tokens a response used, as ai_runs stores them */
 export const usageFor = usageOf;
 /** Only the knowledge excerpts and team learnings that match this task (without the task): "" when nothing matches */

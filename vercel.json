@@ -215,6 +215,10 @@
       "schedule": "45 12 * * 1"
     },
     {
+      "path": "/api/cron/context?step=evals",
+      "schedule": "9,39 * * * *"
+    },
+    {
       "path": "/api/cron/context?step=integrations",
       "schedule": "54 * * * *"
     },

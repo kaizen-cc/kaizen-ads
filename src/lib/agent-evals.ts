@@ -11,9 +11,20 @@ import { createAdminClient } from "@/lib/supabase/admin";
 // on what the team's learnings changed, as a drift check for execs.
 
 export type ItemEdit = { id?: string | null; kind: "skill" | "knowledge" | "example"; title: string; body: string; active: boolean };
-export type Proposal = { instructions?: string; model?: ModelKey; effort?: Effort; core?: string; items?: ItemEdit[]; learnings?: boolean };
+export type Proposal = {
+  instructions?: string;
+  model?: ModelKey;
+  effort?: Effort;
+  core?: string;
+  items?: ItemEdit[];
+  learnings?: boolean;
+  /** Only samples from these places (labels, or the start of one: "audit " covers every client's audit) */
+  labels?: string[];
+  /** How many samples to replay (up to 10) */
+  samples?: number;
+};
 export type EvalResult = { sampleId: string; agent: string; label: string; moment: string; current: string; proposed: string; verdict: "better" | "same" | "worse" | "error"; why: string; reused: boolean };
-export type EvalRow = { id: string; agentKey: string | null; roleKey: string | null; kind: "change" | "drift"; target: string; status: "running" | "done" | "failed"; results: EvalResult[]; better: number; same: number; worse: number; summary: string | null; error: string | null; createdAt: string; finishedAt: string | null; appliedAt: string | null; by: string | null };
+export type EvalRow = { id: string; agentKey: string | null; roleKey: string | null; kind: "change" | "drift"; target: string; status: "queued" | "running" | "done" | "failed"; results: EvalResult[]; better: number; same: number; worse: number; summary: string | null; error: string | null; createdAt: string; finishedAt: string | null; appliedAt: string | null; by: string | null };
 
 const cut = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}\n…(cut)` : s);
 
@@ -92,8 +103,12 @@ export async function runEval(admin: SupabaseClient, evalId: string, maxSamples 
     const proposal = (e.proposal ?? {}) as Proposal;
     const drift = e.kind === "drift";
     const keys: string[] = e.agent_key ? [e.agent_key as string] : ((await admin.from("ai_agents").select("key").eq("role_key", e.role_key)).data ?? []).map((a) => a.key as string);
-    const { data: raw } = await admin.from("agent_samples").select("*").in("agent_key", keys).order("created_at", { ascending: false }).limit(150);
-    const samples = pickSamples(((raw ?? []) as Sample[]).filter((s) => !drift || s.prompt.includes("<learned_from_the_team")), Math.min(8, maxSamples));
+    const { data: raw } = await admin.from("agent_samples").select("*").in("agent_key", keys).order("created_at", { ascending: false }).limit(300);
+    const labels = proposal.labels?.length ? proposal.labels : null;
+    const samples = pickSamples(
+      ((raw ?? []) as Sample[]).filter((s) => (!drift || s.prompt.includes("<learned_from_the_team")) && (!labels || labels.some((l) => s.label === l || s.label.startsWith(l)))),
+      Math.min(10, proposal.samples ?? maxSamples),
+    );
     if (!samples.length) {
       await admin.from("agent_evals").update({ status: "done", summary: drift ? "No recent calls that read the team's learnings to replay yet." : "No recent real calls to replay yet: it samples them as the agent works.", finished_at: new Date().toISOString() }).eq("id", evalId);
       return;
@@ -229,4 +244,20 @@ export async function driftCheck(admin: SupabaseClient) {
       );
   }
   return { agents: keys, lines };
+}
+
+/**
+ * Tests queued without anyone waiting on the page (a model or effort change being weighed for cost, docs/API-COST.md):
+ * a scheduled step runs the oldest, one or two a run, the same way as a test started from Settings.
+ */
+export async function runQueuedEvals(admin: SupabaseClient, max = 2) {
+  const { data } = await admin.from("agent_evals").select("id, target").eq("status", "queued").order("created_at").limit(max);
+  const out: Record<string, string> = {};
+  for (const e of data ?? []) {
+    await admin.from("agent_evals").update({ status: "running" }).eq("id", e.id);
+    await runEval(admin, e.id as string);
+    const { data: done } = await admin.from("agent_evals").select("summary, error").eq("id", e.id).single();
+    out[e.target as string] = (done?.summary as string | null) ?? (done?.error as string | null) ?? "done";
+  }
+  return out;
 }

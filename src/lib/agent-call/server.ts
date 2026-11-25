@@ -485,6 +485,9 @@ export async function streamAnswer(input: {
       system: wellFormed(system()),
       thinking: { type: "adaptive" as const },
       output_config: { effort },
+      // The conversation so far is cached at every round, so a turn's lookups and the next turn read it back instead
+      // of paying full price for the whole call again
+      cache_control: { type: "ephemeral" as const },
       messages: wellFormed(msgs) as Anthropic.MessageParam[],
     };
     // Cut at the length guard: the round ends with what was said
