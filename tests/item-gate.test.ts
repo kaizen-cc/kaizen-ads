@@ -61,7 +61,8 @@ describe("the relevance gate (Peter's eight items)", () => {
   });
   it("a line the client doesn't buy is nobody's; unclear work off their clients is dropped; no client is theirs", () => {
     expect(gate({ person: peter, text: "Launch the TikTok ads", client: femme, dir }).verdict).toBe("drop");
-    expect(gate({ person: peter, text: "Check in with the client", client: femme, dir }).verdict).toBe("drop");
+    // Unclear work off their clients goes to the client's main seat
+    expect(routed(gate({ person: peter, text: "Check in with the client", client: femme, dir }))).toBe("niro");
     expect(gate({ person: peter, text: "Prep the team meeting", client: null, dir }).verdict).toBe("keep");
   });
   it("tracking, web and no-seat lines go to their owner", () => {
@@ -69,6 +70,16 @@ describe("the relevance gate (Peter's eight items)", () => {
     expect(routed(gate({ person: peter, text: "Remove the summer promotions from the website", client: granite, dir }))).toBe("kyle");
     // Rowan dropped Google: its Google work is nobody's
     expect(gate({ person: peter, text: "Pause the Google campaigns", client: rowan, dir }).verdict).toBe("drop");
+  });
+  it("keeps shared creative work and notes-only guesses with whoever is on the client; support roles cover every client", () => {
+    expect(routed(gate({ person: dir.people[3], text: "Review the Black Friday creatives before launch", client: granite, dir }))).toBe("keep");
+    expect(routed(gate({ person: dir.people[4], text: "Review the Black Friday creatives before launch", client: granite, dir }))).toBe("lucas");
+    expect(routed(gate({ person: dir.people[1], text: "Upload the Dec 1 gift card content into the Dec Club Perk campaign", client: femme, dir }))).toBe("keep");
+    expect(routed(gate({ person: dir.people[1], text: "Find the notes for today's call\nThey mentioned the Google budget", client: femme, dir }))).toBe("keep");
+    expect(routed(gate({ person: dir.people[11], text: "[Agent 11/25] Hand to Lucas · Verify the tracking signal", client: granite, dir, handoff: true }))).toBe("keep");
+    expect(routed(gate({ person: dir.people[5], text: "Set up the hoodie page post at $15/day", client: granite, dir }))).toBe("keep");
+    expect(routed(gate({ person: dir.people[3], text: "Diagnose website leads dropping to zero", client: granite, dir }))).toBe("keep");
+    expect(routed(gate({ person: dir.people[3], text: "Flag BFCM offers missing from the website", client: granite, dir }))).toBe("kyle");
   });
   it("reads the line from the words", () => {
     expect(workLine("Share the Google Doc with the recap", ["meta"])).toBeNull();

@@ -57,25 +57,48 @@ export function linesOfPerson(p: Person): Set<WorkLine> {
   if (p.isExec) return new Set((p.focus ?? []).map((f) => FOCUS_WORK[f]).filter((x): x is WorkLine => Boolean(x)));
   return new Set(ROLE_LINES[p.role] ?? []);
 }
-const covers = (p: Person) => p.isExec || p.role.startsWith("head_of_");
+/** Line heads and execs cover every client buying their lines; support roles every client, for their own scope */
+const SUPPORT = new Set(["tracking_specialist", "customer_success", "cs_coordinator", "account_manager", "onboarding_specialist"]);
+const covers = (p: Person) => p.isExec || p.role.startsWith("head_of_") || SUPPORT.has(p.role);
 
 const TRACKING = /\b(track(ing|ed)?|pixel|capi|conversions? api|gtm|tag manager|ga4|google analytics|utm|events? (fire|firing)|purchase event)\b/i;
-const CREATIVE = /\b(creatives?|design(er|s)?|video|edit(s|or)?|ugc|statics?|carousel|thumbnail|graphic|copy ?writ\w*|creative brief|scripts?|hooks?)\b/i;
+const CREATIVE = /\b(creatives?|design(er|s)?|videos?|edit(s|or)?|ugc|statics?|carousels?|thumbnails?|graphics?|copy ?writ\w*|creative brief|scripts?|hooks?|renders?|resizes?)\b/i;
 const ONBOARDING = /\b(onboard\w*|intake|kick-?off|welcome call|portal invite)\b/i;
-const PAID = /\b(cpl|cpa|cpc|ctr|roas|ad ?spend|spend|budget|campaigns?|ad ?sets?|ads|cost per (lead|result|registration)|leads? cost|media buy\w*)\b/i;
+const PAID = /\b(cpl|cpa|cpc|ctr|roas|ad ?spend|spend|budget|campaigns?|ad ?sets?|ads|cost per (lead|result|registration)|leads?|media buy\w*|launch\w*|page posts?|boost\w*|fatigue|frequency|per day)\b|\$\d+\s*\/\s*day/i;
+const EMAIL_TOOLS = /\b(brevo|mailchimp|omnisend|attentive|postscript|newsletter)\b/i;
+const SITE_CHANGE = /\b(remove|update|add|change|fix|edit|build|take down|put|post|upload|redesign|proposal|page speed|feedback)\b[^.]{0,60}\b(website|site|homepage|web ?page)\b|\b(website|site|homepage)\b[^.]{0,30}\b(proposal|feedback|edits?|build|redesign)\b|\bmissing from\b[^.]{0,30}\b(website|site)\b/i;
 
-/** The line some work belongs to, from its words; the client's paid line for generic ad talk; null when unclear */
+/**
+ * The line some work belongs to: its title decides (the first line), its notes only when the title is unclear (notes
+ * carry links and side remarks: a Gmail link isn't Google Ads work); the client's paid line for generic ad talk
+ */
 export function workLine(text: string, clientBuys: readonly WorkLine[] = []): WorkLine | null {
-  const t = text.replace(/\bgoogle (docs?|drive|sheets?|slides?|calendar|meet|workspace|business profile)\b/gi, "");
-  if (isWebRequest(t)) return "web";
-  if (TRACKING.test(t)) return "tracking";
+  const [title, ...rest] = text.split("\n");
+  return lineOfWords(title, clientBuys) ?? lineOfWords(rest.join(" "), clientBuys);
+}
+
+function lineOfWords(text: string, clientBuys: readonly WorkLine[]): WorkLine | null {
+  const t = text
+    .replace(/https?:\/\/\S+/g, " ")
+    .replace(/^\[[^\]]{1,24}\]\s*/, "")
+    .replace(/\bgoogle (docs?|drive|sheets?|slides?|calendar|meet|workspace|business profile|chat|builder)\b|\bgmail\b|\blegit ?script\b/gi, " ");
+  if (!t.trim()) return null;
+  // The client's site, unless it's ad or lead talk about it ("website leads dropping" is the ads' and tracking's)
+  if (isWebRequest(t) && (!PAID.test(t) || SITE_CHANGE.test(t))) return "web";
+  if (EMAIL_TOOLS.test(t)) return "email";
   const named = lineFromWords(t);
+  // Tracking is its own line unless the work names a paid platform ("push the Meta rep on the pixel" is Meta's)
+  if (TRACKING.test(t) && (!named || named === "account" || named === "social")) return "tracking";
   // "account manager" words are the account line; "social" alone is often "social proof" in ad talk, so ads win
   if (named === "social" && PAID.test(t) && !/\b(organic|social (media|posts?|calendar|content)|community)\b/i.test(t)) {
     // fall through to paid
   } else if (named) return named;
   if (ONBOARDING.test(t)) return "onboarding";
-  if (PAID.test(t)) return (["meta", "google", "tiktok"] as const).find((l) => clientBuys.includes(l)) ?? "meta";
+  // Generic ad talk is the client's paid line; a client with no paid line has none (an email "campaign")
+  if (PAID.test(t)) {
+    const paid = (["meta", "google", "tiktok"] as const).find((l) => clientBuys.includes(l));
+    if (paid || !clientBuys.length) return paid ?? "meta";
+  }
   if (CREATIVE.test(t)) return "creative";
   return null;
 }
@@ -102,20 +125,40 @@ const LINE_SEATS: Partial<Record<WorkLine, string[]>> = {
 const ROLE_OWNER: Partial<Record<WorkLine, string[]>> = { tracking: ["tracking_specialist"], onboarding: ["onboarding_specialist"], account: ["cs_coordinator", "customer_success"] };
 
 /** Whether this person should get this work on this client, and if not, who should */
-export function gate(input: { person: Person; text: string; line?: WorkLine | null; client: ClientTeam | null; dir: Directory }): Gate {
+export function gate(input: { person: Person; text: string; line?: WorkLine | null; client: ClientTeam | null; dir: Directory; handoff?: boolean }): Gate {
   const { person, client, dir } = input;
   if (!client) return { verdict: "keep", line: input.line ?? null };
   const buys = linesOf(client.services, client.seats) as WorkLine[];
-  const line = input.line ?? workLine(input.text, buys);
+  const [title, ...rest] = input.text.split("\n");
+  const fromTitle = input.line ?? lineOfWords(title, buys);
+  const line = fromTitle ?? lineOfWords(rest.join(" "), buys);
   const mine = linesOfPerson(person);
   const seated = (l: WorkLine | null) => client.seats.some((s) => s.profileId === person.id && (!l || SEAT_LINE[s.seat] === l));
+  const named = (id: string) => dir.people.find((p) => p.id === id)?.name ?? "them";
+  // A hand-off ("Hand to X · …") is theirs to delegate when the client is theirs at all
+  if (input.handoff) {
+    if (seated(null) || SUPPORT.has(person.role) || (covers(person) && [...mine].some((l) => buys.includes(l)))) return { verdict: "keep", line };
+    return { verdict: "drop", line, why: "Not your client" };
+  }
   if (!line) {
-    // Unclear work: theirs only on a client they're on, or one that buys a line they head
+    // Unclear work: theirs on a client they're on, or one that buys a line they head; else the client's main seat
     if (seated(null) || (covers(person) && [...mine].some((l) => buys.includes(l)))) return { verdict: "keep", line: null };
+    for (const l of ["meta", "google", "tiktok", "email", "social"] as const) {
+      if (!buys.includes(l)) continue;
+      const h = client.seats.filter((x) => (LINE_SEATS[l] ?? []).includes(x.seat)).sort((a, b) => Number(b.primary !== false) - Number(a.primary !== false))[0];
+      if (h) return h.profileId === person.id ? { verdict: "keep", line: null } : { verdict: "route", line: l, toId: h.profileId, toName: h.name, why: `Not your client: ${h.name} runs it` };
+    }
     return { verdict: "drop", line: null, why: "Not your client" };
   }
-  if (BOUGHT.has(line) && buys.length && !buys.includes(line)) return { verdict: "drop", line, why: `The client doesn't buy ${LINE_WORD[line]}` };
-  const named = (id: string) => dir.people.find((p) => p.id === id)?.name ?? "them";
+  // A line the client doesn't buy is nobody's, when the work itself says so (a line read from its notes, or someone on
+  // the client, keeps it as theirs)
+  if (BOUGHT.has(line) && buys.length && !buys.includes(line)) {
+    if (seated(null) || !fromTitle) return seated(null) ? { verdict: "keep", line: null } : gate({ ...input, line: null, text: "" });
+    return { verdict: "drop", line, why: `The client doesn't buy ${LINE_WORD[line]}` };
+  }
+  // Creative is everyone's on a client: whoever works the client keeps it; a line read only from the notes doesn't take
+  // an item off someone on the client
+  if ((line === "creative" || !fromTitle) && seated(null)) return { verdict: "keep", line };
   const to = (id: string, why: string): Gate => (id === person.id ? { verdict: "keep", line } : { verdict: "route", line, toId: id, toName: named(id), why });
   if (line === "web") return dir.webOwnerId ? to(dir.webOwnerId, "Web requests go to whoever hands them to the web team") : { verdict: "drop", line, why: "No one hands web requests on yet" };
   if (mine.has(line) && (covers(person) || seated(line))) return { verdict: "keep", line };

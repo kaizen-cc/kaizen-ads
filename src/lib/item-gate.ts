@@ -35,4 +35,5 @@ export async function gateFor(admin: Admin, o: { ownerId: string; clientId: stri
 }
 
 /** Source refs the gate applies to: what a routine, the client-message reader or a schedule made for someone */
-export const GATED = /^(routine:(?!call:)|signal:|recurring:|holdsend:)/;
+// Not call prep, the debrief or a recurring commitment: those are the person's own meeting, call or word
+export const GATED = /^(routine:(morning|afternoon|eod|week_recap|week_ahead|nightly|clean_sweep|delegation):|signal:|holdsend:)/;
