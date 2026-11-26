@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { actionFailedText, classifyError, isNavigationSignal } from "@/lib/error-triage";
+import { actionFailedText, classifyError, isAbortSignal, isNavigationSignal } from "@/lib/error-triage";
 
 describe("isNavigationSignal", () => {
   it("recognises Next.js redirect and not-found signals", () => {
@@ -23,5 +23,22 @@ describe("actionFailedText", () => {
     expect(actionFailedText(new TypeError("Failed to fetch"))).toMatch(/connection dropped/);
     expect(actionFailedText(new Error('Server Action "abc" was not found on the server.'))).toMatch(/Refresh the page/);
     expect(actionFailedText(undefined)).toMatch(/try again/);
+  });
+});
+
+describe("isAbortSignal", () => {
+  it("recognises a request cancelled on purpose", () => {
+    const ac = new AbortController();
+    ac.abort();
+    expect(isAbortSignal(ac.signal.reason)).toBe(true);
+    expect(isAbortSignal(new DOMException("signal is aborted without reason", "AbortError"))).toBe(true);
+    expect(isAbortSignal(Object.assign(new Error("The operation was aborted."), { name: "AbortError" }))).toBe(true);
+  });
+
+  it("leaves real errors alone", () => {
+    expect(isAbortSignal(new TypeError("Failed to fetch"))).toBe(false);
+    expect(isAbortSignal(new Error("x is undefined"))).toBe(false);
+    expect(isAbortSignal("AbortError")).toBe(false);
+    expect(isAbortSignal(null)).toBe(false);
   });
 });
