@@ -1,4 +1,5 @@
 import "server-only";
+import { FOLLOW_UP_SOURCES, keepNoteItems, personWords } from "./notes-core";
 import { isPeopleMatter } from "@/lib/people-matters";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
@@ -29,7 +30,7 @@ const SCHEMA = {
   properties: {
     summary: { type: "string", description: "Two to four plain sentences: what was talked about and done" },
     topic: { type: "string", description: "The main thing talked about, a short phrase (up to eight words)" },
-    decisions: { type: "array", items: { type: "string" }, description: "What was decided or done, one short line each (none is fine)" },
+    decisions: { type: "array", items: { type: "string" }, description: "What the person decided or agreed to, or what was done at their ask, one short line each (none is fine). Never an offer they didn't take up, never something the assistant only read out" },
     by_agent: {
       type: "array",
       items: { type: "object", additionalProperties: false, required: ["agent", "did"], properties: { agent: { type: "string", description: "The agent's role as it appears in the call" }, did: { type: "array", items: { type: "string" } } } },
@@ -37,13 +38,42 @@ const SCHEMA = {
     },
     follow_ups: {
       type: "array",
-      items: { type: "object", additionalProperties: false, required: ["what", "due", "client"], properties: { what: { type: "string" }, due: { type: "string", description: "YYYY-MM-DD if a day was said, else empty" }, client: { type: "string", description: "The client it is about, by name, or empty when it is about no client" } } },
-      description: "What the person still has to do or check after the call (not what was already done, not reminders already set on the call)",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["what", "due", "client", "from"],
+        properties: {
+          what: { type: "string" },
+          due: { type: "string", description: "YYYY-MM-DD if a day was said, else empty" },
+          client: { type: "string", description: "The client it is about, by name, or empty when it is about no client" },
+          from: {
+            type: "string",
+            enum: [...FOLLOW_UP_SOURCES],
+            description: "Where it came from: they_asked (the person asked for it), they_agreed (they said yes to it), they_said_they_will (they said they'd do it), assistant_read_out (the assistant only listed it from their existing items, a recap or briefing), assistant_offered (the assistant offered and they didn't take it up)",
+          },
+        },
+      },
+      description: "What the person still has to do or check after the call, ONLY from what they said, asked for or agreed to on this call (not what was already done, not reminders already set, never their existing open items the assistant read out)",
     },
   },
 };
 
 const clip = (s: unknown, n: number) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
+
+/** Follow-ups that are already open (or done) for the person anywhere the OS can see are left off: the assistant reading
+ *  out their existing items never makes them new again */
+async function notAlreadyOpen<F extends { what: string; client: string | null }>(admin: SupabaseClient, profileId: string, followUps: F[]): Promise<F[]> {
+  if (!followUps.length) return followUps;
+  try {
+    const { loadReality } = await import("@/lib/reality-check");
+    const { decide } = await import("@/lib/reality-check-core");
+    const found = await loadReality(admin, { clientIds: [], ownerIds: [profileId] });
+    const theirs = found.filter((e) => e.ownerId === profileId);
+    return followUps.filter((f) => decide({ title: f.what, clientId: null, ownerId: profileId }, theirs).state === "new");
+  } catch {
+    return followUps;
+  }
+}
 
 /** Writes the notes of an ended assistant call, or of a call where agents worked together (never throws) */
 export async function writeCallNotes(admin: SupabaseClient, callId: string): Promise<CallNotes | null> {
@@ -62,22 +92,29 @@ export async function writeCallNotes(admin: SupabaseClient, callId: string): Pro
   // Reminders already set on the call aren't follow-ups again
   const { data: asks } = await admin.from("agent_asks").select("title").eq("call_id", callId);
   try {
-    const out = await askJson<{ summary: string; topic: string; decisions: string[]; by_agent?: { agent: string; did: string[] }[]; follow_ups: { what: string; due: string; client?: string }[] }>({
+    const out = await askJson<{ summary: string; topic: string; decisions: string[]; by_agent?: { agent: string; did: string[] }[]; follow_ups: { what: string; due: string; client?: string; from?: string }[] }>({
       agent: "coach",
       label: "assistant call notes",
       bare: true,
       noSample: true,
       override: { model: "haiku", effort: "low" },
-      system: "You take the notes of a voice call between a member of a marketing agency's team and their AI assistant or one of its AI agents (sometimes with other specialist agents on the line, working a job together). Plain, short, practical. Roles not names for anyone but 'you' (the person). Leave out anything personal they shared (family, trips, health); notes are about the work. Never turn management talk about someone on the team (performance, conduct, pay, hiring or firing, health, personal life) into a follow-up for anyone else: it stays a private note for the person, never a task.",
+      system: "You take the notes of a voice call between a member of a marketing agency's team and their AI assistant or one of its AI agents (sometimes with other specialist agents on the line, working a job together). Plain, short, practical. Roles not names for anyone but 'you' (the person). Leave out anything personal they shared (family, trips, health); notes are about the work. Never turn management talk about someone on the team (performance, conduct, pay, hiring or firing, health, personal life) into a follow-up for anyone else: it stays a private note for the person, never a task. Decisions and follow-ups come ONLY from what the person said, asked for or agreed to on this call: when the assistant reads out their existing open items, urgent items or a recap, those are already on their list and are never follow-ups; an offer they didn't answer is not a decision. A call where the person barely spoke (a greeting, \"are you there\") has no decisions and no follow-ups.",
       schema: SCHEMA,
       maxTokens: 2000,
       prompt: `<reminders_already_set>\n${(asks ?? []).map((a) => a.title).join("\n") || "(none)"}\n</reminders_already_set>${job ? `\n\n${jobForPrompt(job)}` : ""}\n\n<call>\n${said(turns, "You", call.role_key as string)}\n</call>`,
     });
     const speakers = new Set(turns.filter((t) => t.role === "agent").map((t) => t.role_key));
+    // Only the person's own asks and agreements; none at all when they barely spoke; never their existing open items again
+    const kept = keepNoteItems({
+      decisions: (out.decisions ?? []).map((d) => clip(d, 200)).filter(Boolean).slice(0, 8),
+      followUps: (out.follow_ups ?? []).map((f) => ({ what: clip(f.what, 160), due: /^\d{4}-\d{2}-\d{2}$/.test(String(f.due)) ? f.due : null, client: clip(f.client, 120) || null, from: f.from ?? null })).filter((f) => f.what),
+      personWords: personWords(turns),
+    });
+    const fresh = await notAlreadyOpen(admin, call.profile_id as string, kept.followUps);
     const notes: CallNotes = {
       summary: clip(out.summary, 1200),
-      decisions: (out.decisions ?? []).map((d) => clip(d, 200)).filter(Boolean).slice(0, 8),
-      followUps: (out.follow_ups ?? []).map((f) => ({ what: clip(f.what, 160), due: /^\d{4}-\d{2}-\d{2}$/.test(String(f.due)) ? f.due : null, client: clip(f.client, 120) || null })).filter((f) => f.what).slice(0, 6),
+      decisions: kept.decisions,
+      followUps: fresh.map(({ what, due, client }) => ({ what, due, client })).slice(0, 6),
       agents:
         speakers.size > 1
           ? (out.by_agent ?? [])

@@ -302,3 +302,12 @@ describe("plan it: the roadmap", () => {
     expect(addToRoadmap(out, "Two")).toBe(out);
   });
 });
+
+describe("triage: something shown that isn't true is a bug (Nov 26)", () => {
+  it("never files 'X showed up that didn't happen' as a note, whatever the AI's read", () => {
+    const text = "There is items showing up from a call at 7:40 that are not what we discussed? That didn't happen in our call...";
+    expect(classifyScope({ aiKind: "unclear", type: "bug", text, area: "Assistant" })).toMatchObject({ scope: "small_bug", unclear: false });
+    // A real note still reads as one
+    expect(classifyScope({ aiKind: "unclear", type: "bug", text: "lets launch a campaign for the coffee client", area: "Assistant" }).unclear).toBe(true);
+  });
+});

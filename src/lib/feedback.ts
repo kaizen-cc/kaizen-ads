@@ -133,7 +133,7 @@ const SCHEMA = {
       type: "string",
       enum: ["bug", "feature", "unclear"],
       description:
-        "bug: something in the app is broken, wrong or failed (an error, wrong numbers, a crash, a confusing label), whatever its size. feature: asks for new behaviour, or for the AI to do something it can't yet. unclear: it doesn't describe anything going wrong (a note, an instruction meant for a chat or a task like 'lets launch a campaign', a test, or too vague to act on).",
+        "bug: something in the app is broken, wrong or failed (an error, wrong numbers, a crash, a confusing label), whatever its size, including something that showed up but isn't true (items, notes, tasks or a summary from a call or a message that don't match what happened: 'X is showing up that didn't happen'). feature: asks for new behaviour, or for the AI to do something it can't yet. unclear: it doesn't describe anything going wrong (a note, an instruction meant for a chat or a task like 'lets launch a campaign', a test, or too vague to act on).",
     },
     rail: {
       type: "string",

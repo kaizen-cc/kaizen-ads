@@ -221,7 +221,7 @@ export async function loadCallDetail(callId: string): Promise<CallDetail | null>
   const who = ((call as unknown as { profiles: { full_name: string } | null }).profiles?.full_name ?? "The caller") as string;
   const t0 = Date.parse(call.started_at as string);
   const end = (call.ended_at ?? call.last_turn_at ?? call.started_at) as string;
-  const notes = (call.notes ?? {}) as { agents?: { label?: string; did?: string[] }[]; decisions?: string[]; followUps?: string[] };
+  const notes = (call.notes ?? {}) as { agents?: { label?: string; did?: string[] }[]; decisions?: string[]; followUps?: (string | { what?: string; client?: string | null })[] };
   const audioDeleted = Boolean(review?.audio_deleted_at);
   return {
     id: callId,
@@ -238,7 +238,10 @@ export async function loadCallDetail(callId: string): Promise<CallDetail | null>
     parts: call.mode === "text" || audioDeleted ? [] : await audioParts(admin, callId),
     did: (notes.agents ?? []).map((a) => ({ label: a.label ?? "Agent", did: (a.did ?? []).slice(0, 20) })).filter((a) => a.did.length),
     decisions: (notes.decisions ?? []).slice(0, 20),
-    followUps: (notes.followUps ?? []).slice(0, 20),
+    followUps: (notes.followUps ?? [])
+      .map((f) => (typeof f === "string" ? f : `${f.what ?? ""}${f.client ? ` (${f.client})` : ""}`))
+      .filter(Boolean)
+      .slice(0, 20),
     tasks: [...(asks ?? []).map((a) => ({ title: String(a.title), status: String(a.status), kind: String(a.kind ?? "task") })), ...(commitments ?? []).map((c) => ({ title: String(c.what), status: String(c.status), kind: `promise · ${String(c.kind ?? "")}` }))],
     clients: [...new Set(((mentions ?? []) as unknown as { clients: { name: string } | null }[]).map((m) => m.clients?.name).filter((n): n is string => Boolean(n)))],
   };

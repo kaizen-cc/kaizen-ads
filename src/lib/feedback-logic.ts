@@ -196,7 +196,9 @@ export function railFor(r: { text: string; area: string; aiRail?: Rail | "none" 
 // What says something went wrong (a bug), as opposed to a note or an instruction
 const PROBLEM =
   /\?|\b(not|no|never|nothing|broken|breaks?|error|errors|wrong|fails?|failed|failing|bug|bugs|crash(?:es|ed)?|missing|stuck|blank|empty|slow|freez(?:e|es|ing)|disappear(?:s|ed)?|weird|incorrect|inaccurate|instead|should|why|how|cannot|can't|cant|won't|wont|doesn't|doesnt|didn't|didnt|isn't|isnt|aren't|wasn't|shows?|showing|says|cut off|overlaps?|misaligned|typo|off[- ]screen|unreadable|hidden)\b/i;
-const REQUEST_START = /^\s*(let'?s|lets|please|pls|can you|could you|make|create|launch|add|build|set up|write|send|schedule|start|go)\b/i;
+/** Says plainly that something shown isn't true or isn't right: always a bug, never a note */
+const SAYS_WRONG = /\b(didn'?t happen|never happened|not what (?:we|i|they) (?:discussed|said|asked|talked about)|(?:showing|showed|shows) up|shouldn'?t (?:be|show)|isn'?t (?:right|true)|wasn'?t (?:said|discussed|asked)|wrong)\b/i;
+const REQUEST_START =/^\s*(let'?s|lets|please|pls|can you|could you|make|create|launch|add|build|set up|write|send|schedule|start|go)\b/i;
 
 /**
  * A report that reads like a note or an instruction meant for somewhere else (a chat message typed into the bubble,
@@ -220,7 +222,9 @@ export function classifyScope(r: { aiKind: AiKind | null; aiRail?: Rail | "none"
   unclear: boolean;
 } {
   if (r.type === "idea" || r.aiKind === "feature") return { scope: "feature", reason: "Asks for something new, not a fix", rail: null, unclear: false };
-  if (r.aiKind === "unclear" || looksLikeNote(r.note ?? r.text))
+  // "X is showing up that didn't happen" is something going wrong whatever the AI's read (Nov 26 2026: a call's made-up
+  // follow-ups were filed as a note)
+  if ((r.aiKind === "unclear" && !SAYS_WRONG.test(r.text)) || looksLikeNote(r.note ?? r.text))
     return { scope: "feature", reason: "Reads like a note or an instruction, not something going wrong", rail: null, unclear: true };
   const rail = railFor({ text: r.text, area: r.area, aiRail: r.aiRail });
   if (rail) return { scope: "big_issue", reason: `The fix may touch ${RAIL_LABEL[rail.rail]} (${rail.why}), so it waits for approval before it merges`, rail: rail.rail, unclear: false };
