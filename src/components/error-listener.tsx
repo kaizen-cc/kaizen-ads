@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { reportClientError } from "@/app/error-actions";
-import { isNavigationSignal } from "@/lib/error-triage";
+import { isAbortSignal, isNavigationSignal } from "@/lib/error-triage";
 
 /**
  * Errors that don't crash the page still count: a script that throws, a button whose action fails. They're reported
@@ -21,11 +21,13 @@ export function ErrorListener() {
     };
     const onError = (e: ErrorEvent) => {
       // Scripts from other sites (extensions, embeds) show up as "Script error." with nothing to go on
-      if (!e.message || e.message === "Script error.") return;
+      if (!e.message || e.message === "Script error." || isAbortSignal(e.error)) return;
       send(e.message, e.error instanceof Error ? e.error.stack : undefined, (e.error as { digest?: unknown } | null)?.digest);
     };
     const onRejection = (e: PromiseRejectionEvent) => {
       const r = e.reason;
+      // A request cancelled on purpose (Stop on an AI answer, leaving the page) isn't an error
+      if (isAbortSignal(r)) return;
       send(r instanceof Error ? r.message : typeof r === "string" ? r : "", r instanceof Error ? r.stack : undefined, (r as { digest?: unknown } | null)?.digest);
     };
     window.addEventListener("error", onError);

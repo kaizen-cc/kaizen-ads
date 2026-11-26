@@ -22,6 +22,15 @@ const STALE =
 export const isNavigationSignal = (message: string | undefined | null, digest?: unknown) =>
   /^NEXT_(REDIRECT|NOT_FOUND|HTTP_ERROR_FALLBACK)\b/.test(typeof digest === "string" ? digest : String(message ?? "").trim());
 
+/**
+ * A request cancelled on purpose (the Stop button on an answer, leaving a page, a newer search replacing an older one).
+ * The browser rejects it with an AbortError ("signal is aborted without reason" in Chrome); nothing failed.
+ */
+export const isAbortSignal = (reason: unknown) =>
+  reason instanceof Error || (typeof DOMException !== "undefined" && reason instanceof DOMException)
+    ? (reason as Error).name === "AbortError" || /^signal is aborted without reason$/i.test((reason as Error).message)
+    : false;
+
 export const isNetworkError = (message: string | undefined | null) => NETWORK.test(String(message ?? "").trim());
 
 export function classifyError(message: string, stack?: string | null): AutoHandled | null {
