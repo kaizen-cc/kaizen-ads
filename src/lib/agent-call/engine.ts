@@ -1,5 +1,5 @@
 import { downsample, createTurnDetector, createTurnWatchdog, rms, splitSpeakable, toPcm16, type CallCard, type CallEvent, type CallProgress, type LearnedItem, type StallState, type UploadAsk } from "./core";
-import { canSend, createTranscript, hasFloor, initialTurns, isCurrent, shouldCheckpoint, shownPhase, stepTurns, wordsStalled, type TurnEffect, type TurnInput, type TurnState, forcedTurn, turnCapped } from "./turns";
+import { canSend, createTranscript, hasFloor, initialTurns, isCurrent, shouldCheckpoint, showWithoutVoice, shownPhase, stepTurns, wordsStalled, type TurnEffect, type TurnInput, type TurnState, forcedTurn, turnCapped } from "./turns";
 import type { CallContext } from "./call-context";
 import { initialAway, stepAway, type AwayEffect, type AwayEvent, type AwayState } from "./away";
 import { AUDIO_PART_SECONDS } from "@/lib/assistant/core";
@@ -403,7 +403,7 @@ export function chime(kind: "connect" | "end") {
   }
 }
 
-type Queued = { text: string; audio: Promise<AudioBuffer | null>; speaker: Speaker | null; turn: number | null };
+type Queued = { text: string; audio: Promise<AudioBuffer | null>; speaker: Speaker | null; turn: number | null; voiceFailed: () => boolean };
 
 /** Everything a live call runs: the microphone, turn taking, listening, the agent's answers and its voice */
 export class Call {
@@ -849,6 +849,12 @@ export class Call {
     // (a sentence is never dropped or said in another voice)
     const body = JSON.stringify({ callId: this.callId, text, ...(previous ? { previous } : {}), ...(speaker ? { role: speaker.role } : {}) });
     const speak = () => fetch("/api/agent-call/speak", { method: "POST", headers: { "content-type": "application/json" }, body, signal: ctl.signal });
+    // The voice service failed even on the retry (not a sentence they cut off): the line is still shown, unspoken
+    let voiceFailed = false;
+    const failed = () => {
+      voiceFailed = !outer?.aborted;
+      return null;
+    };
     const audio = speak()
       .catch((e) => (ctl.signal.aborted ? Promise.reject(e) : speak()))
       .then((r) => (r.ok || r.status === 204 || r.status === 410 || ctl.signal.aborted ? r : speak()))
@@ -858,14 +864,15 @@ export class Call {
           this.timing.firstAudio = Date.now() - this.timing.sentAt;
           this.timing.voice = r.headers.get("x-call-timing");
         }
-        return r.ok && r.status !== 204 ? this.ctx.decodeAudioData(await r.arrayBuffer()) : null;
+        if (r.status === 204 || r.status === 410) return null;
+        return r.ok ? this.ctx.decodeAudioData(await r.arrayBuffer()) : failed();
       })
-      .catch(() => null)
+      .catch(failed)
       .finally(() => {
         clearTimeout(timer);
         outer?.removeEventListener("abort", onAbort);
       });
-    this.queue.push({ text, audio, speaker, turn });
+    this.queue.push({ text, audio, speaker, turn, voiceFailed: () => voiceFailed });
     void this.drain();
   }
 
@@ -894,6 +901,12 @@ export class Call {
     const buf = await next.audio;
     if (this.playing !== hold) return;
     this.playing = null;
+    if (!buf && showWithoutVoice({ voiceFailed: next.voiceFailed(), closed: this.closed, current: isCurrent(this.st, next.turn) })) {
+      this.dispatch({ t: "audio", turn: next.turn });
+      this.dispatch({ t: "agent_line", text: next.text });
+      this.hooks.onLine({ id: ++this.lineId, who: "agent", text: next.text, ...(next.speaker ? { speaker: next.speaker } : {}) });
+      return void this.drain();
+    }
     if (!buf || this.closed || !isCurrent(this.st, next.turn)) return void this.drain();
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
