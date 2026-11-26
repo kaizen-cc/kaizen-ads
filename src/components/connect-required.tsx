@@ -3,7 +3,8 @@
 import { usePathname, useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { remindTomorrow } from "@/app/(team)/connect-actions";
-import { buttonLabel, connectHref, itemTitle, LABEL, missingOf, NEEDS, stateText, WHY, type Gaps, type Need } from "@/lib/connect-required-core";
+import { confirmMyAsana } from "@/app/(team)/settings/work-connection-actions";
+import { buttonLabel, connectHref, fixHint, itemTitle, LABEL, missingOf, NEEDS, stateText, WHY, type Gaps, type Need } from "@/lib/connect-required-core";
 
 // Everyone connects their own Slack and Asana (src/lib/connect-required-core.ts). Two shapes:
 //   item: a critical card at the top of the Overview, one-tap Connect per account, gone the moment they're connected
@@ -25,12 +26,39 @@ function Button({ n, state, next, primary }: { n: Need; state: Gaps[Need]; next:
   );
 }
 
+/** Signed in to Asana with another email but in Kaizen's workspace (a personal email by mistake): it's theirs, use it */
+function UseThisAccount() {
+  const router = useRouter();
+  const [busy, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <span className="grid gap-1">
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() =>
+          start(async () => {
+            const r = await confirmMyAsana().catch(() => ({ ok: false as const, error: "Couldn't save that. Try again." }));
+            if (!r.ok) return setError(r.error);
+            router.refresh();
+          })
+        }
+        className="inline-flex min-h-11 items-center justify-center rounded-full bg-brand px-5 text-[14px] font-medium text-white transition hover:bg-brand-hover active:scale-[0.98] disabled:opacity-50 md:min-h-10"
+      >
+        {busy ? "…" : "Use this account"}
+      </button>
+      {error && <span className="text-[12.5px] text-bad">{error}</span>}
+    </span>
+  );
+}
+
 function Rows({ gaps, next }: { gaps: Gaps; next: string }) {
   const missing = missingOf(gaps);
   return (
     <ul className="grid gap-2.5">
       {NEEDS.map((n) => {
         const ok = gaps[n] === "ok";
+        const hint = fixHint(n, gaps[n]);
         return (
           <li key={n} className={`grid gap-2 rounded-[16px] border p-3.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center ${ok ? "border-ok/30 bg-ok-soft/40" : "border-line bg-surface"}`}>
             <span className="grid min-w-0 gap-0.5">
@@ -39,9 +67,17 @@ function Rows({ gaps, next }: { gaps: Gaps; next: string }) {
                 {LABEL[n]}
                 <span className="text-[12.5px] font-normal text-faint">{stateText(gaps[n])}</span>
               </span>
-              {!ok && <span className="text-[13px] leading-snug text-muted">Connect it {WHY[n]}.</span>}
+              {!ok && <span className="text-[13px] leading-snug text-muted">{hint ?? `Connect it ${WHY[n]}.`}</span>}
             </span>
-            {!ok && <Button n={n} state={gaps[n]} next={next} primary={n === missing[0]} />}
+            {!ok &&
+              (gaps[n] === "unconfirmed" ? (
+                <span className="flex flex-wrap items-start gap-2">
+                  <UseThisAccount />
+                  <Button n={n} state={gaps[n]} next={next} primary={false} />
+                </span>
+              ) : (
+                <Button n={n} state={gaps[n]} next={next} primary={n === missing[0]} />
+              ))}
           </li>
         );
       })}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { asanaGap, buttonLabel, connectHref, helloLine, itemTitle, missingOf, slackGap, snoozedToday } from "@/lib/connect-required-core";
+import { asanaGap, buttonLabel, connectHref, fixHint, helloLine, itemTitle, missingOf, slackGap, snoozedToday } from "@/lib/connect-required-core";
 import { SLACK_POST_NEEDS, SLACK_READ_NEEDS } from "@/lib/personal-connections-core";
 
 const ALL = [...SLACK_POST_NEEDS, ...SLACK_READ_NEEDS].join(",");
@@ -16,7 +16,9 @@ describe("everyone connects their own Slack and Asana", () => {
     const now = Date.parse("2026-11-24T12:00:00Z");
     expect(asanaGap(null, "W1", now)).toBe("missing");
     expect(asanaGap({ confirmed: true, expires_at: null, refresh_token: "r", workspaces: [{ gid: "W1" }] }, "W1", now)).toBe("ok");
-    expect(asanaGap({ confirmed: false, expires_at: null, refresh_token: "r", workspaces: [{ gid: "W1" }] }, "W1", now)).toBe("wrong");
+    // Another email (a personal one by mistake) but in Kaizen's workspace: theirs to confirm, not a dead end (#165)
+    expect(asanaGap({ confirmed: false, expires_at: null, refresh_token: "r", workspaces: [{ gid: "W1" }] }, "W1", now)).toBe("unconfirmed");
+    expect(asanaGap({ confirmed: false, expires_at: null, refresh_token: "r", workspaces: [{ gid: "W2" }] }, "W1", now)).toBe("wrong");
     expect(asanaGap({ confirmed: true, expires_at: null, refresh_token: "r", workspaces: [{ gid: "W2" }] }, "W1", now)).toBe("wrong");
     expect(asanaGap({ confirmed: true, expires_at: "2026-11-01T00:00:00Z", refresh_token: null, workspaces: [] }, "W1", now)).toBe("reconnect");
   });
@@ -29,6 +31,11 @@ describe("everyone connects their own Slack and Asana", () => {
     expect(buttonLabel("asana", "wrong")).toBe("Switch Asana");
     expect(connectHref("asana", "missing", "/pipeline")).toEqual({ href: "/api/asana/connect?next=%2Fpipeline", post: false });
     expect(connectHref("asana", "wrong", "/pipeline")).toEqual({ href: "/api/asana/disconnect?switch=1&next=%2Fpipeline", post: true });
+    expect(buttonLabel("asana", "unconfirmed")).toBe("Switch Asana");
+    expect(connectHref("asana", "unconfirmed", "/pipeline").post).toBe(true);
+    expect(fixHint("asana", "unconfirmed")).toMatch(/Use this account/);
+    expect(fixHint("asana", "wrong")).toMatch(/invite this one to Kaizen's Asana/);
+    expect(fixHint("asana", "missing")).toBeNull();
     expect(connectHref("slack", "missing", "/pipeline").href).toContain("/api/slack/connect?read=1");
     expect(helloLine(gaps)).toMatch(/^Before anything else: I still need your Slack \(needs reconnecting\) and Asana \(not connected\)/);
     expect(helloLine({ slack: "ok", asana: "ok" })).toBeNull();
