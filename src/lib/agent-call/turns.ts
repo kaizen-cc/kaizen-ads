@@ -104,6 +104,13 @@ export function forcedTurn(s: Pick<TurnState, "phase" | "heard" | "carry" | "las
 /** Whether an answer's event or sentence belongs to the turn being answered (null: the greeting, always played) */
 export const isCurrent = (s: TurnState, turn: number | null) => turn === null || turn === s.asking;
 
+/**
+ * A sentence whose voice couldn't be had (the voice service failing, a 502 on every sentence) is still shown as the
+ * agent's line, so the answer reaches them in writing instead of the call going silent. A sentence cut off on purpose
+ * (they spoke over it, the call ended) or from an older turn is not.
+ */
+export const showWithoutVoice = (o: { voiceFailed: boolean; closed: boolean; current: boolean }) => o.voiceFailed && !o.closed && o.current;
+
 const clean = (x: string) => x.replace(/\s+/g, " ").trim();
 const join = (...xs: string[]) => clean(xs.join(" "));
 
