@@ -2,13 +2,15 @@
 // them, and Asana changes go in as them (src/lib/asana-user.ts). Until both are connected: a critical item on their
 // Overview with one-tap Connect, their assistant raises it first every day, the first run asks before anything else
 // (only "Remind me tomorrow" skips it), and the executives see who's missing what in Settings › Team. A sign-in to the
-// wrong account (not their Kaizen email, not Kaizen's workspace) doesn't count, with Switch. Pure: tested.
+// wrong account (not Kaizen's workspace) doesn't count, with Switch. An Asana account in Kaizen's workspace under
+// another email (made with a personal email by mistake, issue #165) is "unconfirmed": they can say it's theirs right
+// there (Use this account) or Switch. Pure: tested.
 
 import { slackState } from "./personal-connections-core";
 import { slackConnectHref } from "./slack-account-core";
 
 export type Need = "slack" | "asana";
-export type GapState = "ok" | "missing" | "reconnect" | "wrong";
+export type GapState = "ok" | "missing" | "reconnect" | "wrong" | "unconfirmed";
 export type Gaps = Record<Need, GapState>;
 export const NEEDS: readonly Need[] = ["slack", "asana"];
 export const LABEL: Record<Need, string> = { slack: "Slack", asana: "Asana" };
@@ -34,9 +36,10 @@ export function slackGap(row: SlackRow, kaizenTeam: string | null): GapState {
 /** Their Asana: their own, in Kaizen's workspace and still valid, else what's wrong */
 export function asanaGap(row: AsanaRow, kaizenWorkspace: string | null, now = Date.now()): GapState {
   if (!row) return "missing";
-  if (row.confirmed === false) return "wrong";
   const spaces = (Array.isArray(row.workspaces) ? row.workspaces : []) as { gid?: string }[];
   if (kaizenWorkspace && spaces.length && !spaces.some((w) => w.gid === kaizenWorkspace)) return "wrong";
+  // Another email than their Kaizen one, but in Kaizen's workspace: theirs to confirm (or Switch)
+  if (row.confirmed === false) return "unconfirmed";
   if (row.expires_at && Date.parse(row.expires_at) < now && !row.refresh_token) return "reconnect";
   return "ok";
 }
@@ -46,13 +49,21 @@ export const missingOf = (g: Gaps): Need[] => NEEDS.filter((n) => g[n] !== "ok")
 /** Where one tap goes: Connect, Reconnect, or Switch account (signed in as the wrong one; Asana's switch is a POST) */
 export function connectHref(n: Need, state: GapState, next: string): { href: string; post: boolean } {
   if (n === "slack") return { href: slackConnectHref(next), post: false };
-  return state === "wrong" ? { href: `/api/asana/disconnect?switch=1&next=${encodeURIComponent(next)}`, post: true } : { href: `/api/asana/connect?next=${encodeURIComponent(next)}`, post: false };
+  return state === "wrong" || state === "unconfirmed" ? { href: `/api/asana/disconnect?switch=1&next=${encodeURIComponent(next)}`, post: true } : { href: `/api/asana/connect?next=${encodeURIComponent(next)}`, post: false };
 }
 
-export const buttonLabel = (n: Need, state: GapState) => `${state === "wrong" ? "Switch" : state === "reconnect" ? "Reconnect" : "Connect"} ${LABEL[n]}`;
+export const buttonLabel = (n: Need, state: GapState) => `${state === "wrong" || state === "unconfirmed" ? "Switch" : state === "reconnect" ? "Reconnect" : "Connect"} ${LABEL[n]}`;
 
 /** What's wrong with one, in a few words */
-export const stateText = (state: GapState) => (state === "missing" ? "not connected" : state === "reconnect" ? "needs reconnecting" : state === "wrong" ? "signed in to the wrong account" : "connected");
+export const stateText = (state: GapState) => (state === "missing" ? "not connected" : state === "reconnect" ? "needs reconnecting" : state === "wrong" ? "signed in to the wrong account" : state === "unconfirmed" ? "signed in with another email" : "connected");
+
+/** What to do about the account that signed in, in one line (null: nothing beyond the button) */
+export function fixHint(n: Need, state: GapState): string | null {
+  if (n !== "asana") return null;
+  if (state === "unconfirmed") return "The Asana account that signed in isn't under your Kaizen email. If it's yours (say, made with a personal email), tap Use this account. If not, Switch and sign in to your work one.";
+  if (state === "wrong") return "The Asana account that signed in isn't in Kaizen's Asana workspace. Switch and sign in to your work account, or ask an admin to invite this one to Kaizen's Asana.";
+  return null;
+}
 
 /** "Connect your Slack and Asana so Kaizen OS can work for you" */
 export function itemTitle(missing: readonly Need[]): string {

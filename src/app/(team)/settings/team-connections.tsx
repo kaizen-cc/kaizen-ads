@@ -6,7 +6,7 @@ import { roleLabel } from "@/lib/roles";
 // account or missing a scope. Everyone missing one has a critical item on their Overview and their assistant raises it
 // every day; this is the list to follow up on.
 
-const TONE: Record<GapState, string> = { ok: "bg-ok-soft text-ok", missing: "bg-bad-soft text-bad", reconnect: "bg-warn-soft text-warn", wrong: "bg-warn-soft text-warn" };
+const TONE: Record<GapState, string> = { ok: "bg-ok-soft text-ok", missing: "bg-bad-soft text-bad", reconnect: "bg-warn-soft text-warn", wrong: "bg-warn-soft text-warn", unconfirmed: "bg-warn-soft text-warn" };
 
 export async function TeamConnections() {
   const { teamGaps } = await import("@/lib/connect-required");
