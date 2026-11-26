@@ -16,7 +16,7 @@ import pg from "pg";
 import puppeteer from "puppeteer-core";
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((a, x, i, all) => (x.startsWith("--") ? [...a, [x.slice(2), all[i + 1] && !all[i + 1].startsWith("--") ? all[i + 1] : "1"]] : a), []));
-const LIMIT = Number(args.limit ?? 8);
+const LIMIT = Number(args.limit ?? 10);
 const ONLY = args.only ? String(args.only).split(",") : null;
 const STEP = args.step ?? null;
 const DOMAIN = "kaizenmarketing.agency";
@@ -31,22 +31,28 @@ if (!url) {
 }
 const db = new pg.Client({ connectionString: url, ssl: { rejectUnauthorized: false } });
 await db.connect();
+const beat = (outcome, extra = {}) =>
+  db.query("insert into app_settings (key, value) values ('swipe_runner_last', $1) on conflict (key) do update set value = excluded.value", [JSON.stringify({ ran_at: new Date().toISOString(), outcome, ...extra })]).catch(() => undefined);
+await beat("started");
 
 const { rows: st } = await db.query("select value from app_settings where key = 'swipe'");
 const status = st[0]?.value ?? null;
 if (!status?.mailbox) {
   console.log("The swipe mailbox isn't resolved yet (the app checks it every 15 minutes): stopping.");
+  await beat("stopped: mailbox not resolved");
   await db.end();
   process.exit(0);
 }
 if (status.forwarding?.enabled) {
   console.log(`The swipe mailbox (${status.mailbox}) auto-forwards to ${status.forwarding.to}: signing nothing up.`);
+  await beat("stopped: mailbox forwards");
   await db.end();
   process.exit(0);
 }
 const { rows: pause } = await db.query("select value from app_settings where key = 'swipe_runner'");
 if (pause[0]?.value?.paused) {
   console.log("The swipe runner is paused.");
+  await beat("stopped: paused");
   await db.end();
   process.exit(0);
 }
@@ -76,6 +82,7 @@ for (const b of brands) {
 const batch = work.slice(0, LIMIT);
 console.log(`${batch.length} step(s) to run: ${batch.map((w) => `${w.b.slug}:${w.step}`).join(", ") || "none"}`);
 if (!batch.length) {
+  await beat("done: nothing due");
   await db.end();
   process.exit(0);
 }
@@ -268,5 +275,6 @@ for (const { b, step } of batch) {
   await sleep(jitter(15_000, 30_000));
 }
 await browser.close();
+await beat("done", { steps: summary });
 await db.end();
 console.log(summary.join("\n"));

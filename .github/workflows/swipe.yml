@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       limit:
-        description: "How many steps this run (default 8)"
+        description: "How many steps this run (default 10)"
         required: false
-        default: "8"
+        default: "10"
       only:
         description: "Only these brand slugs (comma-separated)"
         required: false
@@ -34,7 +34,7 @@ jobs:
           node-version: 24
       - run: npm install --no-save --no-audit --no-fund pg@8 puppeteer-core@25
       - name: Run
-        run: node scripts/swipe-runner.mjs --limit "${{ inputs.limit || '8' }}" ${{ inputs.only && format('--only {0}', inputs.only) || '' }} ${{ inputs.step && format('--step {0}', inputs.step) || '' }}
+        run: node scripts/swipe-runner.mjs --limit "${{ inputs.limit || '10' }}" ${{ inputs.only && format('--only {0}', inputs.only) || '' }} ${{ inputs.step && format('--step {0}', inputs.step) || '' }}
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           CHROME_PATH: /usr/bin/google-chrome
