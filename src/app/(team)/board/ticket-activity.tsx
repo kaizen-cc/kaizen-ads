@@ -71,6 +71,7 @@ function describe(e: TicketEvent) {
         "unassigned it"
       );
     case "due":
+      if (!e.data.to && e.data.from) return "cleared the due date";
       return <>changed the due date{e.data.to ? <> to <span className="text-fg">{fmtDate(e.data.to)}</span></> : null}</>;
     case "priority":
       return (

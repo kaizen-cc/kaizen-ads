@@ -32,6 +32,8 @@ import { BriefPdfSheet } from "./brief-pdf-sheet";
 import { LauncherSheet } from "./launcher-sheet";
 import { RevisionDialog } from "./revision-dialog";
 import { TicketActivity, fmtDate } from "./ticket-activity";
+import { TicketWhoDue } from "./ticket-who-due";
+import { mayEditTicket } from "@/lib/ticket-edit-core";
 import { AiSummary, CreativeStrip, RatioBars, Story, TicketSummary, card, label } from "./ticket-parts";
 import { ScriptPanel } from "./script-panel";
 import { addTicketRef } from "../media-actions";
@@ -530,8 +532,8 @@ export function TicketDrawer({
               <span aria-hidden className={`h-1.5 w-1.5 rounded-full ${h === "bad" ? "bg-bad" : h === "warn" ? "bg-warn" : stage === "launched" ? "bg-ok" : "bg-brand"}`} />
               {stage === "launched" ? "Completed" : info.label}
             </span>
-            {who && stage !== "launched" && <span className="text-muted">with {who}</span>}
-            {ticket.stageDueAt && stage !== "launched" && <span className="tabular text-muted">Due {fmtDate(ticket.stageDueAt)}</span>}
+            {/* Who it's with and when it's due, editable right here like Asana (src/app/(team)/board/ticket-who-due.tsx) */}
+            {stage !== "launched" && <TicketWhoDue ticket={ticket} people={people} who={who} canEdit={demo || mayEditTicket(meId ? { id: meId, isExec: can.exec, isLead: can.review } : null, ticket.assigneeId)} run={act} />}
             {stage !== "launched" && (
               <span className="ml-auto">
                 <TimeStamp ticket={ticket} label />

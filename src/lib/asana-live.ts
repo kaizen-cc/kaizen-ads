@@ -189,6 +189,7 @@ export async function updateTask(admin: SupabaseClient, me: Staff, gid: string, 
   if (patch.name !== undefined) body.name = patch.name.slice(0, 1000);
   if (patch.notes !== undefined) body.notes = patch.notes.slice(0, 60000);
   if (patch.due !== undefined) body.due_on = patch.due;
+  if (patch.dueAt !== undefined) body[patch.dueAt ? "due_at" : "due_on"] = patch.dueAt;
   if (patch.start !== undefined) body.start_on = patch.start;
   if (patch.completed !== undefined) body.completed = patch.completed;
   if (patch.assignee !== undefined) body.assignee = patch.assignee;
@@ -204,6 +205,7 @@ export async function updateTask(admin: SupabaseClient, me: Staff, gid: string, 
   if (patch.name !== undefined) cache.name = patch.name;
   if (patch.notes !== undefined) cache.notes = patch.notes;
   if (patch.due !== undefined) cache.due_on = patch.due;
+  if (patch.dueAt !== undefined) cache.due_on = patch.dueAt ? new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date(patch.dueAt)) : null;
   if (patch.start !== undefined) cache.start_on = patch.start;
   if (patch.completed !== undefined) {
     cache.open = !patch.completed;

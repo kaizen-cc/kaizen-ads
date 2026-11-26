@@ -97,18 +97,37 @@ export async function moveCheck(id: string, stage: Stage): Promise<MoveCheck> {
   return out;
 }
 
+/**
+ * Who it's with, changed on the ticket like Asana (owner, Nov 26 2026): only whoever moves it today (an exec, a lead,
+ * the person it's with). Logged on the timeline and "#N is on you" to the new person by the database; the linked Asana
+ * task's assignee follows.
+ */
 export async function assignTicket(id: string, profileId: string | null): Promise<ActionResult> {
-  await requireStaff();
+  const me = await requireStaff();
+  if (me.viewAs) return { ok: false, error: "Not while viewing as someone." };
   const supabase = await createClient();
+  const { data: r } = await supabase.from("requests").select("assignee_id").eq("id", id).maybeSingle();
+  if (!r) return { ok: false, error: "That ticket isn't there any more." };
+  const { mayEditTicket } = await import("@/lib/ticket-edit-core");
+  if (!mayEditTicket(me, (r.assignee_id as string | null) ?? null)) return { ok: false, error: "Only a lead, an exec or the person it's with can change who it's with." };
+  if ((r.assignee_id ?? null) === profileId) return { ok: true };
   const { error } = await supabase.rpc("assign_request", { p_request: id, p_profile: profileId });
+  if (!error && adminConfigured()) after(() => import("@/lib/ticket-edit").then(({ asanaFollow }) => asanaFollow(createAdminClient(), me, id, { assignee: profileId })));
   return done(error);
 }
 
-export async function setTicketDue(id: string, dueIso: string): Promise<ActionResult> {
-  await requireStaff();
-  if (Number.isNaN(Date.parse(dueIso))) return { ok: false, error: "Pick a valid date and time." };
+/** The due date, on the ticket like Asana: the same people as above; cleared with null; the Asana task follows */
+export async function setTicketDue(id: string, dueIso: string | null): Promise<ActionResult> {
+  const me = await requireStaff();
+  if (me.viewAs) return { ok: false, error: "Not while viewing as someone." };
+  if (dueIso !== null && Number.isNaN(Date.parse(dueIso))) return { ok: false, error: "Pick a valid date and time." };
   const supabase = await createClient();
+  const { data: r } = await supabase.from("requests").select("assignee_id").eq("id", id).maybeSingle();
+  if (!r) return { ok: false, error: "That ticket isn't there any more." };
+  const { mayEditTicket } = await import("@/lib/ticket-edit-core");
+  if (!mayEditTicket(me, (r.assignee_id as string | null) ?? null)) return { ok: false, error: "Only a lead, an exec or the person it's with can change the due date." };
   const { error } = await supabase.rpc("set_request_due", { p_request: id, p_due: dueIso });
+  if (!error && adminConfigured()) after(() => import("@/lib/ticket-edit").then(({ asanaFollow }) => asanaFollow(createAdminClient(), me, id, { due: dueIso })));
   return done(error);
 }
 

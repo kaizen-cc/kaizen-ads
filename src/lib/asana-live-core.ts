@@ -29,6 +29,8 @@ export type AsanaPatch = {
   name?: string;
   notes?: string;
   due?: string | null;
+  /** A due date with its time (an ISO instant), Asana's due_at; null clears the due date */
+  dueAt?: string | null;
   start?: string | null;
   completed?: boolean;
   /** An Asana user gid or email */

@@ -826,6 +826,46 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
       },
     },
     {
+      // The ticket sheet's "with X · Due …", by voice or chat ("move #1030 to Jesus, due Tuesday 5pm"): owner, Nov 26 2026
+      name: "edit_ticket",
+      description:
+        "Changes who a creative ticket is with and/or its due date, like tapping them on the ticket. assignee: a teammate's name or role as said (\"Jesus\", \"the video editor\"), or \"nobody\". due: Eastern time as YYYY-MM-DD HH:mm (work out the date from today; a day alone means 5 PM), or \"none\" to clear it. Only a lead, an exec or the person it's with can change these. The new person gets their notice and the Asana task follows. Reversible: no need to ask first.",
+      input_schema: { type: "object", properties: { number: { type: "integer" }, assignee: { type: "string" }, due: { type: "string" } }, required: ["number"], additionalProperties: false },
+      run: async (input) => {
+        const n = Number(input.number);
+        const { data: t } = await ctx.db.from("requests").select("id").eq("number", n).is("deleted_at", null).maybeSingle();
+        if (!t) return { done: false, error: `No ticket #${n} you can see.` };
+        const { matchTeammate, parseDue } = await import("@/lib/ticket-edit-core");
+        const { assignTicket, setTicketDue } = await import("@/app/(team)/board/actions");
+        const out: Record<string, unknown> = { ticket: n };
+        if (typeof input.assignee === "string" && input.assignee.trim()) {
+          const said = clip(input.assignee, 80);
+          let to: string | null = null;
+          if (!/^(nobody|no one|none|unassign(ed)?)$/i.test(said.trim())) {
+            const { data: people } = await ctx.db.from("profiles").select("id, full_name, role").eq("is_active", true);
+            const found = matchTeammate(((people ?? []) as { id: string; full_name: string; role: string }[]).map((p) => ({ id: p.id, name: p.full_name, role: p.role })), said);
+            if (!found.length) return { done: false, error: `Nobody on the team matches "${said}".` };
+            if (found.length > 1) return { done: false, ask: `Which one: ${found.slice(0, 5).map((p) => p.name).join(", ")}?` };
+            to = found[0].id;
+            out.with = found[0].name;
+          } else out.with = "nobody";
+          const r = await assignTicket(t.id as string, to);
+          if (!r.ok) return { done: false, error: r.error };
+        }
+        if (typeof input.due === "string" && input.due.trim()) {
+          const clear = /^(none|no date|clear)$/i.test(input.due.trim());
+          const iso = clear ? null : parseDue(input.due);
+          if (!clear && !iso) return { done: false, error: "Say the due date as YYYY-MM-DD HH:mm, Eastern." };
+          const r = await setTicketDue(t.id as string, iso);
+          if (!r.ok) return { done: false, error: r.error };
+          out.due = iso;
+        }
+        if (Object.keys(out).length === 1) return { done: false, error: "Say who it's with or when it's due." };
+        forgetContext(ctx.me.id);
+        return { done: true, ...out };
+      },
+    },
+    {
       name: "confirm_launch",
       description: "Puts a launch live (one started with launch_sheet and showing ready on its card): the launch's own checks apply (who may confirm, the plan ready, the account live). This goes LIVE and spends ad money: say exactly what goes live and ask; only on a clear spoken yes, confirmed: true.",
       input_schema: { type: "object", properties: { launchId: { type: "string" }, confirmed: CONFIRMED }, required: ["launchId"], additionalProperties: false },
