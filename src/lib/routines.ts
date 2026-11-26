@@ -130,7 +130,19 @@ async function gather(admin: Admin, me: Person, from: string, to: string, ahead?
   const { data: asanaMine } = await admin.from("asana_person_tasks").select("name, due_on, project, url, completed, completed_at").eq("profile_id", me.id).limit(150);
   if (meetings == null) failed.push("Google Calendar (not connected or no calendar access)");
   const mine = new Set((seats ?? []).map((s) => s.client_id as string));
-  const wide = me.is_exec || me.is_lead || me.role.startsWith("head_of_");
+  // Line heads and execs read the clients that buy their lines (owner, Nov 26 2026: a head of social's recap read every
+  // client's messages and handed him email and paid work); everyone else, the clients they hold a seat on
+  if (me.is_exec || me.role.startsWith("head_of_")) {
+    const [{ data: prof }, { data: cl }] = await Promise.all([admin.from("profiles").select("exec_focus").eq("id", me.id).maybeSingle(), admin.from("clients").select("id, services, services_extra, services_removed").is("archived_at", null).limit(1000)]);
+    const { linesOfPerson } = await import("@/lib/item-gate-core");
+    const { clientLines: buys } = await import("@/lib/assistant/seat-routing");
+    const { servicesOf } = await import("@/lib/services");
+    const lines = linesOfPerson({ id: me.id, role: me.role, isExec: me.is_exec, focus: (prof?.exec_focus as string[] | null) ?? [] });
+    for (const c of cl ?? []) {
+      const theirs = buys(servicesOf(c as { services?: string[] | null; services_extra?: string[] | null; services_removed?: string[] | null }) as string[]) as string[];
+      if (lines.has("creative") || theirs.some((l) => lines.has(l as never))) mine.add(c.id as string);
+    }
+  }
   const email = me.email.toLowerCase();
   const myCalls = (calls ?? []).filter((c) => me.is_exec || String(c.host ?? "").toLowerCase() === email || ((c.attendees as string[] | null) ?? []).some((a) => String(a).toLowerCase() === email) || (c.client_id && mine.has(c.client_id as string)));
   return {
@@ -143,7 +155,7 @@ async function gather(admin: Admin, me: Person, from: string, to: string, ahead?
     owed: (owedMod ?? []).filter((o) => o.targetId === me.id).map((o) => ({ ref: `owed:${o.id}`, from: o.from, gist: o.gist, since: o.askedAt, client: o.client, link: o.url })),
     said: (saidMod ?? []).filter((p) => p.ownerId === me.id).map((p) => ({ ref: `said:${p.id}`, what: p.what, due: p.dueAt, client: p.client, link: p.url })),
     callPromises: (callsMod ?? []).map((c) => ({ ref: `callp:${c.id}`, what: c.what, due: c.dueAt, client: c.client })),
-    comms: (comms ?? []).filter((c) => wide || (c.client_id && mine.has(c.client_id as string))).map((c) => ({ at: c.occurred_at as string, source: c.source as string, author: (c.author as string | null) ?? null, client: (c.clients as unknown as { name: string } | null)?.name ?? null, text: `${c.title ? `${c.title}: ` : ""}${String(c.body ?? "")}`.replace(/\s+/g, " ").slice(0, 300), link: (c.url as string | null) ?? null })),
+    comms: (comms ?? []).filter((c) => c.client_id && mine.has(c.client_id as string)).map((c) => ({ at: c.occurred_at as string, source: c.source as string, author: (c.author as string | null) ?? null, client: (c.clients as unknown as { name: string } | null)?.name ?? null, text: `${c.title ? `${c.title}: ` : ""}${String(c.body ?? "")}`.replace(/\s+/g, " ").slice(0, 300), link: (c.url as string | null) ?? null })),
   };
 }
 

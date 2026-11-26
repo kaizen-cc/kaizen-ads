@@ -281,7 +281,10 @@ async function holdWatch(admin: Admin): Promise<number> {
     const hits = rowsSent.filter((s) => s.client_id === h.clientId && String(s.occurred_at) > h.hold.since && templates.has(templateOf(String(s.title ?? ""), s.client)));
     if (!hits.length) continue;
     const ct = await clientTeam(admin, h.clientId);
-    const owner = ct?.seats.find((s) => s.primary !== false);
+    // The account's owner (its coordinator seat, else Customer Success), never whichever seat happens to be first
+    const coord = ct?.seats.find((s) => s.seat === "coordinator");
+    const { data: csP } = coord ? { data: null } : await admin.from("profiles").select("id, full_name").eq("is_active", true).in("role", ["cs_coordinator", "customer_success"]).limit(1).maybeSingle();
+    const owner = coord ?? (csP ? { profileId: csP.id as string, name: csP.full_name as string } : null);
     if (!owner) continue;
     // One item per automated email and hold (each later send of it lands on the same item)
     for (const s of [...new Map(hits.map((x) => [templateOf(String(x.title ?? ""), x.client), x])).values()].slice(0, 5)) {
@@ -311,7 +314,7 @@ async function holdWatch(admin: Admin): Promise<number> {
  * WEB_REQUESTS_OWNER_EMAIL (the owner's choice, Nov 25 2026)
  */
 let webOwnerCache: { at: number; v: { profileId: string; name: string } | null } | null = null;
-async function webOwner(admin: Admin): Promise<{ profileId: string; name: string } | null> {
+export async function webOwner(admin: Admin): Promise<{ profileId: string; name: string } | null> {
   if (webOwnerCache && Date.now() - webOwnerCache.at < 600_000) return webOwnerCache.v;
   const { data: cs } = await admin.from("profiles").select("id, full_name").eq("is_active", true).eq("role", "cs_coordinator").limit(1).maybeSingle();
   let v = cs ? { profileId: cs.id as string, name: cs.full_name as string } : null;
