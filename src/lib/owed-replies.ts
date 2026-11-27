@@ -95,6 +95,9 @@ async function slackPeople(admin: Admin) {
   ]);
   const connected = new Map((tokens ?? []).map((t) => [t.profile_id as string, t.slack_user_id as string]));
   const profileOf = new Map<string, string>();
+  // Slack users already someone's (their own connection or a saved id): a short-name match never takes them (Nov 27
+  // 2026: "Fabi" starts both "Fabiola" and "Fabio", and Fabio is someone else)
+  const claimed = new Set<string>([...connected.values(), ...(people ?? []).map((p) => p.slack_user_id as string | null).filter((x): x is string => Boolean(x))]);
   for (const p of people ?? []) {
     // Their own Slack connection first, then the email Slack shows (when the app may read it), then the name
     let id = connected.get(p.id) ?? (p.slack_user_id as string | null) ?? null;
@@ -113,11 +116,12 @@ async function slackPeople(admin: Admin) {
     const firstOf = (s: string) => s.toLowerCase().trim().split(/\s+/)[0].replace(/[^a-z]/g, "");
     if (!id && !/\s/.test(String(p.full_name ?? "").trim()) && firstOf(p.full_name ?? "").length >= 3) {
       const first = firstOf(p.full_name ?? "");
-      const same = users.filter((u) => !u.deleted && !u.is_bot && team.has(u.id) && [u.real_name, u.profile?.real_name, u.profile?.display_name].some((n) => firstOf(n ?? "").startsWith(first)));
+      const same = users.filter((u) => !u.deleted && !u.is_bot && team.has(u.id) && !claimed.has(u.id) && [u.real_name, u.profile?.real_name, u.profile?.display_name].some((n) => firstOf(n ?? "").startsWith(first)));
       if (same.length === 1) id = same[0].id;
     }
     if (!id && p.email) id = (await (await import("@/lib/profile-slack")).findSlackUser(String(p.email)).catch(() => null))?.id ?? null;
     if (!id) continue;
+    claimed.add(id);
     profileOf.set(id, p.id as string);
     if (id !== p.slack_user_id) await admin.from("profiles").update({ slack_user_id: id }).eq("id", p.id);
   }

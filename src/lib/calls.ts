@@ -33,7 +33,10 @@ async function collectGeminiRange(since: Date, deadline: number, until?: Date): 
     }
     try {
       const token = await googleDriveToken(mailbox);
-      const q = `name contains 'Notes by Gemini' and mimeType = 'application/vnd.google-apps.document' and 'me' in owners and createdTime > '${since.toISOString()}'${until ? ` and createdTime <= '${until.toISOString()}'` : ""} and trashed = false`;
+      // Owned or shared with them (Nov 27 2026: a client-organized meeting's notes, or a teammate's shared with the
+      // attendees, were never read: an exec's weekly client syncs had no notes in the OS); the same doc found in
+      // several mailboxes is saved once (by its id)
+      const q = `name contains 'Notes by Gemini' and mimeType = 'application/vnd.google-apps.document' and createdTime > '${since.toISOString()}'${until ? ` and createdTime <= '${until.toISOString()}'` : ""} and trashed = false`;
       let pageToken: string | undefined;
       do {
         if (Date.now() > deadline) {
