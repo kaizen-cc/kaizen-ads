@@ -16,7 +16,7 @@ import { addressOf, gmailThreadId, reSubject, rawEmail, replyAllCc, replyTo, sla
 import { attachNote, draftFiles, fileViews, mailFiles } from "@/lib/documents/attach";
 import { composeLinks } from "@/lib/email-drafts/core";
 import { teammateTitle, type TeammateKind } from "./teammates";
-import { channelKey, groupDmIds, isJustMe, slackChannelPlace, slackGroupPlace, tagMentions } from "./platform-drafts-core";
+import { channelKey, groupDmIds, isJustMe, lastRealMessage, slackChannelPlace, slackGroupPlace, tagMentions } from "./platform-drafts-core";
 import { placeCallDraft } from "./platform-drafts";
 import { slackDmPlace, slackNewPlace } from "./platform-drafts-core";
 
@@ -247,9 +247,10 @@ async function withMentions(ctx: CommsCtx, text: string): Promise<string> {
 async function lastInThread(mailbox: string, threadId: string, all = false): Promise<{ to: string; cc: string | null; subject: string; inReplyTo: string | null; references: string | null } | null> {
   const { gmailToken, google, googleConfigured } = await import("@/lib/context/google");
   if (!googleConfigured()) return null;
-  type Msg = { payload: { headers: { name: string; value: string }[] } };
+  type Msg = { labelIds?: string[]; payload: { headers: { name: string; value: string }[] } };
   const t = await google<{ messages: Msg[] }>(await gmailToken(mailbox), `https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}`, { format: "metadata" });
-  const last = t.messages.at(-1);
+  // The newest real message: a draft already in the thread (an earlier save) is never what's answered
+  const last = lastRealMessage(t.messages ?? []);
   if (!last) return null;
   const h = (n: string) => last.payload.headers.find((x) => x.name.toLowerCase() === n)?.value ?? "";
   const to = replyTo({ from: h("from"), to: h("to"), replyTo: h("reply-to") || null }, mailbox);

@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Draft } from "./handoff-server";
 import { emailBodies, rawEmail } from "./messages";
-import { draftError, draftViaMcp, gmailDraftLink, serviceAccountClientId, slackMessageLink, slackSelfText } from "./platform-drafts-core";
+import { draftError, draftViaMcp, gmailDraftLink, gmailDraftToReplace, serviceAccountClientId, slackMessageLink, slackSelfText } from "./platform-drafts-core";
 
 // Every assistant and agent puts a drafted message where the person edits and sends it: a real draft in their own
 // Gmail (in the thread for a reply, with the PDFs attached), or a message to themselves in Slack labeled with where it
@@ -19,13 +19,15 @@ export type EmailToDraft = {
   inReplyTo?: string | null;
   references?: string | null;
   files?: readonly { documentId: string; name: string }[];
+  /** A Gmail draft this one replaces (a redo): updated in place, or made new when it's gone (deleted or sent) */
+  replaceDraftId?: string | null;
 };
 
 export type GmailDraftResult = { ok: true; draftId: string; messageId: string | null; href: string } | { ok: false; scope: boolean; error: string };
 
 /** The email as a draft in the person's own Gmail. A refused scope tells the execs once, in Kaizen OS. */
 export async function saveGmailDraft(admin: SupabaseClient, e: EmailToDraft): Promise<GmailDraftResult> {
-  const { gmailComposeToken, gmailSignature, googleConfigured, googlePost } = await import("@/lib/context/google");
+  const { gmailComposeToken, gmailSignature, googleConfigured, googlePost, googlePut } = await import("@/lib/context/google");
   if (!googleConfigured()) return { ok: false, scope: false, error: "Google isn't connected to Kaizen OS, so drafts can't go into Gmail yet." };
   const clientId = serviceAccountClientId(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
   try {
@@ -36,13 +38,22 @@ export async function saveGmailDraft(admin: SupabaseClient, e: EmailToDraft): Pr
     // Through Google's Gmail MCP server when WORKSPACE_MCP is on, with the same plain and HTML bodies (real links,
     // their signature) as the REST draft; a draft with files, or a reply in a thread, stays on REST: Google's
     // create_draft can't attach files or set the In-Reply-To and References headers Gmail needs to keep it in its thread
-    if (draftViaMcp(e, attached.length)) {
+    if (!e.replaceDraftId && draftViaMcp(e, attached.length)) {
       const viaMcp = await (await import("@/lib/workspace-agent")).mcpGmailDraft({ mailbox: e.mailbox, to: e.to, cc: e.cc ?? null, subject: e.subject, ...emailBodies(e.body, signature) });
       if (viaMcp) return { ok: true, draftId: viaMcp.draftId, messageId: viaMcp.messageId, href: gmailDraftLink(e.mailbox, viaMcp.messageId) };
     }
     const raw = rawEmail({ from: `${e.fromName} <${e.mailbox}>`, to: e.to, cc: e.cc ?? null, subject: e.subject, body: e.body, inReplyTo: e.inReplyTo ?? null, references: e.references ?? null, attachments: attached, signature });
     const token = await gmailComposeToken(e.mailbox);
-    const made = await googlePost<{ id: string; message?: { id: string } }>(token, "https://gmail.googleapis.com/gmail/v1/users/me/drafts", { message: { raw, ...(e.threadId ? { threadId: e.threadId } : {}) } });
+    const message = { raw, ...(e.threadId ? { threadId: e.threadId } : {}) };
+    type Made = { id: string; message?: { id: string } };
+    // A redo replaces the draft already saved (one draft, not one per redo); one they deleted or sent is made new
+    const made =
+      (e.replaceDraftId
+        ? await googlePut<Made>(token, `https://gmail.googleapis.com/gmail/v1/users/me/drafts/${encodeURIComponent(e.replaceDraftId)}`, { id: e.replaceDraftId, message }).catch((err: unknown) => {
+            if (/: (?:400|404) /.test(err instanceof Error ? err.message : "")) return null;
+            throw err;
+          })
+        : null) ?? (await googlePost<Made>(token, "https://gmail.googleapis.com/gmail/v1/users/me/drafts", { message }));
     return { ok: true, draftId: made.id, messageId: made.message?.id ?? null, href: gmailDraftLink(e.mailbox, made.message?.id) };
   } catch (err) {
     console.error("[gmail draft]", err instanceof Error ? err.message : err);
@@ -127,9 +138,15 @@ export async function placeCallDraft(admin: SupabaseClient, me: { id: string; em
   const email = emailOfDraft(d, me.fullName);
   if (!email) return { ok: false, error: "That draft has nothing to save." };
   if (email.mailbox.toLowerCase() !== me.email.toLowerCase()) return { ok: false, error: "That thread isn't in your own mailbox, so it can't be saved in your Gmail." };
-  const r = await saveGmailDraft(admin, email);
+  const { allDrafts } = await import("./handoff-server");
+  const earlier = await allDrafts(admin, callId);
+  const replaceDraftId = gmailDraftToReplace(earlier, d);
+  const r = await saveGmailDraft(admin, { ...email, replaceDraftId });
   if (!r.ok) return { ok: false, error: r.error, scope: r.scope };
-  const next: Draft = { ...d, sent: "gmail_draft", saved: { to: "gmail", href: r.href } };
+  const next: Draft = { ...d, sent: "gmail_draft", saved: { to: "gmail", href: r.href, gmailDraftId: r.draftId } };
+  // The earlier version it replaced no longer holds that Gmail draft
+  const older = replaceDraftId ? earlier.find((x) => x.id !== d.id && x.saved?.gmailDraftId === replaceDraftId) : undefined;
+  if (older?.saved) await putDraft(admin, callId, { ...older, saved: { ...older.saved, gmailDraftId: null } });
   await putDraft(admin, callId, next);
   if (d.clientDraftId) await admin.from("client_email_drafts").update({ status: "opened", gmail_draft_id: r.draftId, updated_at: new Date().toISOString() }).eq("id", d.clientDraftId).eq("owner_id", me.id);
   return { ok: true, draft: next, where: "your Gmail drafts", href: r.href };

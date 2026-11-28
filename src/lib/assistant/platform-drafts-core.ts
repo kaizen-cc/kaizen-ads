@@ -20,6 +20,41 @@ export function draftViaMcp(e: { threadId?: string | null; inReplyTo?: string | 
   return !files && !e.threadId?.trim() && !e.inReplyTo?.trim() && !e.references?.trim();
 }
 
+/**
+ * The message a reply answers: the thread's newest real message, never a draft in it (an earlier saved draft is the
+ * newest message in the thread, and answering it pointed In-Reply-To at a draft, so Gmail showed the new draft's label
+ * on the thread but not inside it, and the reply went only to whoever the draft was to). Null when it's only drafts.
+ */
+export function lastRealMessage<T extends { labelIds?: string[] | null }>(messages: readonly T[]): T | null {
+  for (let i = messages.length - 1; i >= 0; i--) if (!(messages[i].labelIds ?? []).includes("DRAFT")) return messages[i];
+  return null;
+}
+
+type SavedEmailDraft = { id: string; email?: { mailbox: string; threadId: string | null; to: string; subject: string } | null; saved?: { to: "gmail" | "slack"; gmailDraftId?: string | null } | null };
+
+/**
+ * The Gmail draft a save replaces, so a redo updates the one already in their drafts instead of adding another: this
+ * same draft saved before, else the newest draft on the conversation saved to the same mailbox and thread (a new
+ * email: the same recipient and subject). Null when there's none to replace.
+ */
+export function gmailDraftToReplace(drafts: readonly SavedEmailDraft[], d: SavedEmailDraft): string | null {
+  const e = d.email;
+  if (!e) return null;
+  const same = (x: SavedEmailDraft) => {
+    const o = x.email;
+    if (!o || o.mailbox.toLowerCase() !== e.mailbox.toLowerCase()) return false;
+    if (e.threadId || o.threadId) return o.threadId === e.threadId;
+    return o.to.trim().toLowerCase() === e.to.trim().toLowerCase() && o.subject.trim().toLowerCase() === e.subject.trim().toLowerCase();
+  };
+  const own = drafts.find((x) => x.id === d.id)?.saved?.gmailDraftId ?? d.saved?.gmailDraftId;
+  if (own) return own;
+  for (let i = drafts.length - 1; i >= 0; i--) {
+    const x = drafts[i];
+    if (x.id !== d.id && x.saved?.to === "gmail" && x.saved.gmailDraftId && same(x)) return x.saved.gmailDraftId;
+  }
+  return null;
+}
+
 /** The service account's OAuth client ID (what the Admin console's domain-wide delegation asks for), never the key */
 export function serviceAccountClientId(json: string | undefined | null): string | null {
   if (!json) return null;

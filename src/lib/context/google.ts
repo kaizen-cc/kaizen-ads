@@ -63,6 +63,13 @@ export async function googlePost<T>(token: string, url: string, body: unknown): 
   return res.json() as Promise<T>;
 }
 
+/** A PUT to a Google API (a Gmail draft replaced in place), with its error in words */
+export async function googlePut<T>(token: string, url: string, body: unknown): Promise<T> {
+  const res = await fetch(url, { method: "PUT", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body), cache: "no-store" });
+  if (!res.ok) throw new Error(`Google ${new URL(url).pathname}: ${res.status} ${(await res.text()).slice(0, 200)}`);
+  return res.json() as Promise<T>;
+}
+
 /** A Drive read token as someone in the Workspace (their own Drive: Gemini meeting notes). */
 export const googleDriveToken = (user: string) => tokenFor(user, DRIVE_SCOPE);
 /** Their own calendar, read only (works once calendar.readonly is added to the domain-wide delegation) */

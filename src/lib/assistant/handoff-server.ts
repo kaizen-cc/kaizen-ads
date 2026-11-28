@@ -45,7 +45,7 @@ export type Draft = {
   clientDraftId?: string | null;
   sent?: "slack" | "gmail" | "gmail_draft" | null;
   /** Where it was put for the person to send themselves (their Gmail drafts, their Slack self-DM) and its link */
-  saved?: { to: "gmail" | "slack"; href: string | null } | null;
+  saved?: { to: "gmail" | "slack"; href: string | null; /** The Gmail draft's id, so a redo replaces it instead of adding another */ gmailDraftId?: string | null } | null;
   at: string;
 };
 type YesMemo = { kind: "yes"; id: string; done: true; tool: string; at: string };
