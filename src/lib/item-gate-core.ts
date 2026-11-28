@@ -103,6 +103,24 @@ function lineOfWords(text: string, clientBuys: readonly WorkLine[]): WorkLine | 
   return null;
 }
 
+/**
+ * The seat on a line that does this kind of work (owner, Nov 27 2026: an email strategist's campaign planning landed on
+ * the email designer). Email: design → designer, build and QA → builder, everything else (strategy, client comms,
+ * offers, copy decisions) → strategist. Paid lines have one seat (the buyer); creative production is the creative
+ * line already.
+ */
+const EMAIL_DESIGN = /\b(design\w*|mock-?ups?|banners?|visuals?|graphics?|images?|layout|figma|hero)\b/i;
+const EMAIL_BUILD = /\b(build\w*|code|coding|html|qa|test sends?|schedul\w*|upload\w*|set ?up|segment\w*|flow (setup|build)|in klaviyo|klaviyo (build|setup)|template)\b/i;
+export function seatFor(line: WorkLine, text: string): string | null {
+  if (line !== "email") return null;
+  const t = text.split("\n")[0];
+  // Planning, client talk and decisions are the strategist's even when they mention a build ("prep three campaigns")
+  if (/\b(reply|answer|confirm|ask|tell|plan\w*|prep\w*|decid\w*|strategy|calendar|offer|copy|approv\w*|review)\b/i.test(t) && !/\b(design|build|code|qa)\b/i.test(t)) return "email_strategist";
+  if (EMAIL_DESIGN.test(t)) return "email_designer";
+  if (EMAIL_BUILD.test(t)) return "email_builder";
+  return "email_strategist";
+}
+
 export type ClientTeam = { services: readonly string[]; seats: readonly SeatHolder[] };
 export type Directory = { people: readonly (Person & { name: string })[]; webOwnerId?: string | null };
 
@@ -161,9 +179,17 @@ export function gate(input: { person: Person; text: string; line?: WorkLine | nu
   if ((line === "creative" || !fromTitle) && seated(null)) return { verdict: "keep", line };
   const to = (id: string, why: string): Gate => (id === person.id ? { verdict: "keep", line } : { verdict: "route", line, toId: id, toName: named(id), why });
   if (line === "web") return dir.webOwnerId ? to(dir.webOwnerId, "Web requests go to whoever hands them to the web team") : { verdict: "drop", line, why: "No one hands web requests on yet" };
+  const want = seatFor(line, input.text);
+  const holderOf = (seat: string) => client.seats.filter((s) => s.seat === seat).sort((a, b) => Number(b.primary !== false) - Number(a.primary !== false))[0];
+  // On the line but not the seat that does this kind of work: that seat's holder, when the client has one
+  if (want && mine.has(line) && !covers(person) && seated(line)) {
+    const h = holderOf(want);
+    if (!h || h.profileId === person.id || client.seats.some((s) => s.profileId === person.id && s.seat === want)) return { verdict: "keep", line };
+    return to(h.profileId, `${want.replace(/_/g, " ").replace("email ", "")} work on this client's email is ${h.name}'s`);
+  }
   if (mine.has(line) && (covers(person) || seated(line))) return { verdict: "keep", line };
-  // The seat on that client's line, primary first
-  for (const seat of LINE_SEATS[line] ?? []) {
+  // The seat on that client's line that does this kind of work, else the line's seats in order, primary first
+  for (const seat of [...(want ? [want] : []), ...(LINE_SEATS[line] ?? [])]) {
     const h = client.seats.filter((s) => s.seat === seat).sort((a, b) => Number(b.primary !== false) - Number(a.primary !== false))[0];
     if (h) return to(h.profileId, `${LINE_WORD[line]} work on this client is ${h.name}'s`);
   }

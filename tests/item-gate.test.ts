@@ -81,6 +81,15 @@ describe("the relevance gate (Peter's eight items)", () => {
     expect(routed(gate({ person: dir.people[3], text: "Diagnose website leads dropping to zero", client: granite, dir }))).toBe("keep");
     expect(routed(gate({ person: dir.people[3], text: "Flag BFCM offers missing from the website", client: granite, dir }))).toBe("kyle");
   });
+  it("routes to the seat on a line that does the work (email strategist, designer, builder)", () => {
+    const eunhye = { id: "eunhye", name: "Eunhye", role: "email_designer", isExec: false };
+    const seaspice = { services: ["email-marketing", "facebook-ads"], seats: [seat("email_strategist", "niro", "Niro"), seat("email_designer", "eunhye", "Eunhye"), seat("email_builder", "andres", "Andres")] };
+    const d2 = { ...dir, people: [...dir.people, eunhye] };
+    expect(routed(gate({ person: eunhye, text: "Prep three email campaigns due Monday", client: seaspice, dir: d2 }))).toBe("niro");
+    expect(routed(gate({ person: eunhye, text: "Design the Dec 4 promo email banner", client: seaspice, dir: d2 }))).toBe("keep");
+    expect(routed(gate({ person: dir.people[1], text: "Build and QA the Dec 4 promo email in Klaviyo", client: seaspice, dir: d2 }))).toBe("andres");
+    expect(routed(gate({ person: peter, text: "Design the holiday email banner", client: seaspice, dir: d2 }))).toBe("eunhye");
+  });
   it("reads the line from the words", () => {
     expect(workLine("Share the Google Doc with the recap", ["meta"])).toBeNull();
     expect(workLine("CPL is up 40%", ["google"])).toBe("google");

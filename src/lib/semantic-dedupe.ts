@@ -93,3 +93,97 @@ ${String(d?.detail ?? "").trim()}`.trim().slice(0, 4000) }).eq("id", dup.id).eq(
   }
   return tally;
 }
+
+const CLUSTERS = {
+  type: "object",
+  properties: { groups: { type: "array", items: { type: "object", properties: { refs: { type: "array", items: { type: "string" } }, deliverable: { type: "string" } }, required: ["refs", "deliverable"], additionalProperties: false } } },
+  required: ["groups"],
+  additionalProperties: false,
+};
+
+/**
+ * Every open item on a client, grouped by deliverable (owner, Nov 27 2026: seven open items across three people for
+ * one Goodmellow ad fix). In each group: one keeper per owner (their oldest; an owner's own Asana task stands for
+ * theirs), the rest closed as "Duplicate of …" with their words copied onto the keeper; keepers of different owners
+ * say "Also on this: X". The busiest clients first, a batch per run.
+ */
+export async function mergeAllOpen(admin: Admin, opts: { clients?: number; only?: string[] } = {}) {
+  const { data: rows } = await admin.from("agent_asks").select("client_id").eq("status", "open").not("client_id", "is", null).limit(5000);
+  const count = new Map<string, number>();
+  for (const r of rows ?? []) count.set(r.client_id as string, (count.get(r.client_id as string) ?? 0) + 1);
+  const { data: state } = await admin.from("sync_state").select("cursor_at, last_result").eq("source", "dedupe_all").maybeSingle();
+  const done = new Set<string>(((state?.last_result as { done?: string[] } | null)?.done ?? []).slice(-400));
+  const order = (opts.only ?? [...count].filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).map(([c]) => c)).filter((c) => opts.only || !done.has(c));
+  const batch = order.slice(0, opts.clients ?? 10);
+  const { data: people } = await admin.from("profiles").select("id, full_name");
+  const nameOf = new Map((people ?? []).map((p) => [p.id as string, String(p.full_name ?? "")]));
+  const tally = { clients: 0, groups: 0, closed: 0 };
+  for (const clientId of batch) {
+    const [{ data: asks }, { data: asana }] = await Promise.all([
+      admin.from("agent_asks").select("id, title, detail, owner_id, created_at").eq("client_id", clientId).eq("status", "open").order("created_at").limit(80),
+      admin.from("asana_person_tasks").select("gid, name, profile_id, completed, url").eq("client_id", clientId).eq("completed", false).limit(40),
+    ]);
+    const items = [
+      ...(asks ?? []).map((a, i) => ({ ref: `A${i + 1}`, kind: "ask" as const, id: a.id as string, title: String(a.title).replace(/^\[[^\]]{1,24}\]\s*/, ""), detail: String(a.detail ?? ""), owner: a.owner_id as string, at: a.created_at as string })),
+      ...(asana ?? []).map((t, i) => ({ ref: `S${i + 1}`, kind: "asana" as const, id: t.gid as string, title: String(t.name).replace(/^\[[^\]]{1,24}\]\s*/, ""), detail: "", owner: t.profile_id as string, at: "", url: (t.url as string | null) ?? null })),
+    ];
+    tally.clients++;
+    if ((asks ?? []).length < 2) continue;
+    let out: { groups: { refs: string[]; deliverable: string }[] };
+    try {
+      out = await askJson({
+        agent: "calls",
+        label: "dedupe items",
+        bare: true,
+        clientId,
+        override: { model: "haiku", effort: "low" },
+        maxTokens: 2500,
+        system:
+          "Group a client's open work items that are the same deliverable: finishing one finishes the others, in any words (\"Update Fade ads to 5 for $60\", \"Hold the Fade ads showing 4 for $60\", \"Flag ads still showing 4 for $60\" are one fix). Not the same: separate steps (write copy vs launch), different platforms, offers or dates, and replying to someone about the work vs doing it. Only groups of two or more, only sure ones.",
+        schema: CLUSTERS,
+        prompt: items.map((i) => `${i.ref}${i.kind === "asana" ? " (Asana)" : ""} [${nameOf.get(i.owner) ?? "someone"}] ${i.title}`).join("\n"),
+      });
+    } catch {
+      continue;
+    }
+    const byRef = new Map(items.map((i) => [i.ref, i]));
+    for (const g of out.groups ?? []) {
+      const members = [...new Set(g.refs.map((r) => r.trim().toUpperCase()))].map((r) => byRef.get(r)).filter((x): x is (typeof items)[number] => Boolean(x));
+      if (members.length < 2) continue;
+      tally.groups++;
+      const owners = [...new Set(members.map((m) => m.owner))];
+      const keeperOf = new Map<string, (typeof items)[number]>();
+      for (const o of owners) {
+        const mine = members.filter((m) => m.owner === o);
+        keeperOf.set(o, mine.find((m) => m.kind === "asana") ?? mine.filter((m) => m.kind === "ask").sort((a, b) => a.at.localeCompare(b.at))[0]);
+      }
+      for (const m of members) {
+        const keeper = keeperOf.get(m.owner)!;
+        if (m === keeper || m.kind !== "ask") continue;
+        const into = keeper.kind === "asana" ? `their Asana task "${keeper.title}"` : `"${keeper.title}"`;
+        await admin.from("agent_asks").update({ status: "dismissed", done_at: new Date().toISOString(), detail: `Duplicate of ${into}\n${m.detail}`.trim().slice(0, 4000) }).eq("id", m.id).eq("status", "open");
+        if (keeper.kind === "ask") {
+          const { data: k } = await admin.from("agent_asks").select("detail").eq("id", keeper.id).maybeSingle();
+          const line = `Also came up: ${m.title}${m.detail ? ` (${m.detail.split("\n")[0].slice(0, 200)})` : ""}`;
+          if (k && !String(k.detail ?? "").includes(line)) await admin.from("agent_asks").update({ detail: `${String(k.detail ?? "").trim()}\n${line}`.trim().slice(0, 4000) }).eq("id", keeper.id);
+        }
+        tally.closed++;
+      }
+      // Several owners on one deliverable: each keeper names the others
+      if (owners.length > 1)
+        for (const o of owners) {
+          const k = keeperOf.get(o)!;
+          if (k.kind !== "ask") continue;
+          const others = owners.filter((x) => x !== o).map((x) => nameOf.get(x) ?? "someone").join(", ");
+          const { data: cur } = await admin.from("agent_asks").select("detail").eq("id", k.id).maybeSingle();
+          const line = `Also on this: ${others}`;
+          if (cur && !String(cur.detail ?? "").includes(line)) await admin.from("agent_asks").update({ detail: `${String(cur.detail ?? "").trim()}\n${line}`.trim().slice(0, 4000) }).eq("id", k.id);
+        }
+    }
+  }
+  if (!opts.only) {
+    const left = order.length - batch.length;
+    await admin.from("sync_state").upsert({ source: "dedupe_all", last_run_at: new Date().toISOString(), last_result: { done: left > 0 ? [...done, ...batch] : [], ...tally } });
+  }
+  return tally;
+}

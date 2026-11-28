@@ -29,8 +29,13 @@ export async function runFloating(admin: Admin, opts: { budget?: number } = {}) 
   // Same work in different words, by meaning (src/lib/semantic-dedupe.ts)
   const { dedupeNew } = await import("@/lib/semantic-dedupe");
   const deduped = await dedupeNew(admin).catch((e) => ({ error: String(e) }));
+  // Every open item, a batch of clients per run (src/lib/semantic-dedupe.ts mergeAllOpen)
+  const merged = await (await import("@/lib/semantic-dedupe")).mergeAllOpen(admin).catch((e) => ({ error: String(e) }));
+  // Hours over allotment (Kaizen Track) and ad-platform support emails that need a reply
+  const allotment = await (await import("@/lib/allotment-items")).allotmentItems(admin).catch((e) => ({ error: String(e) }));
+  const support = await (await import("@/lib/support-emails")).supportEmailItems(admin).catch((e) => ({ error: String(e) }));
   const checks = await runDoneChecks(admin, { budget: opts.budget ?? 50, staleHours: 6 }).catch(() => null);
-  return { ...reality, asana, signals, deduped, checked: checks?.checked ?? 0, closed: checks?.closed ?? 0, moving: checks?.moving ?? 0 };
+  return { ...reality, asana, signals, deduped, merged, allotment, support, checked: checks?.checked ?? 0, closed: checks?.closed ?? 0, moving: checks?.moving ?? 0 };
 }
 
 async function realityPass(admin: Admin) {
