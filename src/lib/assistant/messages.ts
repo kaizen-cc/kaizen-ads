@@ -64,16 +64,80 @@ const LINKS = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<>]*[^\s<>
 /** Words in **bold** */
 const BOLD = /\*\*([^*\n]+)\*\*/g;
 
-/** Whether the text needs HTML to read right: linked words or bold (a bare address Gmail links by itself) */
-const hasMarkup = (text: string) => /\[[^\]\n]+\]\(https?:\/\/[^\s)]+\)/.test(text) || /\*\*[^*\n]+\*\*/.test(text);
+/** A markdown table's divider row ("|---|:---:|") */
+const TABLE_RULE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+const isTableRow = (line: string) => line.includes("|") && line.trim() !== "";
+/** A table row's cells ("| a | b |" → ["a", "b"]); an escaped "\|" stays in its cell */
+const tableCells = (line: string) =>
+  line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/(?<!\\)\|$/, "")
+    .split(/(?<!\\)\|/)
+    .map((c) => c.replace(/\\\|/g, "|").trim());
 
-/** The plain text part: linked words read "words (address)", bold marks dropped */
-export function plainBody(text: string): string {
-  return text.replace(LINKS, (m, label: string | undefined, href: string | undefined) => (label && href ? `${label} (${href})` : m)).replace(BOLD, "$1");
+type BodyPiece = { text: string } | { head: string[]; rows: string[][] };
+
+/** The text cut into its markdown tables (a header row, a divider, then rows) and the words between them */
+function bodyPieces(text: string): BodyPiece[] {
+  const lines = text.split(/\r?\n/);
+  const out: BodyPiece[] = [];
+  let words: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (isTableRow(lines[i]) && lines[i + 1] !== undefined && lines[i + 1].includes("|") && TABLE_RULE.test(lines[i + 1])) {
+      if (words.length) out.push({ text: words.join("\n") });
+      words = [];
+      const head = tableCells(lines[i]);
+      const rows: string[][] = [];
+      i += 2;
+      while (i < lines.length && isTableRow(lines[i])) rows.push(tableCells(lines[i++]));
+      i--;
+      out.push({ head, rows });
+    } else words.push(lines[i]);
+  }
+  if (words.length) out.push({ text: words.join("\n") });
+  return out;
 }
 
-/** The HTML part: the text escaped, linked words as real links, bold as bold, each line break kept */
+/** Whether the text has a markdown table, which plain text can't show */
+const hasTable = (text: string) => bodyPieces(text).some((p) => "head" in p);
+
+/** Whether the text needs HTML to read right: linked words, bold or a table (a bare address Gmail links by itself) */
+const hasMarkup = (text: string) => /\[[^\]\n]+\]\(https?:\/\/[^\s)]+\)/.test(text) || /\*\*[^*\n]+\*\*/.test(text) || hasTable(text);
+
+/** A table row as one dash line: "- Gift Card 1 · Send date: Dec 1 · Exclusions: V3" (empty cells left out) */
+function tableDashLine(head: string[], row: string[]): string {
+  const [first, ...rest] = row;
+  const parts = rest.map((c, k) => (c ? (head[k + 1] ? `${head[k + 1]}: ${c}` : c) : "")).filter(Boolean);
+  return `- ${[first || (head[0] ? `${head[0]}: -` : ""), ...parts].filter(Boolean).join(" · ")}`;
+}
+
+/** The plain text part: linked words read "words (address)", bold marks dropped, a markdown table as one dash line per row */
+export function plainBody(text: string): string {
+  const flat = bodyPieces(text)
+    .map((p) => ("head" in p ? p.rows.map((r) => tableDashLine(p.head, r)).join("\n") : p.text))
+    .join("\n");
+  return flat.replace(LINKS, (m, label: string | undefined, href: string | undefined) => (label && href ? `${label} (${href})` : m)).replace(BOLD, "$1");
+}
+
+const CELL = 'style="border:1px solid #d0d0d0;padding:6px 10px;text-align:left;vertical-align:top"';
+
+/** A markdown table as a real HTML table, which Gmail shows as one */
+function htmlTable(head: string[], rows: string[][]): string {
+  const cols = Math.max(head.length, ...rows.map((r) => r.length));
+  const cells = (r: string[], tag: "th" | "td") => Array.from({ length: cols }, (_, k) => `<${tag} ${CELL}>${htmlWords(r[k] ?? "")}</${tag}>`).join("");
+  return `<table style="border-collapse:collapse;margin:8px 0"><thead><tr>${cells(head, "th")}</tr></thead><tbody>${rows.map((r) => `<tr>${cells(r, "td")}</tr>`).join("")}</tbody></table>`;
+}
+
+/** The HTML part: the text escaped, linked words as real links, bold as bold, each line break kept, a markdown table as a table */
 export function htmlBody(text: string): string {
+  return bodyPieces(text)
+    .map((p) => ("head" in p ? htmlTable(p.head, p.rows) : htmlWords(p.text)))
+    .join("\r\n");
+}
+
+/** Words as HTML: escaped, linked words as real links, bold as bold, each line break kept */
+function htmlWords(text: string): string {
   let out = "";
   let at = 0;
   const inline = (s: string) => escapeHtml(s).replace(BOLD, "<b>$1</b>");
