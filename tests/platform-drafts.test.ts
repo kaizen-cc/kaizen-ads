@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { mimeMessage, rawEmail } from "@/lib/assistant/messages";
 import { fixGmailLink } from "@/lib/email-filters";
-import { composeScopeMessage, draftError, draftViaMcp, gmailDraftLink, serviceAccountClientId, slackDmPlace, slackMessageLink, slackNewPlace, slackSelfNote, slackSelfText } from "@/lib/assistant/platform-drafts-core";
+import { composeScopeMessage, draftError, draftViaMcp, gmailDraftLink, gmailDraftToReplace, lastRealMessage, serviceAccountClientId, slackDmPlace, slackMessageLink, slackNewPlace, slackSelfNote, slackSelfText } from "@/lib/assistant/platform-drafts-core";
 
 const decode = (raw: string) => Buffer.from(raw.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
 
@@ -161,5 +161,31 @@ describe("a reply draft's raw email", () => {
     const text = Buffer.from(raw.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
     expect(text).toContain("In-Reply-To: <m2@mail.gmail.com>");
     expect(text).toContain("References: <m1@mail.gmail.com> <m2@mail.gmail.com>");
+  });
+});
+
+describe("a Gmail draft stays in its thread and a redo replaces it", () => {
+  it("a reply answers the thread's newest real message, never a draft already in it", () => {
+    const msgs = [{ id: "a", labelIds: ["INBOX"] }, { id: "b", labelIds: ["SENT"] }, { id: "c", labelIds: ["DRAFT"] }];
+    expect(lastRealMessage(msgs)?.id).toBe("b");
+    expect(lastRealMessage([{ id: "c", labelIds: ["DRAFT"] }])).toBeNull();
+    expect(lastRealMessage<{ id: string; labelIds?: string[] }>([{ id: "a" }])?.id).toBe("a");
+  });
+
+  const mail = (threadId: string | null, to = "cole@client.test", subject = "Re: December gift cards") => ({ mailbox: "me@kaizen.test", threadId, to, subject });
+  it("a redo in the same thread replaces the draft saved before it", () => {
+    const first = { id: "d1", email: mail("t1"), saved: { to: "gmail" as const, gmailDraftId: "r-1" } };
+    const other = { id: "d2", email: mail("t2"), saved: { to: "gmail" as const, gmailDraftId: "r-2" } };
+    expect(gmailDraftToReplace([first, other], { id: "d3", email: mail("t1") })).toBe("r-1");
+    expect(gmailDraftToReplace([first, other], { id: "d3", email: mail("t3") })).toBeNull();
+    expect(gmailDraftToReplace([first], { id: "d3", email: { ...mail("t1"), mailbox: "else@kaizen.test" } })).toBeNull();
+  });
+
+  it("the same draft saved again replaces itself; a new email matches on recipient and subject", () => {
+    const saved = { id: "d1", email: mail(null), saved: { to: "gmail" as const, gmailDraftId: "r-1" } };
+    expect(gmailDraftToReplace([saved], { id: "d1", email: mail(null) })).toBe("r-1");
+    expect(gmailDraftToReplace([saved], { id: "d2", email: mail(null) })).toBe("r-1");
+    expect(gmailDraftToReplace([saved], { id: "d2", email: mail(null, "sam@client.test") })).toBeNull();
+    expect(gmailDraftToReplace([{ ...saved, saved: { to: "gmail" as const, gmailDraftId: null } }], { id: "d2", email: mail(null) })).toBeNull();
   });
 });
