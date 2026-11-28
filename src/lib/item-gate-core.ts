@@ -109,13 +109,13 @@ function lineOfWords(text: string, clientBuys: readonly WorkLine[]): WorkLine | 
  * offers, copy decisions) → strategist. Paid lines have one seat (the buyer); creative production is the creative
  * line already.
  */
-const EMAIL_DESIGN = /\b(design\w*|mock-?ups?|banners?|visuals?|graphics?|images?|layout|figma|hero)\b/i;
-const EMAIL_BUILD = /\b(build\w*|code|coding|html|qa|test sends?|schedul\w*|upload\w*|set ?up|segment\w*|flow (setup|build)|in klaviyo|klaviyo (build|setup)|template)\b/i;
+const EMAIL_DESIGN = /\b(design\w*|mock-?ups?|banners?|visuals?|graphics?|images?|layout|figma|hero|header|blocks?|artwork|flyers?|photos?|bold|enlarge|fonts?|colou?rs?|swap\w*|resiz\w*|gifs?)\b/i;
+const EMAIL_BUILD = /\b(build\w*|code|coding|html|qa|test sends?|(re)?schedul\w*|upload\w*|set ?up|segment\w*|flow (setup|build)|in klaviyo|klaviyo (build|setup)|template|send (time|in|at)|pst|est|cst|time ?zone|resend)\b/i;
 export function seatFor(line: WorkLine, text: string): string | null {
   if (line !== "email") return null;
   const t = text.split("\n")[0];
   // Planning, client talk and decisions are the strategist's even when they mention a build ("prep three campaigns")
-  if (/\b(reply|answer|confirm|ask|tell|plan\w*|prep\w*|decid\w*|strategy|calendar|offer|copy|approv\w*|review)\b/i.test(t) && !/\b(design|build|code|qa)\b/i.test(t)) return "email_strategist";
+  if (/\b(reply|answer|confirm|ask|tell|plan\w*|prep\w*|decid\w*|strategy|calendar|offer|copy|approv\w*|review|watch)\b/i.test(t) && !/\b(design|build|code|qa)\b/i.test(t)) return "email_strategist";
   if (EMAIL_DESIGN.test(t)) return "email_designer";
   if (EMAIL_BUILD.test(t)) return "email_builder";
   return "email_strategist";
@@ -147,6 +147,8 @@ export function gate(input: { person: Person; text: string; line?: WorkLine | nu
   const { person, client, dir } = input;
   if (!client) return { verdict: "keep", line: input.line ?? null };
   const buys = linesOf(client.services, client.seats) as WorkLine[];
+  // Creative and the account are every client's (heads and execs on them cover every client)
+  const covered = [...buys, "creative", "account"] as WorkLine[];
   const [title, ...rest] = input.text.split("\n");
   const fromTitle = input.line ?? lineOfWords(title, buys);
   const line = fromTitle ?? lineOfWords(rest.join(" "), buys);
@@ -155,12 +157,12 @@ export function gate(input: { person: Person; text: string; line?: WorkLine | nu
   const named = (id: string) => dir.people.find((p) => p.id === id)?.name ?? "them";
   // A hand-off ("Hand to X · …") is theirs to delegate when the client is theirs at all
   if (input.handoff) {
-    if (seated(null) || SUPPORT.has(person.role) || (covers(person) && [...mine].some((l) => buys.includes(l)))) return { verdict: "keep", line };
+    if (seated(null) || SUPPORT.has(person.role) || (covers(person) && [...mine].some((l) => covered.includes(l)))) return { verdict: "keep", line };
     return { verdict: "drop", line, why: "Not your client" };
   }
   if (!line) {
     // Unclear work: theirs on a client they're on, or one that buys a line they head; else the client's main seat
-    if (seated(null) || (covers(person) && [...mine].some((l) => buys.includes(l)))) return { verdict: "keep", line: null };
+    if (seated(null) || (covers(person) && [...mine].some((l) => covered.includes(l)))) return { verdict: "keep", line: null };
     for (const l of ["meta", "google", "tiktok", "email", "social"] as const) {
       if (!buys.includes(l)) continue;
       const h = client.seats.filter((x) => (LINE_SEATS[l] ?? []).includes(x.seat)).sort((a, b) => Number(b.primary !== false) - Number(a.primary !== false))[0];
